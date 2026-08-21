@@ -72,7 +72,7 @@
     },
     "priority": {
       "type": "integer",
-      "$comment": "from trace \u2014 see \u00a713 open item"
+      "$comment": "from trace \u2014 passthrough label only (SCOPE-CHANGE-002). No policy reads it and no priority-conditioned metric is reported; the column exists so the joined record mirrors the trace."
     },
     "intended_offset_s": {
       "type": "number",

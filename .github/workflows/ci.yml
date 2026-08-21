@@ -35,9 +35,12 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-      # The spec is authored in Word, which git cannot diff. docs/requirements-spec.md
-      # is a generated mirror, and this check fails if the .docx moved without it —
-      # otherwise a spec edit could land in a PR with nobody able to see what changed.
+      # The spec is authored in Word and shared as PDF; git can diff neither.
+      # docs/requirements-spec.md is a generated mirror, and this check fails if it is
+      # stale — otherwise a spec edit could land in a PR with nobody able to see what
+      # changed. The .docx is NOT committed (it is edited off-machine), so when it is
+      # unreachable this step SKIPS rather than fails. Regenerate the mirror in the
+      # same commit as any spec change; CI cannot catch it for you.
       - run: uv sync --all-groups
         working-directory: dataplane
       - run: uv run --directory dataplane python ../docs/spec_to_md.py --check

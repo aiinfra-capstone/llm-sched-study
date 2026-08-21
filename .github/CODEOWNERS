@@ -1,19 +1,17 @@
 # Ownership marks primary responsibility, not exclusive access — both members can
 # run and edit the full stack (spec §10). What this file buys is a review request
 # landing on the right person automatically.
-#
-# TODO(week-1): replace the placeholders with real GitHub handles.
 
 # The seam. Both people review any change to the six frozen artifacts — after the
 # Week-1 freeze, a contract change is a re-scoping decision, not a code change.
-/contracts/                 @PERSON_A @PERSON_B
-/.github/workflows/         @PERSON_A @PERSON_B
-/docs/                      @PERSON_A @PERSON_B
+/contracts/                 @divyanshuklai @adityaxgupta
+/.github/workflows/         @divyanshuklai @adityaxgupta
+/docs/                      @divyanshuklai @adityaxgupta
 
 # Person A — data plane & measurement
-/dataplane/                 @PERSON_A
-/fixtures/fake_scheduler/   @PERSON_A
+/dataplane/                 @divyanshuklai
+/fixtures/fake_scheduler/   @divyanshuklai
 
 # Person B — control plane & simulation
-/controlplane/              @PERSON_B
-/fixtures/fake_worker/      @PERSON_B
+/controlplane/              @adityaxgupta
+/fixtures/fake_worker/      @adityaxgupta

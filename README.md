@@ -179,9 +179,7 @@ docs/uml/render.sh
 
 | | |
 |---|---|
-| [Requirements specification](docs/requirements-spec.md) | Scope, hypotheses, F-1 – F-24, non-goals, threats to validity, the MPR ladder. **Start here.** Readable inline; [PDF](docs/scheduling-requirements-spec_sc001.pdf) for print. |
-| [SCOPE-CHANGE-001](docs/SCOPE-CHANGE-001.md) | Decision record: why the pool moved to a single inference engine. Integrated into the spec. |
-| [SCOPE-CHANGE-002](docs/SCOPE-CHANGE-002.md) | Decision record: why `priority` is a passthrough label, and the priority metric withdrawn. |
+| [Requirements specification](docs/scheduling-requirements-spec.pdf) | Scope, hypotheses, F-1 – F-24, non-goals, threats to validity, the MPR ladder. **Start here** — it is the authority for everything below. |
 | [Split & interface contract](docs/two-person-split-and-interface-contract.md) | Where the seam is, the six artifacts across it, and the failure modes to watch for. |
 | [Week-1 freeze checklist](docs/week1-freeze-checklist.md) | What must be true before the contract freezes. |
 | [UML figure set](docs/uml/FIGURES.md) | Twelve figures with draft captions and the requirements each discharges. |

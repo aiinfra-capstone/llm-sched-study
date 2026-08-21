@@ -106,7 +106,7 @@
         },
         "priority_mix": {
           "type": "object",
-          "description": "F-16 requires a configurable priority mix. SCOPE-CHANGE-002: `priority` is a PASSTHROUGH LABEL. It is generated (F-16) and carried through the trace and every log record, but no policy in \u00a74.1 reads it and no priority-conditioned metric is reported. Keep emitting it \u2014 the field costs nothing and keeps the trace format stable for future work (\u00a79) \u2014 but do not build anything that branches on it.",
+          "description": "F-16 requires a configurable priority mix. §5.4: `priority` is a PASSTHROUGH LABEL. It is generated (F-16) and carried through the trace and every log record, but no policy in \u00a74.1 reads it and no priority-conditioned metric is reported. Keep emitting it \u2014 the field costs nothing and keeps the trace format stable for future work (\u00a79) \u2014 but do not build anything that branches on it.",
           "patternProperties": {
             "^[0-9]+$": {
               "type": "number",
@@ -171,7 +171,7 @@
         "priority": {
           "type": "integer",
           "minimum": 0,
-          "description": "0 = interactive, 1 = background. SCOPE-CHANGE-002: `priority` is a PASSTHROUGH LABEL. It is generated (F-16) and carried through the trace and every log record, but no policy in \u00a74.1 reads it and no priority-conditioned metric is reported. Keep emitting it \u2014 the field costs nothing and keeps the trace format stable for future work (\u00a79) \u2014 but do not build anything that branches on it."
+          "description": "0 = interactive, 1 = background. §5.4: `priority` is a PASSTHROUGH LABEL. It is generated (F-16) and carried through the trace and every log record, but no policy in \u00a74.1 reads it and no priority-conditioned metric is reported. Keep emitting it \u2014 the field costs nothing and keeps the trace format stable for future work (\u00a79) \u2014 but do not build anything that branches on it."
         },
         "content_seed": {
           "type": "integer"

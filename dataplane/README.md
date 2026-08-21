@@ -17,11 +17,11 @@ uv run pytest
 
 ## `worker/` — F-9, F-9a, F-9b, F-10, F-11
 
-> **Amended by [SCOPE-CHANGE-001](../docs/SCOPE-CHANGE-001.md).** One runtime — llama.cpp
-> with GGUF — on every pool node, GPU and CPU alike. The mixed vLLM/llama.cpp pool in the
-> frozen F-9 is withdrawn, because engine and quantization were confounded with hardware
-> in the definition of *R*. vLLM survives as **one measured condition** (F-9b), not as a
-> pool member.
+> **F-9: one runtime.** llama.cpp with GGUF on every pool node, GPU and CPU alike. Engine
+> and quantization are held constant because otherwise they are confounded with hardware
+> in the definition of *R*, and neither the 2×2 decomposition nor the *R*-sweep can
+> separate an engine effect from a hardware effect. vLLM survives as **one measured
+> condition** (F-9b), not as a pool member.
 
 ```
 gRPC ingress (Execute)
@@ -102,7 +102,7 @@ llama.cpp build does not expose it, log `service_ns` only and record
 
 > **Python is no longer forced here.** §10 of the split doc pins the worker to Python
 > because vLLM is a library, and notes that `llama-server` — an HTTP binary — only
-> follows that choice because it sits beside the vLLM adapter. SCOPE-CHANGE-001 removes
+> follows that choice because it sits beside the vLLM adapter. F-9 (single engine) removes
 > the vLLM adapter from the pool, so that argument has nothing left holding it up: the
 > pool worker now wraps an HTTP binary and is language-free like the rest of your half.
 > What remains pinned is the **F-9b probe alone**, and only if you drive vLLM as a

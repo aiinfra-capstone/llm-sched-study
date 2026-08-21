@@ -54,7 +54,7 @@ This directory is deliberately unopinionated about language. See "Language" belo
   with the measured autocorrelation. The only component here with no live-path
   counterpart.
 
-> **[SCOPE-CHANGE-001](../docs/SCOPE-CHANGE-001.md) makes your node model exact.**
+> **F-9 makes your node model exact.**
 > `SimNode.batch_capacity: int` is llama.cpp's slot model *precisely* — a fixed number of
 > parallel sequences, each holding a fixed KV share. It was never vLLM's model, where
 > admission is governed by dynamic paged KV occupancy and any integer capacity is

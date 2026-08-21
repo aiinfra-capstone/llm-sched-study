@@ -29,7 +29,7 @@
     },
     "node_class": {
       "type": "string",
-      "description": "SCOPE-CHANGE-001: with engine and quantization held constant, a node class is defined by hardware PLUS engine_config (F-9a) \u2014 e.g. 'rtx3090_ngl99_p4_q4km'. Two machines of the same hardware running different -ngl are different node classes and need separate snapshots."
+      "description": "F-9: with engine and quantization held constant, a node class is defined by hardware PLUS engine_config (F-9a) \u2014 e.g. 'rtx3090_ngl99_p4_q4km'. Two machines of the same hardware running different -ngl are different node classes and need separate snapshots."
     },
     "measured_at_unix": {
       "type": "integer"
@@ -151,7 +151,7 @@
     },
     "provenance": {
       "type": "object",
-      "description": "The settings that eliminate the confounds, made auditable from the results. Under SCOPE-CHANGE-001 engine and quant are constant across the pool, so engine_config is what distinguishes one node class from another.",
+      "description": "The settings that eliminate the confounds, made auditable from the results. Under F-9 engine and quant are constant across the pool, so engine_config is what distinguishes one node class from another.",
       "required": [
         "engine",
         "engine_version",

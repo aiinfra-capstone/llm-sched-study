@@ -1,6 +1,6 @@
 # UML Figure Set — Scheduling LLM Inference Under Uncalibrated Heterogeneity
 
-Twelve figures covering the [frozen specification](../requirements-spec.md). Each entry
+Twelve figures covering the [frozen specification](../scheduling-requirements-spec.pdf). Each entry
 gives a draft caption, the requirements it discharges, and the `\includegraphics` line
 for LaTeX.
 
@@ -196,7 +196,7 @@ Discharges: F-21; supports the F-23 validation argument.
 
 ## Scope Change 001 — figure edits applied
 
-SC-001 §8 lists edits to Figures 2, 3, 6 and 12. Two further figures carried the
+The single-engine decision (F-9) required edits to Figures 2, 3, 6 and 12. Two further figures carried the
 mixed-engine assumption and were updated for consistency; §8 does not mention them.
 
 | Figure | Edit |

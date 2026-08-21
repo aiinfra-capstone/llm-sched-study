@@ -48,7 +48,7 @@
     },
     "R": {
       "type": "number",
-      "$comment": "from manifest \u2014 heterogeneity ratio max/min node throughput. SCOPE-CHANGE-001: with one engine across the pool, R is a property of hardware and engine_config (F-9a) alone, and is synthesizable on real hardware. Rows from a role='engine_gap_probe' run are NOT part of any policy comparison and must be excluded here."
+      "$comment": "from manifest \u2014 heterogeneity ratio max/min node throughput. Under F-9 (one engine across the pool) R is a property of hardware and engine_config (F-9a) alone, and is synthesizable on real hardware. Rows from a role='engine_gap_probe' run are NOT part of any policy comparison and must be excluded here."
     },
     "node_count": {
       "type": "integer",
@@ -72,7 +72,7 @@
     },
     "priority": {
       "type": "integer",
-      "$comment": "from trace \u2014 passthrough label only (SCOPE-CHANGE-002). No policy reads it and no priority-conditioned metric is reported; the column exists so the joined record mirrors the trace."
+      "$comment": "from trace \u2014 passthrough label only (spec \u00a75.4). No policy reads it and no priority-conditioned metric is reported; the column exists so the joined record mirrors the trace."
     },
     "intended_offset_s": {
       "type": "number",

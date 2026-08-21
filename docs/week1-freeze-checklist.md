@@ -1,7 +1,7 @@
 # Week-1 Freeze Checklist
 
-The [requirements spec](requirements-spec.md) is frozen, and now incorporates
-[SCOPE-CHANGE-001](SCOPE-CHANGE-001.md) (single inference engine) as F-9 / F-9a / F-9b.
+The [requirements spec](scheduling-requirements-spec.pdf) is frozen. It carries the single-engine
+decision as F-9 / F-9a / F-9b, and resolves `priority` as a passthrough label in §5.4.
 **The interface contract (C-1 – C-6) freezes at end of Week 1.** After that, changes require the same re-scoping ritual as the spec:
 state the change, state what it costs against the §6 timeline, both people agree, one PR.
 
@@ -14,7 +14,7 @@ decision that must be closed *before* the freeze, not after.
 
 - [ ] `scheduling.proto` reviewed and agreed with Aditya (C-1)
 - [ ] **One** worker wrapper — llama.cpp + GGUF — running on a node (F-9, per
-      SCOPE-CHANGE-001; the second runtime integration is withdrawn from Week 1)
+      F-9; the second runtime integration is withdrawn from Week 1)
 - [ ] `engine_config` (`-ngl`, `--threads`, `--parallel`) plumbed into the manifest's
       node block, because under F-9a this *is* the experimental condition
 - [ ] Launcher asserts `validity.colocated_nodes == 0` — one logical node per physical
@@ -35,7 +35,7 @@ decision that must be closed *before* the freeze, not after.
 
 - [ ] `scheduling.proto` reviewed and agreed with Divyansh (C-1)
 - [ ] `SimNode.batch_capacity` reads `manifest.nodes[].engine_config.parallel` — under
-      SCOPE-CHANGE-001 llama.cpp's slot count *is* the node model, exactly, so no
+      F-9 llama.cpp's slot count *is* the node model, exactly, so no
       approximation is needed or wanted
 - [ ] Scheduler skeleton runs against a **fake worker** that heartbeats scripted state
 - [ ] `Clock` and `StateStore` interfaces defined — policies never call the system clock
@@ -59,23 +59,26 @@ decision that must be closed *before* the freeze, not after.
 
 ### §13 — the `priority` inconsistency — **RESOLVED**
 
-**Resolution: passthrough label only.** See
-[SCOPE-CHANGE-002](SCOPE-CHANGE-002.md) for the full record.
+**Resolution: passthrough label only.** `priority` is generated (F-16) and carried through
+the trace and every log record, but no policy reads it, and *"high-priority p99 under
+low-priority load"* is withdrawn from §5.4's dependent variables. **The spec reflects
+this** — §5.4 states the resolution, and §9 records the deferred alternative.
 
-`priority` is generated (F-16) and carried through the trace and every log record, but no
-policy reads it, and *"high-priority p99 under low-priority load"* is withdrawn from
-§5.4's dependent variables.
+Why it had to go rather than simply be left alone: with priority drawn independently of
+the length bucket and no policy acting on it, high-priority latency equals overall latency
+**by construction**. The metric could not have carried information in any condition, in
+any run.
 
-The reason it had to go rather than simply be left alone: with priority drawn
-independently of the length bucket and no policy acting on it, high-priority latency
-equals overall latency **by construction**. The metric could not have carried information
-in any condition, in any run.
+Deferred to §9 rather than rejected: correlating priority with request length
+(interactive → short, background → long) is the only variant in which the metric becomes
+informative, because short requests then queue behind long ones and head-of-line blocking
+becomes measurable and genuinely policy-dependent. Declined on cost against a timeline
+with no slack, not on merit.
 
-- [x] Resolution chosen: **passthrough label only** (SCOPE-CHANGE-002)
+- [x] Resolution chosen: **passthrough label only**
 - [x] Decided by: Divyansh Shukla — 2026-08-22
 - [x] Schema comments updated to state the chosen resolution
-- [ ] **Replacement text applied to the spec `.docx` and the PDF re-exported**
-      — §5.4 and §9, per SCOPE-CHANGE-002 §3 and §4. *This is the one step left.*
+- [x] Spec updated — §5.4 and §9
 
 ### Also decide by end of Week 2 (not Week 1, but do not forget)
 
@@ -85,7 +88,7 @@ in any condition, in any run.
 - [ ] **Synthesizable *R* range** — sweep `-ngl` / `--threads` / `--parallel` per machine
       and establish what range of *R* the physical pool can actually reach (F-9a).
       Report it as a **range**, not a single figure (§7, MPR-2). This is new work that
-      SCOPE-CHANGE-001 adds to Week 2, and it is what buys the reduction in threat R2.
+      F-9a adds to Week 2, and it is what buys the reduction in threat R2.
 - [ ] **F-9b engine-gap measurement** — vLLM vs llama.cpp on the strongest node, one
       operating point, identical replayed trace. One number, reported as a bound on
       external validity (threat R9). Do not let this slip past Week 2: it is the

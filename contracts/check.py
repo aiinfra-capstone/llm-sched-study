@@ -35,6 +35,7 @@ EXAMPLES = ROOT / "examples"
 # example file -> schema file.  JSONL examples are validated line by line.
 PAIRS: list[tuple[str, str]] = [
     ("trace.sample.jsonl", "trace.schema.json"),
+    ("manifest.engine_gap.sample.json", "manifest.schema.json"),
     ("cost_model.sample.json", "cost_model.schema.json"),
     ("client.sample.jsonl", "log_client.schema.json"),
     ("scheduler.sample.jsonl", "log_scheduler.schema.json"),

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/CAPSTONE_ORG/REPO/contracts/schemas/log_scheduler.schema.json",
-  "title": "C-4 — scheduler_{run_id}.jsonl (Person B)",
+  "title": "C-4 — scheduler_{run_id}.jsonl (Aditya, B)",
   "description": "Two record types, discriminated by `type`.\n\nThe `candidates` array is F-3 in full. It is what lets you compute routing-error rate post hoc — for each dispatch, whether an alternative node would have finished materially sooner — and, critically, whether the error came from a BAD POLICY or a STALE ESTIMATE. Without estimate_age_ms per candidate, H3 is unanalysable.",
   "oneOf": [{ "$ref": "#/$defs/decision" }, { "$ref": "#/$defs/completion_observed" }],
   "$defs": {

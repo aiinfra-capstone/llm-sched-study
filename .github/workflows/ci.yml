@@ -25,7 +25,7 @@ jobs:
       - run: uv run contracts/check.py
 
   dataplane:
-    name: Data plane (Person A)
+    name: "Data plane — Divyansh (A)"
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -41,7 +41,7 @@ jobs:
       - run: uv run pytest -q
 
   controlplane:
-    name: Control plane (Person B)
+    name: "Control plane — Aditya (B)"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

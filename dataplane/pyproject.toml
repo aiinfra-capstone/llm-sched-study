@@ -1,7 +1,7 @@
 [project]
 name = "dataplane"
 version = "0.1.0"
-description = "Person A — worker wrapper, measurement harness, results pipeline, figures"
+description = "Divyansh (A) — worker wrapper, measurement harness, results pipeline, figures"
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
 dependencies = [
@@ -16,7 +16,9 @@ dependencies = [
 pipeline = ["pandas>=2.2", "pyarrow>=15.0"]
 figures  = ["matplotlib>=3.8"]
 # The worker's engine deps are environment-specific and NOT pinned here.
-# See README.md — vLLM's supported Python matrix pins the worker env (§10).
+# Under SCOPE-CHANGE-001 the pool worker talks HTTP to a local llama-server, so it
+# has no Python dependency at all. Only the one-off F-9b engine-gap probe touches
+# vLLM, and only if driven as a library rather than through its OpenAI server.
 
 [project.scripts]
 gen-trace = "dataplane.harness.gen_trace:main"

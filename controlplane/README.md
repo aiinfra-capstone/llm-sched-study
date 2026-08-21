@@ -1,4 +1,4 @@
-# Control Plane & Simulation — Person B
+# Control Plane & Simulation — Aditya Gupta (B)
 
 Scheduler core, the five policy implementations, admission filter, node state store,
 staleness injection, the discrete-event simulator, and F-23 validation.
@@ -53,6 +53,16 @@ This directory is deliberately unopinionated about language. See "Language" belo
   `(node, prompt_len, output_len, concurrency)` plus the fitted lognormal multiplier
   with the measured autocorrelation. The only component here with no live-path
   counterpart.
+
+> **[SCOPE-CHANGE-001](../docs/SCOPE-CHANGE-001.md) makes your node model exact.**
+> `SimNode.batch_capacity: int` is llama.cpp's slot model *precisely* — a fixed number of
+> parallel sequences, each holding a fixed KV share. It was never vLLM's model, where
+> admission is governed by dynamic paged KV occupancy and any integer capacity is
+> emergent. Under the frozen F-9 the simulator would have modelled half the pool
+> faithfully and half crudely, and the discrepancy would have surfaced as validation
+> error quietly absorbed into the F-23 tolerance. A uniform pool removes the asymmetry —
+> so read `batch_capacity` straight off `manifest.nodes[].engine_config.parallel`, and
+> treat any F-23 error you do see as something real rather than as modelling slop.
 
 ## The 2×2 (F-1: all five selectable from one config value)
 

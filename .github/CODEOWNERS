@@ -8,10 +8,10 @@
 /.github/workflows/         @divyanshuklai @adityaxgupta
 /docs/                      @divyanshuklai @adityaxgupta
 
-# Person A — data plane & measurement
+# Divyansh Shukla (A) — data plane & measurement
 /dataplane/                 @divyanshuklai
 /fixtures/fake_scheduler/   @divyanshuklai
 
-# Person B — control plane & simulation
+# Aditya Gupta (B) — control plane & simulation
 /controlplane/              @adityaxgupta
 /fixtures/fake_worker/      @adityaxgupta

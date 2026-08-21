@@ -1,7 +1,8 @@
 # Week-1 Freeze Checklist
 
-The requirements spec is already frozen. **The interface contract (C-1 – C-6) freezes at
-end of Week 1.** After that, changes require the same re-scoping ritual as the spec:
+The requirements spec is already frozen, with one accepted amendment —
+[SCOPE-CHANGE-001](SCOPE-CHANGE-001.md), which supersedes F-9 and is reflected below.
+**The interface contract (C-1 – C-6) freezes at end of Week 1.** After that, changes require the same re-scoping ritual as the spec:
 state the change, state what it costs against the §6 timeline, both people agree, one PR.
 
 This checklist is the gate. Nothing here is optional, and the last section is an open
@@ -9,9 +10,15 @@ decision that must be closed *before* the freeze, not after.
 
 ---
 
-## Person A
+## Divyansh Shukla (A)
 
-- [ ] `scheduling.proto` reviewed and agreed with B (C-1)
+- [ ] `scheduling.proto` reviewed and agreed with Aditya (C-1)
+- [ ] **One** worker wrapper — llama.cpp + GGUF — running on a node (F-9, per
+      SCOPE-CHANGE-001; the second runtime integration is withdrawn from Week 1)
+- [ ] `engine_config` (`-ngl`, `--threads`, `--parallel`) plumbed into the manifest's
+      node block, because under F-9a this *is* the experimental condition
+- [ ] Launcher asserts `validity.colocated_nodes == 0` — one logical node per physical
+      host, or the contention confound comes straight back
 - [ ] Trace generator produces a **byte-identical file** on regeneration from the same
       seed and parameters — as a **test**, not an assumption
       - [ ] `arrival_offset_s` serialized at exactly 4 decimal places
@@ -24,9 +31,12 @@ decision that must be closed *before* the freeze, not after.
 - [ ] C-4 client and worker log schemas + fixture files committed
 - [ ] `uv run contracts/check.py` green
 
-## Person B
+## Aditya Gupta (B)
 
-- [ ] `scheduling.proto` reviewed and agreed with A (C-1)
+- [ ] `scheduling.proto` reviewed and agreed with Divyansh (C-1)
+- [ ] `SimNode.batch_capacity` reads `manifest.nodes[].engine_config.parallel` — under
+      SCOPE-CHANGE-001 llama.cpp's slot count *is* the node model, exactly, so no
+      approximation is needed or wanted
 - [ ] Scheduler skeleton runs against a **fake worker** that heartbeats scripted state
 - [ ] `Clock` and `StateStore` interfaces defined — policies never call the system clock
 - [ ] RoundRobin only, behind the same `choose()` signature the other four will use
@@ -79,8 +89,16 @@ Pick one, record the decision here, and strip the ambiguity from the schema comm
 ### Also decide by end of Week 2 (not Week 1, but do not forget)
 
 - [ ] **C-3 `form`** — F-7 permits a lookup table *or* a ≤6-parameter regression.
-      Pick one and commit. Supporting both doubles B's interpolation logic for no
+      Pick one and commit. Supporting both doubles Aditya's interpolation logic for no
       research gain.
+- [ ] **Synthesizable *R* range** — sweep `-ngl` / `--threads` / `--parallel` per machine
+      and establish what range of *R* the physical pool can actually reach (F-9a).
+      Report it as a **range**, not a single figure (§7, MPR-2). This is new work that
+      SCOPE-CHANGE-001 adds to Week 2, and it is what buys the reduction in threat R2.
+- [ ] **F-9b engine-gap measurement** — vLLM vs llama.cpp on the strongest node, one
+      operating point, identical replayed trace. One number, reported as a bound on
+      external validity (threat R9). Do not let this slip past Week 2: it is the
+      evidence that the single-engine decision was accounted for rather than hidden.
 
 ---
 
@@ -115,8 +133,8 @@ These are not one-time checks. They are the things that will go wrong quietly.
 
 | Week | A delivers | B delivers | Joint gate |
 |---|---|---|---|
-| 1 | `scheduling.proto` frozen; trace generator with byte-identical determinism test; replay client against a **fake scheduler**; log schemas + fixture files | Scheduler skeleton against a **fake worker** that heartbeats scripted state; `Clock` and `StateStore` interfaces; RoundRobin only | End-to-end single request, real worker, real scheduler. Harness replays a seeded trace and emits joined records. |
-| 2 | Calibration campaign; **time-ordered C-3 snapshots**; τ and variance envelope | Remaining four policies against fixture cost models; StalenessVeil | **MPR-1 achieved.** C-3 frozen. |
+| 1 | `scheduling.proto` frozen; **one** worker wrapper (llama.cpp); trace generator with byte-identical determinism test; replay client against a **fake scheduler**; log schemas + fixture files | Scheduler skeleton against a **fake worker** that heartbeats scripted state; `Clock` and `StateStore` interfaces; RoundRobin only | End-to-end single request, real worker, real scheduler. Harness replays a seeded trace and emits joined records. |
+| 2 | Calibration campaign incl. `-ngl`/thread/slot sweep for the synthesizable *R* range (F-9a); **F-9b engine-gap measurement**; **time-ordered C-3 snapshots**; τ and variance envelope | Remaining four policies against fixture cost models; StalenessVeil | **MPR-1 achieved.** C-3 frozen. |
 | 3 | Admissible-set determination; validation-anchor runs at 3+ operating points | All five policies live from one config value; admission filter | Load band identified. **Feature freeze.** |
 | 4 | Pipeline hardened; figure scripts | DES parameterised from Week-2 snapshots; F-23 validation | Simulator agrees within stated tolerance. |
 | 5 | Figures for H1/H2/H3 | R × load × staleness × policy sweeps | Hypotheses tested. |

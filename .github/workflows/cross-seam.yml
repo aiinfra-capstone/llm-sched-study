@@ -1,4 +1,4 @@
-# The two tests that straddle the seam between Person A and Person B.
+# The two tests that straddle the seam between Divyansh Shukla (A) and Aditya Gupta (B).
 #
 # Both span code owned by different people, which is exactly why they run here
 # and not on somebody's laptop. §12.1: "Run it in CI, not by hand."

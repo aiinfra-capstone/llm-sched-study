@@ -1,29 +1,78 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/CAPSTONE_ORG/REPO/contracts/schemas/log_worker.schema.json",
-  "title": "C-4 — worker_{node_id}_{run_id}.jsonl (Person A)",
-  "description": "All durations are worker-local engine clocks.\n\nPrefill/decode split is obtainable without streaming: vLLM exposes per-request arrival/first-scheduled/first-token/finished times on its output object, and llama.cpp's server returns a timings block with prompt and predicted milliseconds. If either turns out NOT to expose it on your pinned version, log service_ns only and record F-18 as PARTIALLY SATISFIED in the manifest rather than faking the split.",
+  "title": "C-4 \u2014 worker_{node_id}_{run_id}.jsonl (Divyansh, A)",
+  "description": "All durations are worker-local engine clocks.\n\nSCOPE-CHANGE-001: every pool node runs llama.cpp, whose server returns a `timings` block with prompt_ms and predicted_ms \u2014 so the F-18 prefill/decode split comes from ONE code path for the whole pool rather than two engine-specific ones. If the pinned llama.cpp build does not expose it, log service_ns only and record f18_status='partial' in the manifest rather than faking the split.\n\n`engine` is retained because the F-9b engine-gap probe emits worker records too.",
   "type": "object",
-  "required": ["run_id", "req_id", "node_id", "engine", "queue_wait_ns",
-               "service_ns", "prompt_tokens", "output_tokens",
-               "batch_size_at_admission", "inflight_at_admission", "status"],
+  "required": [
+    "run_id",
+    "req_id",
+    "node_id",
+    "engine",
+    "queue_wait_ns",
+    "service_ns",
+    "prompt_tokens",
+    "output_tokens",
+    "batch_size_at_admission",
+    "inflight_at_admission",
+    "status"
+  ],
   "additionalProperties": false,
   "properties": {
-    "run_id": { "type": "string" },
-    "req_id": { "type": "string" },
-    "node_id": { "type": "string" },
-    "engine": { "enum": ["vllm", "llamacpp"] },
-    "queue_wait_ns": { "type": "integer" },
-    "prefill_ns": { "type": "integer", "description": "Omit if the pinned engine version does not expose it (F-18 partial)." },
-    "decode_ns": { "type": "integer", "description": "Omit if the pinned engine version does not expose it (F-18 partial)." },
-    "service_ns": { "type": "integer" },
-    "prompt_tokens": { "type": "integer" },
-    "output_tokens": { "type": "integer" },
-    "batch_size_at_admission": { "type": "integer",
-      "description": "F-4: routing considers the COMPOSITION of a target's in-flight set, not only its depth." },
-    "inflight_at_admission": { "type": "integer" },
-    "kv_occupancy_at_admission": { "type": "number",
-      "description": "Omit or -1.0 where the engine does not expose it." },
-    "status": { "enum": ["ok", "timeout", "oom", "engine_error"] }
+    "run_id": {
+      "type": "string"
+    },
+    "req_id": {
+      "type": "string"
+    },
+    "node_id": {
+      "type": "string"
+    },
+    "engine": {
+      "enum": [
+        "llamacpp",
+        "vllm"
+      ],
+      "description": "'llamacpp' for pool nodes; 'vllm' only for the F-9b probe."
+    },
+    "queue_wait_ns": {
+      "type": "integer"
+    },
+    "prefill_ns": {
+      "type": "integer",
+      "description": "Omit if the pinned engine version does not expose it (F-18 partial)."
+    },
+    "decode_ns": {
+      "type": "integer",
+      "description": "Omit if the pinned engine version does not expose it (F-18 partial)."
+    },
+    "service_ns": {
+      "type": "integer"
+    },
+    "prompt_tokens": {
+      "type": "integer"
+    },
+    "output_tokens": {
+      "type": "integer"
+    },
+    "batch_size_at_admission": {
+      "type": "integer",
+      "description": "F-4: routing considers the COMPOSITION of a target's in-flight set, not only its depth."
+    },
+    "inflight_at_admission": {
+      "type": "integer"
+    },
+    "kv_occupancy_at_admission": {
+      "type": "number",
+      "description": "llama.cpp exposes slot occupancy rather than paged-KV occupancy; report the fraction of --parallel slots in use. Omit or -1.0 where unavailable."
+    },
+    "status": {
+      "enum": [
+        "ok",
+        "timeout",
+        "oom",
+        "engine_error"
+      ]
+    }
   }
 }

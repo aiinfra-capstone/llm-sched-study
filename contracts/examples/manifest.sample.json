@@ -11,18 +11,32 @@
   "staleness_s": 0.0,
   "warmup_s": 60,
   "duration_s": 600,
-  "cost_model_snapshots": {"n1": "cm_rtx3090_awq_20260428T1412Z",
-                           "n2": "cm_rtx3090_awq_20260428T1412Z",
-                           "n3": "cm_cpu_q4km_20260428T1412Z"},
+  "cost_model_snapshots": {"n1": "cm_rtx3090_ngl99_p4_q4km_20260428T1412Z",
+                           "n2": "cm_rtx3090_ngl40_p4_q4km_20260428T1412Z",
+                           "n3": "cm_cpu_ngl0_p2_q4km_20260428T1412Z"},
+
+  "_comment_nodes": "SCOPE-CHANGE-001: one engine across the whole pool. R is set by engine_config (F-9a), not by engine differences. n1/n2 are the same GPU throttled differently — which is what makes R tunable on real hardware. Every node is on a distinct host: co-located nodes would contend for PCIe and memory bandwidth and reintroduce the confound.",
   "nodes": [
-    {"node_id": "n1", "host": "box-a", "engine": "vllm", "engine_version": "0.6.x",
-     "model": "llama3-8b", "quant": "awq", "gpu": "RTX 3090", "driver": "550.x",
-     "prefix_caching": false, "max_batch": 8}
+    {"node_id": "n1", "host": "box-a", "role": "pool",
+     "engine": "llamacpp", "engine_version": "b4231", "model": "llama3-8b",
+     "quant": "Q4_K_M", "gpu": "RTX 3090", "driver": "550.x",
+     "engine_config": {"ngl": 99, "threads": 8, "parallel": 4},
+     "prefix_caching": false, "max_batch": 4},
+    {"node_id": "n2", "host": "box-b", "role": "pool",
+     "engine": "llamacpp", "engine_version": "b4231", "model": "llama3-8b",
+     "quant": "Q4_K_M", "gpu": "RTX 3090", "driver": "550.x",
+     "engine_config": {"ngl": 40, "threads": 8, "parallel": 4},
+     "prefix_caching": false, "max_batch": 4},
+    {"node_id": "n3", "host": "box-c", "role": "pool",
+     "engine": "llamacpp", "engine_version": "b4231", "model": "llama3-8b",
+     "quant": "Q4_K_M", "gpu": "none", "driver": "none",
+     "engine_config": {"ngl": 0, "threads": 16, "parallel": 2},
+     "prefix_caching": false, "max_batch": 2}
   ],
   "git_shas": {"worker": "a3f1c09", "scheduler": "77bd120",
                "harness": "a3f1c09", "sim": "77bd120"},
   "f18_status": "full",
   "validity": {"max_send_lag_ms": 3.9, "send_lag_violations": 0,
                "dropped_requests": 0, "heartbeat_gaps": 0,
-               "engine_restarts": 0, "valid": true}
+               "engine_restarts": 0, "colocated_nodes": 0, "valid": true}
 }

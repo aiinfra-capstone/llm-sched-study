@@ -15,7 +15,7 @@
                            "n2": "cm_rtx3090_ngl40_p4_q4km_20260428T1412Z",
                            "n3": "cm_cpu_ngl0_p2_q4km_20260428T1412Z"},
 
-  "_comment_nodes": "SCOPE-CHANGE-001: one engine across the whole pool. R is set by engine_config (F-9a), not by engine differences. n1/n2 are the same GPU throttled differently — which is what makes R tunable on real hardware. Every node is on a distinct host: co-located nodes would contend for PCIe and memory bandwidth and reintroduce the confound.",
+  "_comment_nodes": "F-9: one engine across the whole pool. R is set by engine_config (F-9a), not by engine differences. n1/n2 are the same GPU throttled differently — which is what makes R tunable on real hardware. Every node is on a distinct host: co-located nodes would contend for PCIe and memory bandwidth and reintroduce the confound.",
   "nodes": [
     {"node_id": "n1", "host": "box-a", "role": "pool",
      "engine": "llamacpp", "engine_version": "b4231", "model": "llama3-8b",

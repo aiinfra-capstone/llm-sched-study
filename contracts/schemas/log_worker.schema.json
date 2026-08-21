@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/CAPSTONE_ORG/REPO/contracts/schemas/log_worker.schema.json",
   "title": "C-4 \u2014 worker_{node_id}_{run_id}.jsonl (Divyansh, A)",
-  "description": "All durations are worker-local engine clocks.\n\nSCOPE-CHANGE-001: every pool node runs llama.cpp, whose server returns a `timings` block with prompt_ms and predicted_ms \u2014 so the F-18 prefill/decode split comes from ONE code path for the whole pool rather than two engine-specific ones. If the pinned llama.cpp build does not expose it, log service_ns only and record f18_status='partial' in the manifest rather than faking the split.\n\n`engine` is retained because the F-9b engine-gap probe emits worker records too.",
+  "description": "All durations are worker-local engine clocks.\n\nF-9: every pool node runs llama.cpp, whose server returns a `timings` block with prompt_ms and predicted_ms \u2014 so the F-18 prefill/decode split comes from ONE code path for the whole pool rather than two engine-specific ones. If the pinned llama.cpp build does not expose it, log service_ns only and record f18_status='partial' in the manifest rather than faking the split.\n\n`engine` is retained because the F-9b engine-gap probe emits worker records too.",
   "type": "object",
   "required": [
     "run_id",

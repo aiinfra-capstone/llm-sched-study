@@ -29,7 +29,6 @@ pipeline  = "dataplane.pipeline.join:main"
 dev = [
     "pytest>=8.0",
     "ruff>=0.6",
-    "python-docx>=1.2.0", # docs/spec_to_md.py — keeps the .docx spec reviewable in PRs
 ]
 
 [build-system]

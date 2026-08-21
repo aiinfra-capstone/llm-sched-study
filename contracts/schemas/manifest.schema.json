@@ -87,7 +87,7 @@
       "minItems": 1,
       "items": {
         "type": "object",
-        "description": "Everything runtime-specific \u2014 ignore_eos, min_tokens/max_tokens, slot reuse disabled \u2014 is set once at engine construction and recorded HERE, so the settings that eliminate your confounds are auditable from the results.\n\nSCOPE-CHANGE-001: every POOL node runs the same engine (llama.cpp + GGUF). Engine and quantization are held constant so that the heterogeneity ratio R is a property of hardware and node configuration ALONE. What varies per node is engine_config (F-9a). A node with role='engine_gap_probe' is the F-9b measured condition and is NOT a pool member: it participates in no policy comparison.",
+        "description": "Everything runtime-specific \u2014 ignore_eos, min_tokens/max_tokens, slot reuse disabled \u2014 is set once at engine construction and recorded HERE, so the settings that eliminate your confounds are auditable from the results.\n\nF-9: every POOL node runs the same engine (llama.cpp + GGUF). Engine and quantization are held constant so that the heterogeneity ratio R is a property of hardware and node configuration ALONE. What varies per node is engine_config (F-9a). A node with role='engine_gap_probe' is the F-9b measured condition and is NOT a pool member: it participates in no policy comparison.",
         "required": [
           "node_id",
           "host",
@@ -240,7 +240,7 @@
         "colocated_nodes": {
           "type": "integer",
           "minimum": 0,
-          "description": "F-9a: throttling MUST be applied to distinct physical machines. Co-located logical nodes contend for PCIe, memory bandwidth and cache, which would reintroduce as contention the confound SCOPE-CHANGE-001 removes. Count of nodes sharing a `host` with another node. MUST be 0 for a valid run."
+          "description": "F-9a: throttling MUST be applied to distinct physical machines. Co-located logical nodes contend for PCIe, memory bandwidth and cache, which would reintroduce as contention the confound F-9 (single engine) removes. Count of nodes sharing a `host` with another node. MUST be 0 for a valid run."
         }
       }
     }

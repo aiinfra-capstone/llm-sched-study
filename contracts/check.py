@@ -21,7 +21,6 @@ Usage:  uv run contracts/check.py
 from __future__ import annotations
 
 import json
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -73,16 +72,18 @@ def check_examples() -> list[str]:
 
 
 def check_proto() -> list[str]:
-    from grpc_tools import protoc  # noqa: PLC0415  (import cost only when used)
+    from grpc_tools import protoc
 
     with tempfile.TemporaryDirectory() as out:
-        rc = protoc.main([
-            "protoc",
-            f"-I{ROOT}",
-            f"--python_out={out}",
-            f"--grpc_python_out={out}",
-            str(ROOT / "scheduling.proto"),
-        ])
+        rc = protoc.main(
+            [
+                "protoc",
+                f"-I{ROOT}",
+                f"--python_out={out}",
+                f"--grpc_python_out={out}",
+                str(ROOT / "scheduling.proto"),
+            ]
+        )
     if rc != 0:
         return ["scheduling.proto: does not compile (see protoc output above)"]
     print("  scheduling.proto             -> compiles")

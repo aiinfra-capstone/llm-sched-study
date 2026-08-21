@@ -5,20 +5,20 @@ description = "Divyansh (A) — worker wrapper, measurement harness, results pip
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
 dependencies = [
-    "grpcio>=1.60",
-    "grpcio-tools>=1.60",
-    "numpy>=1.26",
+    "grpcio>=1.60",       # C-1 transport
+    "grpcio-tools>=1.60", # stub generation from contracts/scheduling.proto
+    "httpx>=0.28.1",      # llama-server is an HTTP binary; this is the whole engine adapter
+    "numpy>=1.26",        # SeedSequence-based trace generation (F-16)
+    "pandas>=3.0.5",      # C-5 join
+    "pyarrow>=25.0.1",    # C-5 Parquet
+    "matplotlib>=3.11.1", # figures (F-19)
 ]
 
-[project.optional-dependencies]
-# Kept out of the base install so the pipeline stays laptop-runnable (§8.4:
-# "no network, no engine") and CI does not drag in CUDA wheels.
-pipeline = ["pandas>=2.2", "pyarrow>=15.0"]
-figures  = ["matplotlib>=3.8"]
-# The worker's engine deps are environment-specific and NOT pinned here.
-# Under SCOPE-CHANGE-001 the pool worker talks HTTP to a local llama-server, so it
-# has no Python dependency at all. Only the one-off F-9b engine-gap probe touches
-# vLLM, and only if driven as a library rather than through its OpenAI server.
+# No engine dependency: under F-9 the pool worker talks HTTP to a local
+# llama-server, so nothing here pulls CUDA wheels and the pipeline stays
+# laptop-runnable. Only the one-off F-9b engine-gap probe touches vLLM, and only
+# if driven as a library rather than through its OpenAI-compatible server —
+# install that in a throwaway environment, not here.
 
 [project.scripts]
 gen-trace = "dataplane.harness.gen_trace:main"
@@ -26,7 +26,11 @@ replay    = "dataplane.harness.replay:main"
 pipeline  = "dataplane.pipeline.join:main"
 
 [dependency-groups]
-dev = ["pytest>=8.0", "ruff>=0.6"]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+    "python-docx>=1.2.0", # docs/spec_to_md.py — keeps the .docx spec reviewable in PRs
+]
 
 [build-system]
 requires = ["uv_build>=0.9"]

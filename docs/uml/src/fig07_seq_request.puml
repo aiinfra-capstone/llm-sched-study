@@ -1,0 +1,68 @@
+@startuml fig07_seq_request
+!include theme.iuml
+title Figure 7 — Sequence: Request Lifecycle on Live Hardware
+
+participant "Replayer\nreplay.py" as REP <<instrument>>
+participant "Thin Client" as C
+participant "Scheduler\n(control plane only)" as S
+participant "Worker w_i" as W
+participant "Engine\nllama.cpp · GGUF" as E <<reused>>
+
+loop every heartbeat interval (F-10)
+  W -> S : Heartbeat { queue_depth, in_flight, recent_tok_s, kv_occupancy }
+  S -> S : CapabilityView.on_heartbeat()\nestimate_age := 0
+end
+
+== Request under study ==
+
+REP -> C : release(req_id) at scheduled offset
+activate REP
+REP -> REP : assert send_lag < budget\n(open-loop; guards against\ncoordinated omission)
+deactivate REP
+
+activate C
+C -> C : t0 := client clock
+C -> S : Submit { req_id, prompt_tokens, output_tokens,\nlength_bucket, tier }  ·  req_id in gRPC metadata
+activate S
+
+S -> S : **transport_in** measured at scheduler
+S -> S : candidates := AdmissionFilter.candidates(r)\n(F-13 / F-14)
+S -> S : states := CapabilityView.as_of(now - s)\ndeliberately aged by staleness s (F-8)
+S -> S : annotate candidates with in-flight\ncomposition, not just depth (F-4)
+S -> S : node := policy.choose(request, states, now, rng)\n(F-1 / F-2)
+S -> S : **dispatch** stage duration recorded
+S ->> S : DecisionRecord -> JSONL (F-3)
+
+S -> W : Dispatch { req_id, prompt, output_len }
+deactivate S
+
+activate W
+W -> W : **queue_wait** measured at worker
+W -> E : submit to running batch\n(engine owns batching — F-5)
+activate E
+E -> E : prefill  ->  **service_prefill**
+E -> E : decode with ignore_eos,\nmin_tokens = max_tokens = N  ->  **service_decode**
+E --> W : full response
+deactivate E
+W -> W : worker record -> JSONL
+W --> C : Response { req_id, tokens }
+deactivate W
+
+C -> C : t1 := client clock\n**end_to_end** := t1 - t0
+C -> C : client record -> JSONL
+deactivate C
+
+note over S
+  The scheduler never appears on the response
+  path. Responses travel worker -> client directly
+  (F-11), so the control plane cannot become the
+  data-path bottleneck it is being measured on.
+end note
+
+note over REP, E
+  Each stage duration is computed on the machine that
+  observed both of its endpoints. Cross-host differences
+  are never taken; the stages are reassembled offline
+  by joining the per-process logs on req_id (F-18).
+end note
+@enduml

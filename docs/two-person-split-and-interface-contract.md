@@ -3,13 +3,16 @@
 
 **Status:** proposal, to be frozen at end of Week 1 alongside the requirements spec.
 
-> ### ⚠ Amended by [SCOPE-CHANGE-001](SCOPE-CHANGE-001.md) — single inference engine
+> ### ⚠ Partly superseded by SCOPE-CHANGE-001 — single inference engine
 >
-> Accepted in Week 1. Every **pool** node runs llama.cpp with GGUF, GPU and CPU alike;
-> the mixed vLLM/llama.cpp pool is withdrawn. vLLM is retained as one measured condition
-> (F-9b), not as a pool member. The body of this document below is **not** rewritten —
-> the passages it supersedes are marked inline with `[SC-001]`. Where the two disagree,
-> SCOPE-CHANGE-001 wins.
+> Accepted in Week 1 and now **integrated into the requirements spec** (F-9, F-9a, F-9b;
+> threat R9). The [decision record](SCOPE-CHANGE-001.md) is kept for its rationale, but
+> [the spec](requirements-spec.md) is the authority.
+>
+> Every **pool** node runs llama.cpp with GGUF, GPU and CPU alike; the mixed
+> vLLM/llama.cpp pool is withdrawn. vLLM is retained as one measured condition (F-9b),
+> not as a pool member. The body of this document below is **not** rewritten — the
+> passages the spec now contradicts are marked inline with `[SC-001]`.
 >
 > Superseded here: the "Owns" row of §0's table, the two-adapter worker in §8.1, the
 > engine-specific F-18 note in §5, and — most consequentially — **the whole Python

@@ -1,0 +1,157 @@
+@startuml fig04_class_scheduler
+!include theme.iuml
+title Figure 4 — Class View: Scheduler Core and the Five-Policy Factorial
+
+skinparam linetype ortho
+
+interface DispatchPolicy <<interface>> {
+  +name : str
+  +choose(request : Request, node_states : list[NodeState], now : float, rng : Random) : NodeId
+}
+
+class RoundRobin <<queue-blind · hw-blind>> {
+  -cursor : int
+}
+class JSQ <<queue-aware · hw-blind>> {
+  +choose() : NodeId
+}
+class StaticWeighted <<queue-blind · hw-aware>> {
+  -weights : dict[NodeId, float]
+}
+class WJSQ <<queue-aware · hw-aware>> {
+  +score(n : NodeState) : float
+}
+class ThresholdT <<degenerate baseline, H2>> {
+  -T : float
+}
+
+DispatchPolicy <|.. RoundRobin
+DispatchPolicy <|.. JSQ
+DispatchPolicy <|.. StaticWeighted
+DispatchPolicy <|.. WJSQ
+DispatchPolicy <|.. ThresholdT
+
+' --- arrange the four factorial cells as a 2x2 block ---
+RoundRobin -[hidden]right- JSQ
+StaticWeighted -[hidden]right- WJSQ
+RoundRobin -[hidden]down- StaticWeighted
+JSQ -[hidden]down- WJSQ
+WJSQ -[hidden]right- ThresholdT
+
+note bottom of WJSQ
+  The four cells above form the **2x2 factorial** of §4.1: hardware-awareness
+  crossed with queue-awareness. H1 is a statement about the interaction term,
+  which a policy *ladder* could not decompose.
+end note
+
+class PolicyFactory {
+  +{static} from_config(name : str, params : dict) : DispatchPolicy
+}
+PolicyFactory ..> DispatchPolicy : creates
+
+class Scheduler {
+  -policy : DispatchPolicy
+  -view : CapabilityView
+  -admission : AdmissionFilter
+  -logger : DecisionLogger
+  +on_request(r : Request, now : float) : Dispatch
+}
+Scheduler o--> DispatchPolicy
+Scheduler o--> CapabilityView
+Scheduler o--> AdmissionFilter
+Scheduler ..> DecisionRecord : emits
+
+class Request {
+  +req_id : str
+  +scheduled_offset : float
+  +prompt_tokens : int
+  +output_tokens : int
+  +length_bucket : str
+  +priority : Tier
+  +content_seed : int
+}
+
+class NodeState {
+  +node_id : NodeId
+  +queue_depth : int
+  +in_flight : list[InFlightItem]
+  +recent_tok_s : float
+  +kv_occupancy : float
+  +observed_at : float
+  +estimate_age(now : float) : float
+}
+
+class InFlightItem {
+  +length_bucket : str
+  +tokens_remaining_est : int
+}
+NodeState *--> "0..*" InFlightItem
+
+class CapabilityView {
+  -staleness_s : float
+  -latest : dict[NodeId, NodeState]
+  +on_heartbeat(hb : Heartbeat) : void
+  +as_of(now : float) : list[NodeState]
+}
+CapabilityView ..> NodeState : serves aged copies
+CapabilityView o--> CostModel
+
+class StalenessInjector <<F-8>> {
+  +s : float
+  +age(view : CapabilityView, now : float) : list[NodeState]
+}
+CapabilityView *--> StalenessInjector
+
+abstract class CostModel <<F-6 / F-7>> {
+  +fitted_at : float
+  +n_parameters : int
+  +{abstract} expected_service_time(prompt_tokens : int, predicted_output_tokens : int, live : NodeState) : float
+}
+class BucketedLookupCostModel {
+  -table : dict[bucket, float]
+}
+class LowParamRegression {
+  -params : float[<= 6]
+}
+CostModel <|-- BucketedLookupCostModel
+CostModel <|-- LowParamRegression
+
+class AdmissionFilter <<F-13 / F-14>> {
+  +timeout_ceiling : float
+  +admissible(r : Request, n : NodeState) : bool
+  +candidates(r : Request, ns : list[NodeState]) : list[NodeState]
+}
+
+class DecisionRecord <<F-3>> {
+  +req_id : str
+  +policy : str
+  +chosen : NodeId
+  +candidates : list[NodeId]
+  +queue_depths : dict[NodeId, int]
+  +capability_estimates : dict[NodeId, float]
+  +estimate_ages : dict[NodeId, float]
+  +scores : dict[NodeId, float]
+  +decided_at : float
+}
+
+Scheduler ..> Request
+DispatchPolicy ..> Request : reads
+DispatchPolicy ..> NodeState : reads
+WJSQ ..> CostModel : weights by expected service time
+
+note top of DispatchPolicy
+  Pure function. Clock and randomness are **injected**, never read from the
+  ambient process — so one implementation runs unchanged in the live
+  scheduler and in the discrete-event simulator (F-2, F-21).
+end note
+
+note right of ThresholdT
+  Round-robin over nodes above cutoff T. Exists to test **H2**: as R grows,
+  the hardware-aware policy should collapse onto this one-line rule.
+end note
+
+note bottom of AdmissionFilter
+  Applied to **every** policy including the baselines, so no policy is charged
+  with infinite-latency outcomes it merely failed to avoid (F-14).
+end note
+@enduml

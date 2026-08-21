@@ -1,0 +1,69 @@
+@startuml fig08_seq_experiment
+!include theme.iuml
+title Figure 8 — Sequence: Experiment Execution and Simulator Validation
+
+actor Experimenter as EX
+participant "Runner\n(config + seed)" as RUN <<instrument>>
+participant "gen_trace.py" as GEN <<instrument>>
+participant "replay.py" as REP <<instrument>>
+participant "Live pool\nscheduler + workers" as HW
+participant "Simulator\n(shared policy code)" as SIM <<instrument>>
+participant "Record Joiner\n+ Figure Scripts" as AN <<instrument>>
+
+EX -> RUN : run(config.yaml, seed)
+activate RUN
+RUN -> RUN : emit run_manifest.json\nconfig hash · seed · code revision ·\nnode fingerprints · warmup window (F-20)
+
+group Trace construction — offline and deterministic (F-16)
+  RUN -> GEN : generate(workload_spec, seed)
+  activate GEN
+  GEN -> GEN : sample arrivals, length buckets,\npriority mix; fix content seeds
+  GEN --> RUN : trace.jsonl + checksum
+  deactivate GEN
+end
+
+group Hardware run — one trace, one policy per run (F-17)
+  loop for each policy in {RoundRobin, JSQ, StaticWeighted, WJSQ, Threshold(T)}
+    RUN -> REP : replay(trace, policy)
+    activate REP
+    REP -> HW : open-loop release of identical trace
+    activate HW
+    HW --> REP : responses
+    deactivate HW
+    REP -> REP : assert no send-lag violations
+    REP --> RUN : per-process JSONL paths
+    deactivate REP
+  end
+  RUN -> AN : join(paths) on req_id
+  AN -> AN : discard warmup window,\ncompute MetricSet
+  AN --> RUN : hardware MetricSet at 3+ operating points
+end
+
+group Simulator calibration and validation (F-22, F-23)
+  RUN -> SIM : parameterise ServiceTimeModel\nfrom Week-2 calibration + variance envelope
+  RUN -> SIM : run(same trace, same policy objects)
+  activate SIM
+  SIM --> RUN : simulated StageRecords
+  deactivate SIM
+  RUN -> AN : compare(sim, hardware)
+  AN --> RUN : ValidationReport\np50 / p95 error vs. stated tolerance
+end
+
+alt within tolerance at >= 3 operating points
+  RUN -> SIM : sweep R x load x staleness x policy x N (F-24)
+  activate SIM
+  SIM --> AN : simulated records, flagged simulated
+  deactivate SIM
+  AN -> AN : H1 — 2x2 interaction term\nH2 — peak in (WJSQ - JSQ) over R\nH3 — peak shift under staleness
+  AN --> EX : figures + hypothesis tests
+else outside tolerance
+  RUN --> EX : report validation error;\nrestrict claims to the hardware-grounded\nrange only (threat R2)
+end
+deactivate RUN
+
+note over AN
+  Every figure is produced by script from the joined
+  record set. No manual step exists between a record
+  and a published figure (F-19).
+end note
+@enduml

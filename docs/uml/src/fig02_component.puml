@@ -1,0 +1,93 @@
+@startuml fig02_component
+!include theme.iuml
+title Figure 2 — Component View: Control Plane, Data Path, and the Shared-Policy Boundary
+
+skinparam componentStyle rectangle
+skinparam linetype ortho
+skinparam nodesep 22
+skinparam ranksep 42
+
+package "Measurement harness — Week-1 deliverable (F-16 – F-20)" #FFFCF5 {
+  [gen_trace.py\ndeterministic, offline] as GEN
+  artifact "trace.jsonl + run_manifest.json\nconfig hash · seed · code revision" as TRACE
+  [replay.py\nopen-loop · no runtime RNG] as REP
+}
+
+package "Client tier" {
+  [Thin Client] as CLIENT
+}
+
+package "Control plane — centralised scheduler (F-12)" {
+  [Admission Filter\nF-13 / F-14] as ADM
+  [Cost Model\nF-6 / F-7] as CM
+  [Capability View\n+ Staleness Injector · F-8] as CAP
+  [Batch-Aware Router\nF-4 / F-5] as BAR
+  [Dispatch Policy\nfive policies, one interface · F-1 / F-2] as POL
+  [Heartbeat Collector\nF-10] as HB
+  [Decision Logger\nF-3] as DLOG
+}
+
+package "Worker tier — one full replica per node" {
+  [Worker Wrapper\nF-9] as WW
+  [llama.cpp engine · GGUF] as LCPP <<reused>>
+}
+
+package "Simulation (F-21 – F-24)" #FFFCF5 {
+  [Service-Time Model\nfitted + stochastic · F-22] as STM
+  [Discrete-Event Simulator] as DES
+}
+
+package "Records and analysis (F-18 – F-20, F-23)" #FFFCF5 {
+  database "per-process JSONL" as LOGS
+  [Record Joiner\njoin on req_id] as JOIN
+  [Validator\np50 / p95 tolerance] as VAL
+  [Figure Scripts] as FIG
+}
+
+GEN -down-> TRACE
+TRACE -down-> REP
+REP -down-> CLIENT : release at\nscheduled offset
+CLIENT -down-> ADM : **Submit**\ngRPC · req_id in metadata
+ADM -down-> CAP
+CM -right-> CAP
+CAP -down-> POL
+BAR -right-> POL
+HB -up-> CAP
+POL -right-> DLOG
+POL -down-> WW : **Dispatch**\ngRPC
+WW -up-> HB : **Heartbeat**\ngRPC stream
+WW -down-> LCPP
+WW -[#B45309]up-> CLIENT : **full response**\nworker to client, direct · F-11
+
+TRACE -right-> DES : same trace replayed\nacross the boundary (F-17)
+POL .[#B45309].> DES : **the same policy objects**\nnot a reimplementation (F-21)
+STM -down-> DES
+
+DLOG -down-> LOGS
+WW -right-> LOGS
+CLIENT -right-> LOGS
+DES -down-> LOGS
+LOGS -right-> JOIN
+JOIN -down-> VAL
+JOIN -down-> FIG
+
+note right of POL
+  RoundRobin · JSQ · StaticWeighted · WJSQ · Threshold(T)
+  Selected by one configuration value, with no code
+  change between runs.
+end note
+
+note bottom of WW
+  One runtime on every node, GPU and CPU alike (F-9), so engine-internal
+  batching is **one mechanism rather than two** and R is a property of
+  hardware and configuration alone. Engine internals are never modified:
+  batching is owned inside the engine (F-5) and the scheduler influences
+  batch composition only by choosing where to route (F-4).
+end note
+
+legend right
+  <color:#BFD6D1>███</color>  system under study
+  <color:#EBC98F>███</color>  instrumentation
+  <color:#C9C9C2>███</color>  reused third-party runtime
+endlegend
+@enduml

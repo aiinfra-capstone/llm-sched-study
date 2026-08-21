@@ -1,0 +1,217 @@
+' ─────────────────────────────────────────────────────────────
+'  Shared figure theme
+'  "Scheduling LLM Inference Under Uncalibrated Heterogeneity"
+'  Palette: teal = system under study · amber = instrumentation
+'           grey = reused third-party runtime
+' ─────────────────────────────────────────────────────────────
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+skinparam defaultFontName "DejaVu Sans"
+skinparam defaultFontSize 12
+skinparam defaultFontColor #12312E
+skinparam roundCorner 8
+skinparam nodesep 40
+skinparam ranksep 50
+skinparam wrapWidth 480
+skinparam maxMessageSize 190
+skinparam padding 3
+
+skinparam ArrowColor #46615D
+skinparam ArrowFontColor #46615D
+skinparam ArrowFontSize 11
+skinparam ArrowThickness 1
+
+skinparam TitleFontSize 15
+skinparam TitleFontColor #0F5257
+skinparam TitleFontStyle bold
+skinparam TitleBorderThickness 0
+
+skinparam NoteBackgroundColor #FFFDF6
+skinparam NoteBorderColor #C99A4A
+skinparam NoteBorderThickness 1
+skinparam NoteFontSize 11
+skinparam NoteFontColor #5A4526
+
+skinparam LegendBackgroundColor #FFFFFF
+skinparam LegendBorderColor #D6DEDC
+skinparam LegendFontSize 11
+
+skinparam StereotypeFontSize 10
+skinparam StereotypeFontColor #5C7370
+
+skinparam package {
+  BackgroundColor #FCFDFD
+  BorderColor #C3D4D0
+  BorderThickness 1
+  FontColor #0F5257
+  FontStyle bold
+  FontSize 12
+}
+skinparam package<<instrument>> {
+  BackgroundColor #FFFCF5
+  BorderColor #D9B679
+  FontColor #8A5A12
+}
+
+skinparam rectangle {
+  BackgroundColor #F2F7F6
+  BorderColor #7FA6A0
+  FontColor #12312E
+}
+skinparam component {
+  BackgroundColor #F2F7F6
+  BorderColor #7FA6A0
+  BorderThickness 1
+  FontColor #12312E
+  FontSize 11
+}
+skinparam component<<reused>> {
+  BackgroundColor #F3F3F1
+  BorderColor #B0B0A8
+  FontColor #4A4A44
+}
+skinparam component<<instrument>> {
+  BackgroundColor #FDF4E6
+  BorderColor #C99A4A
+  FontColor #6B4A12
+}
+skinparam interface {
+  BackgroundColor #FFFFFF
+  BorderColor #0F5257
+  FontColor #0F5257
+  FontSize 11
+}
+skinparam database {
+  BackgroundColor #FDF4E6
+  BorderColor #C99A4A
+  FontColor #6B4A12
+  FontSize 11
+}
+skinparam artifact {
+  BackgroundColor #FDF4E6
+  BorderColor #C99A4A
+  FontColor #6B4A12
+  FontSize 11
+}
+skinparam node {
+  BackgroundColor #FAFCFB
+  BorderColor #7FA6A0
+  FontColor #0F5257
+  FontSize 11
+}
+skinparam node<<instrument>> {
+  BackgroundColor #FFFCF5
+  BorderColor #C99A4A
+  FontColor #8A5A12
+}
+skinparam cloud {
+  BackgroundColor #FFFFFF
+  BorderColor #B9CCC8
+  FontColor #5C7370
+}
+
+skinparam class {
+  BackgroundColor #FCFDFD
+  BorderColor #7FA6A0
+  BorderThickness 1
+  FontColor #12312E
+  FontSize 12
+  AttributeFontSize 11
+  AttributeFontColor #35524A
+  AttributeIconSize 0
+  HeaderBackgroundColor #E7F0EE
+  StereotypeFontColor #5C7370
+}
+skinparam class<<interface>> {
+  HeaderBackgroundColor #DCEAE7
+  BorderColor #0F5257
+}
+skinparam class<<instrument>> {
+  HeaderBackgroundColor #FBEFDA
+  BorderColor #C99A4A
+}
+skinparam class<<reused>> {
+  HeaderBackgroundColor #EDEDEA
+  BorderColor #B0B0A8
+}
+
+skinparam sequence {
+  ArrowColor #46615D
+  ArrowFontSize 11
+  LifeLineBorderColor #B9CCC8
+  LifeLineBackgroundColor #EEF4F3
+  ParticipantBackgroundColor #F2F7F6
+  ParticipantBorderColor #7FA6A0
+  ParticipantFontColor #12312E
+  ParticipantFontSize 12
+  ParticipantPadding 18
+  BoxPadding 12
+  ActorBackgroundColor #FFFFFF
+  ActorBorderColor #0F5257
+  BoxBackgroundColor #FAFCFB
+  BoxBorderColor #C3D4D0
+  BoxFontColor #0F5257
+  GroupBackgroundColor #E7F0EE
+  GroupBorderColor #7FA6A0
+  GroupHeaderFontColor #0F5257
+  GroupHeaderFontSize 11
+  GroupBodyBackgroundColor #FFFFFF
+  DividerBackgroundColor #EEF4F3
+  DividerBorderColor #C3D4D0
+  DividerFontColor #0F5257
+  ReferenceBackgroundColor #FFFCF5
+  ReferenceBorderColor #C99A4A
+}
+skinparam participant<<instrument>> {
+  BackgroundColor #FDF4E6
+  BorderColor #C99A4A
+  FontColor #6B4A12
+}
+skinparam participant<<reused>> {
+  BackgroundColor #F3F3F1
+  BorderColor #B0B0A8
+  FontColor #4A4A44
+}
+
+skinparam state {
+  BackgroundColor #F2F7F6
+  BorderColor #7FA6A0
+  FontColor #12312E
+  FontSize 12
+  AttributeFontSize 11
+  AttributeFontColor #5C7370
+  StartColor #0F5257
+  EndColor #0F5257
+}
+skinparam state<<terminal>> {
+  BackgroundColor #FDF4E6
+  BorderColor #C99A4A
+}
+
+skinparam activity {
+  BackgroundColor #F2F7F6
+  BorderColor #7FA6A0
+  FontColor #12312E
+  FontSize 12
+  StartColor #0F5257
+  EndColor #0F5257
+  BarColor #0F5257
+  DiamondBackgroundColor #FFFCF5
+  DiamondBorderColor #C99A4A
+  DiamondFontColor #6B4A12
+  DiamondFontSize 11
+}
+
+skinparam usecase {
+  BackgroundColor #F2F7F6
+  BorderColor #7FA6A0
+  FontColor #12312E
+  FontSize 11
+}
+skinparam actor {
+  BackgroundColor #FFFFFF
+  BorderColor #0F5257
+  FontColor #12312E
+  FontSize 11
+}
+skinparam actorStyle awesome

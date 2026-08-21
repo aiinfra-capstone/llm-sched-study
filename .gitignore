@@ -29,3 +29,9 @@ figures/out/
 # Calibration snapshots are the exception: the TIME-ORDERED C-3 series is an
 # input to B's DES and to H3, so it is versioned. Keep it under contracts/.
 !contracts/examples/*.json
+
+# UML figures: sources and the report's pdf-notitle set are committed; the PNG and
+# title-bearing PDF renders are ~6 MB and regenerable via docs/uml/render.sh.
+docs/uml/out/png/
+docs/uml/out/pdf/
+docs/uml/.plantuml/

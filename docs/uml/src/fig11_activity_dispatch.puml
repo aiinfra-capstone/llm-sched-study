@@ -1,0 +1,63 @@
+@startuml fig11_activity_dispatch
+!include theme.iuml
+title Figure 11 — Activity: One Dispatch Decision
+
+|#FAFCFB|Client|
+start
+:submit request\n(req_id in gRPC metadata);
+
+|#F2F7F6|Scheduler|
+:stamp arrival on the scheduler clock;
+:filter nodes by admissibility\nfor this (prompt, output) bucket;
+if (any admissible node?) then (no)
+  :record cliff event;
+  note right
+    Reported separately (F-15),
+    excluded from primary
+    tail statistics.
+  end note
+  :return rejection;
+  stop
+else (yes)
+endif
+
+:read CapabilityView **as of now - s**;
+note right
+  s = 0 in the default configuration;
+  s > 0 is the manipulated variable of H3.
+end note
+
+:attach live queue depth and\nin-flight composition to each candidate;
+
+switch (configured policy — one config value, F-1)
+case (RoundRobin)
+  :advance cursor over admissible set;
+case (JSQ)
+  :pick minimum queue depth;
+case (StaticWeighted)
+  :sample by calibrated weight,\nignoring live queue;
+case (WJSQ)
+  :minimise queue depth ÷ calibrated capability,\nvia CostModel.expected_service_time();
+case (Threshold T)
+  :round-robin over nodes\nwith capability > T;
+endswitch
+
+:write DecisionRecord —\nqueue depths, capability estimates,\nestimate ages, candidate scores (F-3);
+:dispatch to chosen node;
+
+|#FAFCFB|Worker|
+:enqueue;
+:hand to engine's running batch;
+:generate full response;
+:emit worker record;
+
+|#FAFCFB|Client|
+:receive response directly from worker (F-11);
+:emit client record;
+stop
+
+legend bottom
+  Every branch above shares one interface and one admissible set,
+  so **policy is the only factor that varies** across a comparison (F-2, F-14).
+endlegend
+@enduml

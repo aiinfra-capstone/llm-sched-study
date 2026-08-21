@@ -1,0 +1,129 @@
+@startuml fig05_class_harness
+!include theme.iuml
+title Figure 5 — Class View: Measurement Harness and Results Pipeline
+
+skinparam nodesep 26
+skinparam ranksep 50
+skinparam wrapWidth 360
+
+package "Trace generation — offline, deterministic (F-16)" #FFFCF5 {
+  class TraceGenerator {
+    +seed : int
+    +generate(spec : WorkloadSpec) : Trace
+  }
+  class WorkloadSpec {
+    +arrival : ArrivalProcess
+    +length_dist : LengthDistribution
+    +priority_mix : dict[Tier, float]
+    +duration_s : float
+    +admissible_buckets : list[str]
+  }
+  abstract class ArrivalProcess {
+    +{abstract} offsets(rng : Random) : list[float]
+  }
+  class PoissonArrivals
+  class BurstyMMPP {
+    +state_matrix
+  }
+  class LengthDistribution {
+    +buckets : list[str]
+    +sample(rng : Random) : (int, int)
+  }
+  class Trace {
+    +trace_id : str
+    +requests : list[Request]
+    +checksum : str
+  }
+  ArrivalProcess <|-- PoissonArrivals
+  ArrivalProcess <|-- BurstyMMPP
+  WorkloadSpec *--> ArrivalProcess
+  WorkloadSpec *--> LengthDistribution
+  TraceGenerator ..> WorkloadSpec : configured by
+  TraceGenerator ..> Trace : produces
+}
+
+package "Replay — open loop, no runtime randomness (F-17, F-20)" #FFFCF5 {
+  class Replayer {
+    -trace : Trace
+    -clock : Clock
+    +run() : void
+    -assert_send_lag(actual : float, budget : float) : void
+  }
+  class RunManifest {
+    +run_id : str
+    +config_hash : str
+    +seed : int
+    +trace_checksum : str
+    +policy : str
+    +staleness_s : float
+    +node_fingerprints : dict
+    +warmup_discard_s : float
+    +code_revision : str
+  }
+  Replayer o--> Trace
+  Replayer ..> RunManifest : emits
+}
+
+package "Records and analysis (F-18, F-19)" #FFFCF5 {
+  class JsonlLogger {
+    +process_id : str
+    +write(rec : dict) : void
+  }
+  class StageRecord {
+    +req_id : str
+    +transport_in : float
+    +dispatch : float
+    +queue_wait : float
+    +service_prefill : float
+    +service_decode : float
+    +transport_out : float
+    +end_to_end : float
+    +origin : str
+  }
+  class RecordJoiner {
+    +join(paths : list[Path]) : DataFrame
+    +discard_warmup(window_s : float) : DataFrame
+  }
+  class MetricSet {
+    +p50 : float
+    +p95 : float
+    +p99 : float
+    +queue_wait_share : float
+    +routing_error_rate : float
+    +utilisation : dict[NodeId, float]
+    +hi_prio_p99_under_lo_load : float
+  }
+  class FigureScript {
+    +render(df : DataFrame) : Path
+  }
+  JsonlLogger ..> StageRecord : one file per process
+  RecordJoiner ..> StageRecord : assembles on req_id
+  RecordJoiner ..> MetricSet : computes
+  MetricSet --> FigureScript
+}
+
+interface Clock <<interface>> {
+  +now() : float
+}
+Replayer ..> Clock : injected, never ambient
+
+note bottom of JsonlLogger
+  One JSONL file per process. No timestamp is ever subtracted across machines:
+  each process reports only durations whose endpoints it observed itself, and the
+  stages are reassembled offline by joining on req_id (F-18).
+end note
+
+note right of Replayer
+  Open loop. Release times come from the trace, not from
+  completions, so a slow pool cannot silently throttle the
+  offered load — the coordinated-omission failure mode.
+  A send-lag assertion turns violation into a failed run
+  rather than a quiet bias.
+end note
+
+note bottom of RunManifest
+  Emitted for every run. This is what makes "reproducible from
+  a single config file plus a seed" (F-20) checkable rather than
+  merely claimed.
+end note
+@enduml

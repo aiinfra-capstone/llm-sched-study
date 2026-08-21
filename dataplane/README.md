@@ -9,7 +9,7 @@ measurement, trace generator, replay client, log join pipeline, figures.
 **Load profile:** front-heavy, Weeks 1–3.
 
 ```bash
-uv sync --all-extras
+uv sync --all-groups
 uv run pytest
 ```
 

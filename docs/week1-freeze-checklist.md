@@ -55,36 +55,27 @@ decision that must be closed *before* the freeze, not after.
 
 ---
 
-## Open decision — resolve before the freeze
+## Closed decision
 
-### §13 — the `priority` inconsistency
+### §13 — the `priority` inconsistency — **RESOLVED**
 
-`priority` appears in the trace schema (F-16 requires a configurable priority mix) and
-in the dependent variables (§5.4: high-priority p99 under low-priority load). But
-**none of the five policies in the 2×2 design is priority-aware**, and priority tiers
-were dropped from the 6-week scope relative to the earlier pitch.
+**Resolution: passthrough label only.** See
+[SCOPE-CHANGE-002](SCOPE-CHANGE-002.md) for the full record.
 
-Two coherent resolutions:
+`priority` is generated (F-16) and carried through the trace and every log record, but no
+policy reads it, and *"high-priority p99 under low-priority load"* is withdrawn from
+§5.4's dependent variables.
 
-1. **Carry `priority` as a passthrough label only.** It travels in the trace and the
-   logs, no policy reads it, and §5.4's priority metric is dropped from the dependent
-   variables. Cleanest, and costs nothing.
-2. **Add a priority dimension to the request space** and report the high-priority p99
-   metric as a descriptive observation under policies that are priority-blind — i.e.
-   "here is what happens to interactive requests when nothing protects them." A
-   legitimate small finding, requires no new policy, costs one figure and some Week-5
-   analysis.
+The reason it had to go rather than simply be left alone: with priority drawn
+independently of the length bucket and no policy acting on it, high-priority latency
+equals overall latency **by construction**. The metric could not have carried information
+in any condition, in any run.
 
-**The failure case is leaving `priority` in the schema, never acting on it, and having
-an examiner ask what it's for.**
-
-Status: **OPEN.** Both paths are currently left open in the schemas —
-`contracts/schemas/trace.schema.json` carries the field with a pointer to this section.
-Pick one, record the decision here, and strip the ambiguity from the schema comment.
-
-- [ ] Resolution chosen: ______________________
-- [ ] Decided by: ______________  Date: __________
-- [ ] Schema comment updated to state the chosen resolution
+- [x] Resolution chosen: **passthrough label only** (SCOPE-CHANGE-002)
+- [x] Decided by: Divyansh Shukla — 2026-08-22
+- [x] Schema comments updated to state the chosen resolution
+- [ ] **Replacement text applied to the spec `.docx` and the PDF re-exported**
+      — §5.4 and §9, per SCOPE-CHANGE-002 §3 and §4. *This is the one step left.*
 
 ### Also decide by end of Week 2 (not Week 1, but do not forget)
 

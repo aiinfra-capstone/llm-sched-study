@@ -1,10 +1,15 @@
 <!-- GENERATED FILE — DO NOT EDIT.
 
 Rendered from scheduling-requirements-spec.docx by docs/spec_to_md.py.
-The .docx is the source of truth; this mirror exists so that spec changes are
-visible in a pull-request diff and readable on GitHub. Regenerate with:
 
-    uv run --directory dataplane python ../docs/spec_to_md.py
+The .docx is the source of truth and is kept outside this repository; the PDF beside
+this file is the shareable copy. This mirror exists so that spec changes are visible
+in a pull-request diff and readable inline on GitHub.
+
+Regenerate whenever the spec changes -- in the SAME commit, because CI cannot verify
+this file when the .docx is not reachable:
+
+    uv run --directory dataplane python ../docs/spec_to_md.py --docx <path-to.docx>
 -->
 
 # Scheduling LLM Inference Under Uncalibrated Heterogeneity

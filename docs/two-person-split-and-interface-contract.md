@@ -464,6 +464,11 @@ The fixture-first pattern in Week 1 is what buys the parallelism. Neither person
 
 ## 13. One inconsistency to resolve before freezing
 
+> **RESOLVED — [SCOPE-CHANGE-002](SCOPE-CHANGE-002.md).** Passthrough label only: the
+> first of the two options below. `priority` is generated and carried through the trace
+> and logs, no policy reads it, and §5.4's priority metric is withdrawn. The section is
+> kept for the reasoning; the decision is made.
+
 `priority` appears in the trace schema (F-16 requires a configurable priority mix) and in the dependent variables (§5.4: high-priority p99 under low-priority load). But **none of the five policies in the 2×2 design is priority-aware**, and priority tiers were dropped from the 6-week scope relative to the earlier pitch.
 
 Two coherent resolutions:
@@ -471,4 +476,10 @@ Two coherent resolutions:
 - **Carry priority as a passthrough label only.** It travels in the trace and the logs, no policy reads it, and §5.4's priority metric is dropped from the dependent variables. Cleanest, and costs nothing.
 - **Add a priority dimension to the request space** and report the high-priority p99 metric as a descriptive observation under policies that are priority-blind — i.e. "here is what happens to interactive requests when nothing protects them." That's a legitimate small finding and requires no new policy.
 
-Pick one at freeze. The failure case is leaving `priority` in the schema, never acting on it, and having an examiner ask what it's for.
+~~Pick one at freeze.~~ **Picked:** the first. The failure case named here — leaving `priority` in the schema, never acting on it, and having an examiner ask what it's for — is precisely what SCOPE-CHANGE-002 forecloses, by removing the *metric* while keeping the *label*.
+
+There is a third option, considered and deferred to §9 rather than rejected outright:
+correlate priority with request length (interactive → short, background → long). That is
+the only variant in which the metric becomes informative, because short requests then
+queue behind long ones and head-of-line blocking becomes measurable and genuinely
+policy-dependent. It was declined on cost against a timeline with no slack, not on merit.

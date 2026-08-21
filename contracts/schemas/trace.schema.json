@@ -1,81 +1,204 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/CAPSTONE_ORG/REPO/contracts/schemas/trace.schema.json",
-  "title": "C-2 — Trace file record",
-  "description": "JSONL. Line 1 is the header record; every subsequent line is one request. Token IDs are NOT stored — only content_seed. The materializer turns (content_seed, prompt_len, vocab_size) into an exact token sequence deterministically, which keeps traces small and diffable and makes the file portable to the simulator, which needs no token content at all. Regenerating a trace with the same seed and parameters MUST produce a byte-identical file (Week-1 test, not an assumption). Float formatting is the usual culprit: arrival_offset_s is fixed at 4 decimal places. The trace's SHA-256 is the identity used everywhere downstream.",
-  "oneOf": [{ "$ref": "#/$defs/header" }, { "$ref": "#/$defs/req" }],
+  "title": "C-2 \u2014 Trace file record",
+  "description": "JSONL. Line 1 is the header record; every subsequent line is one request. Token IDs are NOT stored \u2014 only content_seed. The materializer turns (content_seed, prompt_len, vocab_size) into an exact token sequence deterministically, which keeps traces small and diffable and makes the file portable to the simulator, which needs no token content at all. Regenerating a trace with the same seed and parameters MUST produce a byte-identical file (Week-1 test, not an assumption). Float formatting is the usual culprit: arrival_offset_s is fixed at 4 decimal places. The trace's SHA-256 is the identity used everywhere downstream.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/header"
+    },
+    {
+      "$ref": "#/$defs/req"
+    }
+  ],
   "$defs": {
     "header": {
       "type": "object",
-      "required": ["record", "trace_schema", "gen_seed", "n_requests", "duration_s",
-                   "arrival", "length_dist", "priority_mix", "admissible",
-                   "vocab_size", "reserved_ids_excluded", "generator_git_sha"],
+      "required": [
+        "record",
+        "trace_schema",
+        "gen_seed",
+        "n_requests",
+        "duration_s",
+        "arrival",
+        "length_dist",
+        "priority_mix",
+        "admissible",
+        "vocab_size",
+        "reserved_ids_excluded",
+        "generator_git_sha"
+      ],
       "additionalProperties": false,
       "properties": {
-        "record": { "const": "header" },
-        "trace_schema": { "type": "integer", "const": 1,
-          "description": "Version gate. Loaders MUST reject unknown versions loudly rather than defaulting (§12.2)." },
-        "gen_seed": { "type": "integer" },
-        "n_requests": { "type": "integer", "minimum": 1 },
-        "duration_s": { "type": "number", "exclusiveMinimum": 0 },
+        "record": {
+          "const": "header"
+        },
+        "trace_schema": {
+          "type": "integer",
+          "const": 1,
+          "description": "Version gate. Loaders MUST reject unknown versions loudly rather than defaulting (\u00a712.2)."
+        },
+        "gen_seed": {
+          "type": "integer"
+        },
+        "n_requests": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "duration_s": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
         "arrival": {
           "type": "object",
           "description": "F-16: seeded arrival process, Poisson with configurable burst structure.",
-          "required": ["process"],
+          "required": [
+            "process"
+          ],
           "properties": {
-            "process": { "enum": ["poisson", "mmpp"] },
-            "lambda_base": { "type": "number", "exclusiveMinimum": 0 },
-            "burst_lambda": { "type": "number", "exclusiveMinimum": 0 },
-            "burst_mean_s": { "type": "number", "exclusiveMinimum": 0 },
-            "quiet_mean_s": { "type": "number", "exclusiveMinimum": 0 }
+            "process": {
+              "enum": [
+                "poisson",
+                "mmpp"
+              ]
+            },
+            "lambda_base": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "burst_lambda": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "burst_mean_s": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "quiet_mean_s": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
           }
         },
         "length_dist": {
           "type": "object",
-          "required": ["buckets", "weights"],
+          "required": [
+            "buckets",
+            "weights"
+          ],
           "properties": {
-            "buckets": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
-            "weights": { "type": "array", "items": { "type": "number", "minimum": 0 }, "minItems": 1 }
+            "buckets": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1
+            },
+            "weights": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "minimum": 0
+              },
+              "minItems": 1
+            }
           }
         },
         "priority_mix": {
           "type": "object",
-          "description": "F-16 requires a configurable priority mix. NOTE: §13 of the split doc is OPEN — none of the five policies in the 2x2 design is priority-aware. Resolve at freeze: passthrough label only, or descriptive observation. See docs/week1-freeze-checklist.md.",
-          "patternProperties": { "^[0-9]+$": { "type": "number", "minimum": 0, "maximum": 1 } },
+          "description": "F-16 requires a configurable priority mix. SCOPE-CHANGE-002: `priority` is a PASSTHROUGH LABEL. It is generated (F-16) and carried through the trace and every log record, but no policy in \u00a74.1 reads it and no priority-conditioned metric is reported. Keep emitting it \u2014 the field costs nothing and keeps the trace format stable for future work (\u00a79) \u2014 but do not build anything that branches on it.",
+          "patternProperties": {
+            "^[0-9]+$": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          },
           "additionalProperties": false
         },
-        "admissible": { "$ref": "#/$defs/admissibility" },
-        "vocab_size": { "type": "integer", "minimum": 1 },
-        "reserved_ids_excluded": { "type": "boolean" },
-        "generator_git_sha": { "type": "string" }
+        "admissible": {
+          "$ref": "#/$defs/admissibility"
+        },
+        "vocab_size": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "reserved_ids_excluded": {
+          "type": "boolean"
+        },
+        "generator_git_sha": {
+          "type": "string"
+        }
       }
     },
     "req": {
       "type": "object",
-      "required": ["record", "req_id", "arrival_offset_s", "prompt_len",
-                   "output_len", "bucket_id", "priority", "content_seed"],
+      "required": [
+        "record",
+        "req_id",
+        "arrival_offset_s",
+        "prompt_len",
+        "output_len",
+        "bucket_id",
+        "priority",
+        "content_seed"
+      ],
       "additionalProperties": false,
       "properties": {
-        "record": { "const": "req" },
-        "req_id": { "type": "string", "pattern": "^r[0-9]{6}$" },
-        "arrival_offset_s": { "type": "number", "minimum": 0,
-          "description": "Serialized at EXACTLY 4 decimal places. Byte-identical regeneration depends on this." },
-        "prompt_len": { "type": "integer", "minimum": 1 },
-        "output_len": { "type": "integer", "minimum": 1 },
-        "bucket_id": { "type": "string" },
-        "priority": { "type": "integer", "minimum": 0,
-          "description": "0 = interactive, 1 = background. See §13 note on priority_mix above." },
-        "content_seed": { "type": "integer" }
+        "record": {
+          "const": "req"
+        },
+        "req_id": {
+          "type": "string",
+          "pattern": "^r[0-9]{6}$"
+        },
+        "arrival_offset_s": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Serialized at EXACTLY 4 decimal places. Byte-identical regeneration depends on this."
+        },
+        "prompt_len": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "output_len": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "bucket_id": {
+          "type": "string"
+        },
+        "priority": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "0 = interactive, 1 = background. SCOPE-CHANGE-002: `priority` is a PASSTHROUGH LABEL. It is generated (F-16) and carried through the trace and every log record, but no policy in \u00a74.1 reads it and no priority-conditioned metric is reported. Keep emitting it \u2014 the field costs nothing and keeps the trace format stable for future work (\u00a79) \u2014 but do not build anything that branches on it."
+        },
+        "content_seed": {
+          "type": "integer"
+        }
       }
     },
     "admissibility": {
       "type": "object",
       "description": "F-13: the (prompt, output) length range every pool node can serve within the timeout ceiling.",
-      "required": ["max_prompt", "max_output", "timeout_ceiling_ms"],
+      "required": [
+        "max_prompt",
+        "max_output",
+        "timeout_ceiling_ms"
+      ],
       "properties": {
-        "max_prompt": { "type": "integer", "minimum": 1 },
-        "max_output": { "type": "integer", "minimum": 1 },
-        "timeout_ceiling_ms": { "type": "integer", "minimum": 1 }
+        "max_prompt": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_output": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timeout_ceiling_ms": {
+          "type": "integer",
+          "minimum": 1
+        }
       }
     }
   }

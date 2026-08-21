@@ -1,79 +1,247 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/CAPSTONE_ORG/REPO/contracts/schemas/manifest.schema.json",
-  "title": "C-6 — Run manifest",
-  "description": "One JSON per run, written by the launcher BEFORE the run and finalised after. F-20: every experiment reproducible from a single config file plus a seed.\n\n`vehicle` is 'hardware' or 'simulator', and F-24 requires every simulated figure to be labelled. Make the figure scripts READ THIS FIELD and stamp the plot automatically — labelling by hand fails exactly once, in the final report.",
+  "title": "C-6 \u2014 Run manifest",
+  "description": "One JSON per run, written by the launcher BEFORE the run and finalised after. F-20: every experiment reproducible from a single config file plus a seed.\n\n`vehicle` is 'hardware' or 'simulator', and F-24 requires every simulated figure to be labelled. Make the figure scripts READ THIS FIELD and stamp the plot automatically \u2014 labelling by hand fails exactly once, in the final report.",
   "type": "object",
-  "required": ["run_id", "started_unix", "vehicle", "config_hash", "config",
-               "trace_path", "trace_sha256", "policy", "lambda", "staleness_s",
-               "warmup_s", "duration_s", "cost_model_snapshots", "nodes",
-               "git_shas", "validity"],
+  "required": [
+    "run_id",
+    "started_unix",
+    "vehicle",
+    "config_hash",
+    "config",
+    "trace_path",
+    "trace_sha256",
+    "policy",
+    "lambda",
+    "staleness_s",
+    "warmup_s",
+    "duration_s",
+    "cost_model_snapshots",
+    "nodes",
+    "git_shas",
+    "validity"
+  ],
   "properties": {
-    "run_id": { "type": "string" },
-    "started_unix": { "type": "integer" },
-    "vehicle": { "enum": ["hardware", "simulator"],
-      "description": "F-24: figure scripts read this and stamp simulated plots automatically." },
-    "config_hash": { "type": "string" },
-    "config": { "type": "object", "description": "Verbatim config." },
-    "trace_path": { "type": "string" },
-    "trace_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$",
-      "description": "The trace's identity everywhere downstream. Replay client verifies before t0." },
-    "policy": { "enum": ["round_robin", "jsq", "static_weighted", "wjsq", "threshold"] },
-    "lambda": { "type": "number" },
-    "staleness_s": { "type": "number", "minimum": 0 },
-    "warmup_s": { "type": "number", "minimum": 0,
-      "description": "Drives is_warmup in C-5, computed from the trace's intended_offset_s in BOTH vehicles." },
-    "duration_s": { "type": "number" },
+    "run_id": {
+      "type": "string"
+    },
+    "started_unix": {
+      "type": "integer"
+    },
+    "vehicle": {
+      "enum": [
+        "hardware",
+        "simulator"
+      ],
+      "description": "F-24: figure scripts read this and stamp simulated plots automatically."
+    },
+    "config_hash": {
+      "type": "string"
+    },
+    "config": {
+      "type": "object",
+      "description": "Verbatim config."
+    },
+    "trace_path": {
+      "type": "string"
+    },
+    "trace_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "The trace's identity everywhere downstream. Replay client verifies before t0."
+    },
+    "policy": {
+      "enum": [
+        "round_robin",
+        "jsq",
+        "static_weighted",
+        "wjsq",
+        "threshold"
+      ]
+    },
+    "lambda": {
+      "type": "number"
+    },
+    "staleness_s": {
+      "type": "number",
+      "minimum": 0
+    },
+    "warmup_s": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Drives is_warmup in C-5, computed from the trace's intended_offset_s in BOTH vehicles."
+    },
+    "duration_s": {
+      "type": "number"
+    },
     "cost_model_snapshots": {
       "type": "object",
       "description": "node_id -> C-3 snapshot_id. Which snapshot each node's estimate came from.",
-      "additionalProperties": { "type": "string" }
+      "additionalProperties": {
+        "type": "string"
+      }
     },
     "nodes": {
-      "type": "array", "minItems": 1,
+      "type": "array",
+      "minItems": 1,
       "items": {
         "type": "object",
-        "description": "Everything runtime-specific — ignore_eos, min_tokens/max_tokens, enable_prefix_caching=False, llama.cpp slot reuse disabled — is set once at engine construction and recorded HERE, so the settings that eliminate your confounds are auditable from the results.",
-        "required": ["node_id", "host", "engine", "engine_version", "model",
-                     "quant", "gpu", "driver", "prefix_caching", "max_batch"],
+        "description": "Everything runtime-specific \u2014 ignore_eos, min_tokens/max_tokens, slot reuse disabled \u2014 is set once at engine construction and recorded HERE, so the settings that eliminate your confounds are auditable from the results.\n\nSCOPE-CHANGE-001: every POOL node runs the same engine (llama.cpp + GGUF). Engine and quantization are held constant so that the heterogeneity ratio R is a property of hardware and node configuration ALONE. What varies per node is engine_config (F-9a). A node with role='engine_gap_probe' is the F-9b measured condition and is NOT a pool member: it participates in no policy comparison.",
+        "required": [
+          "node_id",
+          "host",
+          "role",
+          "engine",
+          "engine_version",
+          "model",
+          "quant",
+          "gpu",
+          "engine_config",
+          "prefix_caching",
+          "max_batch"
+        ],
         "properties": {
-          "node_id": { "type": "string" },
-          "host": { "type": "string" },
-          "engine": { "enum": ["vllm", "llamacpp"] },
-          "engine_version": { "type": "string" },
-          "model": { "type": "string" },
-          "quant": { "type": "string" },
-          "gpu": { "type": "string" },
-          "driver": { "type": "string" },
-          "prefix_caching": { "type": "boolean" },
-          "max_batch": { "type": "integer" }
+          "node_id": {
+            "type": "string"
+          },
+          "host": {
+            "type": "string"
+          },
+          "engine": {
+            "enum": [
+              "llamacpp",
+              "vllm"
+            ],
+            "description": "F-9: 'llamacpp' for every pool member. 'vllm' is legal ONLY on a node with role='engine_gap_probe' (F-9b)."
+          },
+          "engine_version": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "quant": {
+            "type": "string",
+            "description": "GGUF quantization for pool nodes, e.g. 'Q4_K_M'. Held constant across the pool (F-9)."
+          },
+          "gpu": {
+            "type": "string",
+            "description": "'none' for CPU-only nodes. The pool spans GPU and CPU machines running the SAME engine."
+          },
+          "driver": {
+            "type": "string"
+          },
+          "prefix_caching": {
+            "type": "boolean"
+          },
+          "max_batch": {
+            "type": "integer"
+          },
+          "role": {
+            "enum": [
+              "pool",
+              "engine_gap_probe"
+            ],
+            "default": "pool",
+            "description": "F-9b: the engine-gap probe is a measured condition, not a pool member. It appears in no figure other than the engine-gap result, and the pipeline MUST exclude it from every policy comparison."
+          },
+          "engine_config": {
+            "type": "object",
+            "description": "F-9a: per-node capability, expressed as runtime parameters of the single engine. THIS IS WHAT SETS R. Because R is now synthesized from configuration rather than from engine differences, these values are part of the experimental condition and must be recorded per run, not merely per machine.",
+            "required": [
+              "ngl",
+              "threads",
+              "parallel"
+            ],
+            "properties": {
+              "ngl": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "GPU offload fraction (llama.cpp -ngl). 0 = CPU-only."
+              },
+              "threads": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "llama.cpp --threads."
+              },
+              "parallel": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "llama.cpp --parallel: the fixed slot count. This is exactly SimNode.batch_capacity in the DES \u2014 the simulator's node model is now exact rather than approximate."
+              }
+            }
+          }
         }
       }
     },
     "git_shas": {
       "type": "object",
-      "required": ["worker", "scheduler", "harness", "sim"],
+      "required": [
+        "worker",
+        "scheduler",
+        "harness",
+        "sim"
+      ],
       "properties": {
-        "worker":    { "type": "string" },
-        "scheduler": { "type": "string" },
-        "harness":   { "type": "string" },
-        "sim":       { "type": "string" }
+        "worker": {
+          "type": "string"
+        },
+        "scheduler": {
+          "type": "string"
+        },
+        "harness": {
+          "type": "string"
+        },
+        "sim": {
+          "type": "string"
+        }
       }
     },
-    "f18_status": { "enum": ["full", "partial"],
-      "description": "'partial' when the pinned engine version does not expose the prefill/decode split. Record it here rather than faking the split." },
+    "f18_status": {
+      "enum": [
+        "full",
+        "partial"
+      ],
+      "description": "'partial' when the pinned engine version does not expose the prefill/decode split. Record it here rather than faking the split."
+    },
     "validity": {
       "type": "object",
-      "required": ["max_send_lag_ms", "send_lag_violations", "dropped_requests",
-                   "heartbeat_gaps", "engine_restarts", "valid"],
+      "required": [
+        "max_send_lag_ms",
+        "send_lag_violations",
+        "dropped_requests",
+        "heartbeat_gaps",
+        "engine_restarts",
+        "valid",
+        "colocated_nodes"
+      ],
       "properties": {
-        "max_send_lag_ms": { "type": "number" },
-        "send_lag_violations": { "type": "integer",
-          "description": "Non-zero => run marked invalid and NOT analysed." },
-        "dropped_requests": { "type": "integer" },
-        "heartbeat_gaps": { "type": "integer", "description": "Detected via Heartbeat.seq gaps." },
-        "engine_restarts": { "type": "integer" },
-        "valid": { "type": "boolean" }
+        "max_send_lag_ms": {
+          "type": "number"
+        },
+        "send_lag_violations": {
+          "type": "integer",
+          "description": "Non-zero => run marked invalid and NOT analysed."
+        },
+        "dropped_requests": {
+          "type": "integer"
+        },
+        "heartbeat_gaps": {
+          "type": "integer",
+          "description": "Detected via Heartbeat.seq gaps."
+        },
+        "engine_restarts": {
+          "type": "integer"
+        },
+        "valid": {
+          "type": "boolean"
+        },
+        "colocated_nodes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "F-9a: throttling MUST be applied to distinct physical machines. Co-located logical nodes contend for PCIe, memory bandwidth and cache, which would reintroduce as contention the confound SCOPE-CHANGE-001 removes. Count of nodes sharing a `host` with another node. MUST be 0 for a valid run."
+        }
       }
     }
   }

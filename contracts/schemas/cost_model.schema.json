@@ -1,75 +1,212 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/CAPSTONE_ORG/REPO/contracts/schemas/cost_model.schema.json",
-  "title": "C-3 — Cost model snapshot",
-  "description": "The most load-bearing artifact. Person A produces these; Person B's live scheduler AND B's DES both consume them. This is where the two halves of the project actually meet.\n\nTWO REQUIREMENTS THAT FOLLOW FROM H3 AND ARE EASY TO MISS:\n1. A must emit a TIME-ORDERED SERIES of snapshots during the calibration campaign, not one final fitted model. Staleness injection (F-8) means B serves the scheduler a snapshot from s seconds ago. If A emits only one snapshot, B has to synthesize aging by perturbing parameters — which makes H3 a study of B's perturbation model rather than of real drift. Real snapshot history makes H3 an empirical result.\n2. stochastic.autocorr_time_s is MPR-1's headline number and is what F-22 uses to give the DES realistic variance. It is a deliverable, not a diagnostic.\n\nON `form`: F-7 permits a lookup table OR a <=6-parameter regression. Pick ONE and commit at end of Week 2 — supporting both doubles B's interpolation logic for no research gain.",
+  "title": "C-3 \u2014 Cost model snapshot",
+  "description": "The most load-bearing artifact. Divyansh Shukla (A) produces these; Aditya's live scheduler AND B's DES both consume them. This is where the two halves of the project actually meet.\n\nTWO REQUIREMENTS THAT FOLLOW FROM H3 AND ARE EASY TO MISS:\n1. A must emit a TIME-ORDERED SERIES of snapshots during the calibration campaign, not one final fitted model. Staleness injection (F-8) means B serves the scheduler a snapshot from s seconds ago. If A emits only one snapshot, B has to synthesize aging by perturbing parameters \u2014 which makes H3 a study of B's perturbation model rather than of real drift. Real snapshot history makes H3 an empirical result.\n2. stochastic.autocorr_time_s is MPR-1's headline number and is what F-22 uses to give the DES realistic variance. It is a deliverable, not a diagnostic.\n\nON `form`: F-7 permits a lookup table OR a <=6-parameter regression. Pick ONE and commit at end of Week 2 \u2014 supporting both doubles B's interpolation logic for no research gain.",
   "type": "object",
-  "required": ["cost_model_schema", "snapshot_id", "node_class", "measured_at_unix",
-               "calibration_run_ids", "form", "entries", "stochastic",
-               "admissibility", "provenance"],
+  "required": [
+    "cost_model_schema",
+    "snapshot_id",
+    "node_class",
+    "measured_at_unix",
+    "calibration_run_ids",
+    "form",
+    "entries",
+    "stochastic",
+    "admissibility",
+    "provenance"
+  ],
   "additionalProperties": false,
   "properties": {
-    "cost_model_schema": { "type": "integer", "const": 1,
-      "description": "§12.2 mitigation: B's loader MUST reject unknown versions loudly rather than defaulting." },
-    "snapshot_id": { "type": "string",
-      "description": "e.g. cm_rtx3090_awq_20260428T1412Z. Referenced per-node from the run manifest (C-6)." },
-    "node_class": { "type": "string" },
-    "measured_at_unix": { "type": "integer" },
-    "calibration_run_ids": { "type": "array", "items": { "type": "string" } },
-    "form": { "enum": ["lookup_table", "regression"],
-      "description": "F-7. Commit to one at end of Week 2." },
+    "cost_model_schema": {
+      "type": "integer",
+      "const": 1,
+      "description": "\u00a712.2 mitigation: B's loader MUST reject unknown versions loudly rather than defaulting."
+    },
+    "snapshot_id": {
+      "type": "string",
+      "description": "e.g. cm_rtx3090_awq_20260428T1412Z. Referenced per-node from the run manifest (C-6)."
+    },
+    "node_class": {
+      "type": "string",
+      "description": "SCOPE-CHANGE-001: with engine and quantization held constant, a node class is defined by hardware PLUS engine_config (F-9a) \u2014 e.g. 'rtx3090_ngl99_p4_q4km'. Two machines of the same hardware running different -ngl are different node classes and need separate snapshots."
+    },
+    "measured_at_unix": {
+      "type": "integer"
+    },
+    "calibration_run_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "form": {
+      "enum": [
+        "lookup_table",
+        "regression"
+      ],
+      "description": "F-7. Commit to one at end of Week 2."
+    },
     "entries": {
-      "type": "array", "minItems": 1,
+      "type": "array",
+      "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["prompt_bucket", "output_bucket", "concurrency",
-                     "service_ms_mean", "service_ms_p50", "service_ms_p95",
-                     "tokens_per_s", "n_samples"],
+        "required": [
+          "prompt_bucket",
+          "output_bucket",
+          "concurrency",
+          "service_ms_mean",
+          "service_ms_p50",
+          "service_ms_p95",
+          "tokens_per_s",
+          "n_samples"
+        ],
         "additionalProperties": false,
         "properties": {
-          "prompt_bucket": { "type": "array", "items": { "type": "integer" }, "minItems": 2, "maxItems": 2 },
-          "output_bucket": { "type": "array", "items": { "type": "integer" }, "minItems": 2, "maxItems": 2 },
-          "concurrency": { "type": "integer", "minimum": 1 },
-          "service_ms_mean": { "type": "number" },
-          "service_ms_p50": { "type": "number" },
-          "service_ms_p95": { "type": "number" },
-          "tokens_per_s": { "type": "number" },
-          "n_samples": { "type": "integer", "minimum": 1 }
+          "prompt_bucket": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "minItems": 2,
+            "maxItems": 2
+          },
+          "output_bucket": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "minItems": 2,
+            "maxItems": 2
+          },
+          "concurrency": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "service_ms_mean": {
+            "type": "number"
+          },
+          "service_ms_p50": {
+            "type": "number"
+          },
+          "service_ms_p95": {
+            "type": "number"
+          },
+          "tokens_per_s": {
+            "type": "number"
+          },
+          "n_samples": {
+            "type": "integer",
+            "minimum": 1
+          }
         }
       }
     },
     "stochastic": {
       "type": "object",
       "description": "F-22: the DES service-time model MUST include a stochastic component fitted to observed throughput variance.",
-      "required": ["model", "sigma", "autocorr_time_s", "fit_r2"],
+      "required": [
+        "model",
+        "sigma",
+        "autocorr_time_s",
+        "fit_r2"
+      ],
       "properties": {
-        "model": { "const": "lognormal_multiplier" },
-        "sigma": { "type": "number", "minimum": 0 },
-        "autocorr_time_s": { "type": "number", "exclusiveMinimum": 0,
-          "description": "tau. MPR-1 headline number." },
-        "fit_r2": { "type": "number" }
+        "model": {
+          "const": "lognormal_multiplier"
+        },
+        "sigma": {
+          "type": "number",
+          "minimum": 0
+        },
+        "autocorr_time_s": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "tau. MPR-1 headline number."
+        },
+        "fit_r2": {
+          "type": "number"
+        }
       }
     },
     "admissibility": {
       "type": "object",
-      "required": ["max_prompt", "max_output", "timeout_ceiling_ms"],
+      "required": [
+        "max_prompt",
+        "max_output",
+        "timeout_ceiling_ms"
+      ],
       "properties": {
-        "max_prompt": { "type": "integer" },
-        "max_output": { "type": "integer" },
-        "timeout_ceiling_ms": { "type": "integer" }
+        "max_prompt": {
+          "type": "integer"
+        },
+        "max_output": {
+          "type": "integer"
+        },
+        "timeout_ceiling_ms": {
+          "type": "integer"
+        }
       }
     },
     "provenance": {
       "type": "object",
-      "description": "The settings that eliminate the confounds, made auditable from the results.",
-      "required": ["engine", "engine_version", "quant", "gpu", "driver", "prefix_caching"],
+      "description": "The settings that eliminate the confounds, made auditable from the results. Under SCOPE-CHANGE-001 engine and quant are constant across the pool, so engine_config is what distinguishes one node class from another.",
+      "required": [
+        "engine",
+        "engine_version",
+        "quant",
+        "gpu",
+        "driver",
+        "prefix_caching",
+        "engine_config"
+      ],
       "properties": {
-        "engine": { "enum": ["vllm", "llamacpp"] },
-        "engine_version": { "type": "string" },
-        "quant": { "type": "string" },
-        "gpu": { "type": "string" },
-        "driver": { "type": "string" },
-        "prefix_caching": { "type": "boolean" }
+        "engine": {
+          "enum": [
+            "llamacpp",
+            "vllm"
+          ],
+          "description": "'llamacpp' for every pool node class. 'vllm' only for the F-9b engine-gap probe."
+        },
+        "engine_version": {
+          "type": "string"
+        },
+        "quant": {
+          "type": "string"
+        },
+        "gpu": {
+          "type": "string"
+        },
+        "driver": {
+          "type": "string"
+        },
+        "prefix_caching": {
+          "type": "boolean"
+        },
+        "engine_config": {
+          "type": "object",
+          "description": "F-9a runtime parameters this snapshot was calibrated under. Must match the manifest's node block for any run that uses it.",
+          "required": [
+            "ngl",
+            "threads",
+            "parallel"
+          ],
+          "properties": {
+            "ngl": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "threads": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "parallel": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
       }
     }
   }

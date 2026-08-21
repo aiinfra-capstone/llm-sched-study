@@ -3,6 +3,18 @@
 
 **Status:** proposal, to be frozen at end of Week 1 alongside the requirements spec.
 
+> ### ⚠ Amended by [SCOPE-CHANGE-001](SCOPE-CHANGE-001.md) — single inference engine
+>
+> Accepted in Week 1. Every **pool** node runs llama.cpp with GGUF, GPU and CPU alike;
+> the mixed vLLM/llama.cpp pool is withdrawn. vLLM is retained as one measured condition
+> (F-9b), not as a pool member. The body of this document below is **not** rewritten —
+> the passages it supersedes are marked inline with `[SC-001]`. Where the two disagree,
+> SCOPE-CHANGE-001 wins.
+>
+> Superseded here: the "Owns" row of §0's table, the two-adapter worker in §8.1, the
+> engine-specific F-18 note in §5, and — most consequentially — **the whole Python
+> argument in §10**, which no longer holds. See the `[SC-001]` note there.
+
 ---
 
 ## 0. Where the seam goes, and why
@@ -13,9 +25,9 @@ The spec (§10) assigns three members: A = worker/runtime/calibration, B = sched
 
 So: **one person owns the policy code and both of its hosts.** Everything else is arranged around that.
 
-| | **Person A — Data Plane & Measurement** | **Person B — Control Plane & Simulation** |
+| | **Divyansh Shukla (A) — Data Plane & Measurement** | **Aditya Gupta (B) — Control Plane & Simulation** |
 |---|---|---|
-| Owns | Worker wrapper (vLLM + llama.cpp), heartbeat emitter, calibration campaign, non-stationarity measurement, trace generator, replay client, log join pipeline, figures | Scheduler core, five policy implementations, admission filter, node state store, staleness injection, discrete-event simulator, F-23 validation |
+| Owns | `[SC-001]` Worker wrapper (**llama.cpp only**; capability throttling F-9a; engine-gap probe F-9b), heartbeat emitter, calibration campaign, non-stationarity measurement, trace generator, replay client, log join pipeline, figures | Scheduler core, five policy implementations, admission filter, node state store, staleness injection, discrete-event simulator, F-23 validation |
 | Spec requirements | F-9, F-10, F-11 (worker side), F-13, F-15, F-16, F-17, F-18, F-19, F-20 | F-1, F-2, F-3, F-4, F-5, F-6, F-7, F-8, F-11 (scheduler side), F-12, F-14, F-21, F-22, F-23, F-24 |
 | Owns MPR | MPR-1 (τ and variance envelope — Week 2, hardware only) | MPR-3 (H2/H3 sweeps in validated simulator) |
 | Load profile | Front-heavy: Weeks 1–3 | Back-heavy: Weeks 3–5 |
@@ -211,7 +223,7 @@ A produces these; B's scheduler and B's DES both consume them. This is where the
 
 Three emitters, three files, appended locally, never written over the network. Joined offline on `req_id`.
 
-### `client_{run_id}.jsonl` — Person A
+### `client_{run_id}.jsonl` — Divyansh Shukla (A)
 
 ```json
 {"run_id":"run_0142","req_id":"r000417","intended_offset_s":37.4210,
@@ -222,7 +234,7 @@ Three emitters, three files, appended locally, never written over the network. J
 
 `send_lag_ms` is the open-loop guard. Assert per request; if any request in the measurement window exceeds the threshold (suggest 50 ms), the run is marked invalid in the manifest rather than analysed.
 
-### `scheduler_{run_id}.jsonl` — Person B
+### `scheduler_{run_id}.jsonl` — Aditya Gupta (B)
 
 Two record types, discriminated by `type`.
 
@@ -243,7 +255,7 @@ Two record types, discriminated by `type`.
 
 The `candidates` array is F-3 in full. It's what lets you compute routing-error rate post hoc — for each dispatch, whether an alternative node would have finished materially sooner — and, critically, whether the error came from a *bad policy* or a *stale estimate*. Without `estimate_age_ms` per candidate, H3 is unanalysable.
 
-### `worker_{node_id}_{run_id}.jsonl` — Person A
+### `worker_{node_id}_{run_id}.jsonl` — Divyansh Shukla (A)
 
 ```json
 {"run_id":"run_0142","req_id":"r000417","node_id":"n2","engine":"vllm",
@@ -253,7 +265,7 @@ The `candidates` array is F-3 in full. It's what lets you compute routing-error 
  "kv_occupancy_at_admission":0.41,"status":"ok"}
 ```
 
-Prefill/decode split is obtainable without streaming: vLLM exposes per-request arrival/first-scheduled/first-token/finished times on its output object, and llama.cpp's server returns a timings block with prompt and predicted milliseconds. Treat both as worker-local engine clocks. If either turns out not to expose it on your pinned version, log `service_ns` only and record F-18 as partially satisfied in the manifest rather than faking the split.
+`[SC-001]` Prefill/decode split is obtainable without streaming: llama.cpp's server returns a timings block with prompt and predicted milliseconds. With a uniform pool this is now **one code path**, not two engine-specific ones. Treat it as a worker-local engine clock. If your pinned llama.cpp build turns out not to expose it, log `service_ns` only and record F-18 as partially satisfied in the manifest rather than faking the split.
 
 ---
 
@@ -302,7 +314,7 @@ One JSON per run, written by the launcher before the run and finalised after.
 
 ---
 
-## 8. Internal architecture — Person A
+## 8. Internal architecture — Divyansh Shukla (A)
 
 ### 8.1 Worker
 
@@ -311,9 +323,9 @@ gRPC ingress (Execute)
       ↓
 Admission wrapper        — timeout ceiling, records queue-entry stamp
       ↓
-Engine adapter           — one interface, two implementations
+Engine adapter           — one interface  [SC-001: one POOL implementation]
       ↓                    submit(prompt_token_ids, output_len) → (n_tokens, timings)
-   [vLLM adapter]  [llama.cpp adapter]
+   [llama.cpp adapter]     (vLLM adapter retained for the F-9b probe only)
       ↓
 Response sender          — direct gRPC to client_endpoint
       ↓
@@ -324,7 +336,7 @@ Telemetry sampler (independent loop)
       → Completion RPC on each finish
 ```
 
-The engine adapter interface is the only thing that must be identical across the two runtimes:
+`[SC-001]` The adapter interface is retained even though one implementation now serves the whole pool — the F-9b probe is its second implementation, and writing the probe against the same interface is what makes the engine-gap number a comparison rather than an anecdote:
 
 ```
 submit(prompt_token_ids, output_len, req_id) -> ServiceResult
@@ -369,7 +381,7 @@ Pure function of `(manifest, three log files)` → one Parquet file. No network,
 
 ---
 
-## 9. Internal architecture — Person B
+## 9. Internal architecture — Aditya Gupta (B)
 
 The whole design goal here is that **`choose()` cannot tell whether it is running in the live scheduler or the DES.**
 
@@ -407,8 +419,8 @@ The whole design goal here is that **`choose()` cannot tell whether it is runnin
 
 | Component | Owner | Language pinned? | By what |
 |---|---|---|---|
-| Worker wrapper | A | **Yes — Python** | vLLM is a Python library. Avoidable only by running vLLM's OpenAI-compatible server and wrapping it over HTTP, which adds a hop inside `service_ns`. Not worth it. |
-| llama.cpp adapter | A | No | `llama-server` is an HTTP binary. Any language. But it lives beside the vLLM adapter behind one interface, so it follows the worker's choice. |
+| Worker wrapper | A | ~~**Yes — Python**~~ → **No** `[SC-001]` | The original reason was that vLLM is a Python library. SCOPE-CHANGE-001 removes vLLM from the pool, so the pool worker wraps `llama-server` — an HTTP binary — and is language-free. |
+| F-9b engine-gap probe | A | **Yes — Python**, weakly | vLLM as a library pins this one-off measurement. Avoidable by driving its OpenAI-compatible server over HTTP; the extra hop does not matter here, because the probe is a throughput-ratio measurement and not a pool member whose `service_ns` feeds a policy comparison. |
 | Trace generator | A | No | Pure computation + file write. Must produce byte-identical output to whatever the determinism test expects. |
 | Replay client | A | **No — and this matters** | Needs precise `sleep_until` and thousands of concurrent in-flight requests. Python asyncio is adequate below roughly 50 req/s; above that, GIL contention shows up as send-lag violations. Go is a legitimate choice here and the seam (gRPC + JSONL) fully supports it. |
 | Results pipeline / figures | A | No | pandas + matplotlib is the path of least resistance, but nothing forces it. |
@@ -416,7 +428,7 @@ The whole design goal here is that **`choose()` cannot tell whether it is runnin
 | Policies | B | **Must equal the DES's language** | F-21. Internal to B, so B is free to choose — but B must choose *once*. |
 | DES | B | **Must equal the scheduler's language** | Same constraint from the other side. |
 
-**Net position:** A is pinned to Python for the worker only. Everything else on both sides is free, provided the six contract artifacts hold. B could reasonably build the entire control plane and simulator in Go or Rust and never touch Python; A could build the replayer in Go and the pipeline in Python.
+**Net position:** `[SC-001]` **A is no longer pinned to Python anywhere in the measurement path.** The single remaining Python pull is the one-off F-9b probe, and even that is avoidable over HTTP. Everything else on both sides was already free, provided the six contract artifacts hold. B could reasonably build the entire control plane and simulator in Go or Rust and never touch Python; A could now build the *whole* data plane in Go if send-lag under high λ argues for it (see the replay-client row above, which was already the strongest reason to).
 
 **The one thing that must not happen:** B writing the scheduler in one language and the DES in another, then "keeping the policies in sync." That is F-21 violated in spirit while satisfied on paper, and it is the failure mode most likely to survive undetected until the validation numbers look strange in Week 4.
 

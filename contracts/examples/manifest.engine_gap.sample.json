@@ -1,0 +1,30 @@
+{
+  "_comment": "F-9b — the engine-gap measurement. vLLM on the STRONGEST node at one operating point against an identical replayed trace, so the observed throughput ratio to llama.cpp on that same node can be reported as a stated bound on external validity (threat R9). This is a measured condition, not a pool member: role='engine_gap_probe', a single node, and the pipeline must keep it out of every policy comparison.",
+
+  "run_id": "run_0301_enginegap_vllm",
+  "started_unix": 1777900000,
+  "vehicle": "hardware",
+  "config_hash": "3b7712aa90de41c5b6e2f0148ac37799",
+  "config": {"_comment": "verbatim config goes here"},
+  "trace_path": "traces/t_lam3.5_s20260421.jsonl",
+  "trace_sha256": "f4a9c2b18e5d3407a6b90c1de2f83455a7c604b9e1d2f38a05c7b6e94d310f28",
+  "policy": "round_robin",
+  "lambda": 3.5,
+  "staleness_s": 0.0,
+  "warmup_s": 60,
+  "duration_s": 600,
+  "cost_model_snapshots": {"g1": "cm_rtx3090_vllm_awq_20260503T0900Z"},
+  "nodes": [
+    {"node_id": "g1", "host": "box-a", "role": "engine_gap_probe",
+     "engine": "vllm", "engine_version": "0.6.x", "model": "llama3-8b",
+     "quant": "awq", "gpu": "RTX 3090", "driver": "550.x",
+     "engine_config": {"ngl": 99, "threads": 8, "parallel": 4},
+     "prefix_caching": false, "max_batch": 8}
+  ],
+  "git_shas": {"worker": "a3f1c09", "scheduler": "77bd120",
+               "harness": "a3f1c09", "sim": "77bd120"},
+  "f18_status": "full",
+  "validity": {"max_send_lag_ms": 4.1, "send_lag_violations": 0,
+               "dropped_requests": 0, "heartbeat_gaps": 0,
+               "engine_restarts": 0, "colocated_nodes": 0, "valid": true}
+}

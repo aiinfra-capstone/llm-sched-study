@@ -1,10 +1,10 @@
-# Data Plane & Measurement — Person A
+# Data Plane & Measurement — Divyansh Shukla (A)
 
-Worker wrapper (vLLM + llama.cpp), heartbeat emitter, calibration campaign,
-non-stationarity measurement, trace generator, replay client, log join pipeline,
-figures.
+Worker wrapper (llama.cpp), capability throttling, the cost-model calibration
+campaign, the F-9b engine-gap measurement, heartbeat emitter, non-stationarity
+measurement, trace generator, replay client, log join pipeline, figures.
 
-**Requirements owned:** F-9, F-10, F-11 (worker side), F-13, F-15 – F-20.
+**Requirements owned:** F-9, F-9a, F-9b, F-10, F-11 (worker side), F-13, F-15 – F-20.
 **MPR owned:** MPR-1 — τ and the variance envelope, Week 2, hardware only.
 **Load profile:** front-heavy, Weeks 1–3.
 
@@ -15,16 +15,21 @@ uv run pytest
 
 ---
 
-## `worker/` — F-9, F-10, F-11
+## `worker/` — F-9, F-9a, F-9b, F-10, F-11
+
+> **Amended by [SCOPE-CHANGE-001](../docs/SCOPE-CHANGE-001.md).** One runtime — llama.cpp
+> with GGUF — on every pool node, GPU and CPU alike. The mixed vLLM/llama.cpp pool in the
+> frozen F-9 is withdrawn, because engine and quantization were confounded with hardware
+> in the definition of *R*. vLLM survives as **one measured condition** (F-9b), not as a
+> pool member.
 
 ```
 gRPC ingress (Execute)
       ↓
 Admission wrapper        — timeout ceiling, records queue-entry stamp
       ↓
-Engine adapter           — one interface, two implementations
+llama.cpp adapter        — HTTP to a local llama-server
       ↓                    submit(prompt_token_ids, output_len) → (n_tokens, timings)
-   [vLLM adapter]  [llama.cpp adapter]
       ↓
 Response sender          — direct gRPC to client_endpoint          (F-11)
       ↓
@@ -35,31 +40,75 @@ Telemetry sampler (independent loop)
       → Completion RPC on each finish
 ```
 
-The engine adapter interface is the only thing that must be identical across the two
-runtimes:
+The adapter interface stays as it was — one interface, now one *pool* implementation:
 
 ```
 submit(prompt_token_ids, output_len, req_id) -> ServiceResult
 probe() -> LiveState{queue_depth, inflight, recent_tok_s, kv_frac, state}
 ```
 
-Everything runtime-specific — `ignore_eos`, `min_tokens`/`max_tokens`,
-`enable_prefix_caching=False`, llama.cpp slot reuse disabled — is set **once at engine
-construction** and recorded in the manifest's node block (C-6), so the settings that
-eliminate your confounds are auditable from the results.
+Keep the interface even though only one implementation serves the pool. The F-9b probe
+is its second implementation, and writing that probe against the same interface is what
+makes the engine-gap number a comparison rather than an anecdote.
 
-**Prefill/decode split without streaming (F-18):** vLLM exposes per-request
-arrival/first-scheduled/first-token/finished times on its output object; llama.cpp's
-server returns a `timings` block with prompt and predicted milliseconds. Both are
-worker-local engine clocks. If either turns out not to expose it on your pinned
-version, log `service_ns` only and record `f18_status: "partial"` in the manifest
-**rather than faking the split**.
+Everything runtime-specific — `ignore_eos`, `min_tokens`/`max_tokens`, slot reuse
+disabled — is set **once at engine construction** and recorded in the manifest's node
+block (C-6), so the settings that eliminate your confounds are auditable from the
+results.
 
-> **Python version.** The worker is the one component pinned to Python (§10) — vLLM is
-> a Python library. That means *vLLM's* supported Python matrix pins the worker
-> environment, not the other way round. `pyproject.toml` allows `>=3.11,<3.14`;
-> confirm the actual pin against the vLLM version you install in Week 1 and record it
-> in the manifest's node block. The harness and pipeline have no such constraint.
+### Capability throttling — F-9a
+
+Per-node capability is now **configuration, not hardware class**. Three knobs, all
+recorded in `manifest.nodes[].engine_config`:
+
+| Knob | llama.cpp flag | Effect |
+|---|---|---|
+| GPU offload fraction | `-ngl` | The primary throttle. `0` = CPU-only. |
+| Thread count | `--threads` | Secondary; dominates once `-ngl` is 0. |
+| Slot count | `--parallel` | The fixed batch capacity. Also `SimNode.batch_capacity`. |
+
+This is what makes *R* **tunable on physical hardware** rather than reachable only in
+simulation — the same GPU at `-ngl 99` and `-ngl 40` is two node classes. Week 2 sweeps
+these per machine to establish the synthesizable *R* range, which is then **reported as
+a range**, not a single figure (§7, MPR-2).
+
+> **Distinct machines only.** Throttling must be applied to separate physical hosts.
+> Two logical nodes on one box contend for PCIe, memory bandwidth, and cache — which
+> reintroduces as contention exactly the confound this change removes. The manifest
+> carries `validity.colocated_nodes`, and it must be `0`. Have the launcher assert it;
+> this is the kind of thing that gets violated at 2am in Week 3 because one machine was
+> free.
+
+### The engine-gap measurement — F-9b
+
+Run **once**, on the strongest node, at one operating point, against an identical
+replayed trace: vLLM (AWQ, same model class) versus llama.cpp on that same machine.
+Report the observed throughput ratio as a **stated bound on external validity** (threat
+R9).
+
+Mark it `role: "engine_gap_probe"` in the manifest — see
+`contracts/examples/manifest.engine_gap.sample.json`. The pipeline must keep it out of
+every policy comparison: it is a measured condition, and it appears in no figure other
+than the engine-gap result. The cost of a single non-production engine is thereby
+*measured* rather than assumed away, which is the entire reason the change is defensible.
+
+### Prefill/decode split without streaming (F-18)
+
+llama.cpp's server returns a `timings` block with `prompt_ms` and `predicted_ms` — so
+the split now comes from **one code path for the whole pool** rather than two
+engine-specific ones. Treat them as worker-local engine clocks. If your pinned
+llama.cpp build does not expose it, log `service_ns` only and record
+`f18_status: "partial"` in the manifest **rather than faking the split**.
+
+> **Python is no longer forced here.** §10 of the split doc pins the worker to Python
+> because vLLM is a library, and notes that `llama-server` — an HTTP binary — only
+> follows that choice because it sits beside the vLLM adapter. SCOPE-CHANGE-001 removes
+> the vLLM adapter from the pool, so that argument has nothing left holding it up: the
+> pool worker now wraps an HTTP binary and is language-free like the rest of your half.
+> What remains pinned is the **F-9b probe alone**, and only if you drive vLLM as a
+> library rather than through its OpenAI-compatible server. Python is still the path of
+> least resistance and `pyproject.toml` allows `>=3.11,<3.14` — but it is now a
+> preference, not a constraint, and the constraint is worth knowing you have shed.
 
 ## `harness/` — F-16, F-17, F-20
 

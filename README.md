@@ -9,7 +9,18 @@ not a deliverable* — it exists to produce measurements.
 > and over what range of heterogeneity does that advantage hold?
 
 Full statement of scope, hypotheses (H1–H3), requirements (F-1 – F-24), non-goals, and
-the MPR ladder: [`docs/requirements-spec.pdf`](docs/requirements-spec.pdf). **Frozen.**
+the MPR ladder: [`docs/requirements-spec.pdf`](docs/requirements-spec.pdf). **Frozen**,
+with one accepted amendment:
+
+> **[SCOPE-CHANGE-001](docs/SCOPE-CHANGE-001.md) — single inference engine.** Every pool
+> node runs llama.cpp with GGUF, GPU and CPU alike; the mixed vLLM/llama.cpp pool of the
+> frozen F-9 is withdrawn. Engine and quantization were confounded with hardware in the
+> definition of the heterogeneity ratio *R*, and neither the 2×2 decomposition nor the
+> *R*-sweep can separate an engine effect from a hardware effect. Holding them constant
+> makes *R* a property of hardware and configuration alone — and, because capability is
+> now set by `-ngl` / `--threads` / `--parallel` (F-9a), makes *R* **tunable on physical
+> hardware** rather than only in simulation. vLLM is retained as one measured condition
+> (F-9b), not as a pool member.
 
 ---
 
@@ -17,8 +28,8 @@ the MPR ladder: [`docs/requirements-spec.pdf`](docs/requirements-spec.pdf). **Fr
 
 ```
 contracts/       C-1 .. C-6 — the six frozen artifacts. Nothing else crosses the seam.
-dataplane/       Person A — worker wrapper, harness, pipeline, figures.       (Python)
-controlplane/    Person B — scheduler, five policies, DES.        (B's language choice)
+dataplane/       Divyansh Shukla (A) — worker wrapper, harness, pipeline, figures.
+controlplane/    Aditya Gupta (B) — scheduler, five policies, DES.   (B's language choice)
 fixtures/        Fake scheduler (A) and fake worker (B). Throwaway, load-bearing.
 docs/            Spec, split & interface contract, freeze checklist.
 ```
@@ -43,10 +54,10 @@ on every PR.
 
 ## Ownership
 
-| | **Person A — Data Plane & Measurement** | **Person B — Control Plane & Simulation** |
+| | **Divyansh Shukla (A) — Data Plane & Measurement** | **Aditya Gupta (B) — Control Plane & Simulation** |
 |---|---|---|
-| Owns | Worker wrapper (vLLM + llama.cpp), heartbeat emitter, calibration campaign, non-stationarity measurement, trace generator, replay client, log join pipeline, figures | Scheduler core, five policy implementations, admission filter, node state store, staleness injection, discrete-event simulator, F-23 validation |
-| Requirements | F-9, F-10, F-11 (worker side), F-13, F-15 – F-20 | F-1 – F-8, F-11 (scheduler side), F-12, F-14, F-21 – F-24 |
+| Owns | Worker wrapper (llama.cpp), capability throttling (F-9a), cost-model calibration campaign, the F-9b engine-gap measurement, heartbeat emitter, non-stationarity measurement, trace generator, replay client, log join pipeline, figures | Scheduler core, five policy implementations, admission filter, node state store, staleness injection, discrete-event simulator, F-23 validation |
+| Requirements | F-9, F-9a, F-9b, F-10, F-11 (worker side), F-13, F-15 – F-20 | F-1 – F-8, F-11 (scheduler side), F-12, F-14, F-21 – F-24 |
 | Owns MPR | MPR-1 (τ and variance envelope — Week 2, hardware only) | MPR-3 (H2/H3 sweeps in validated simulator) |
 | Load profile | Front-heavy: Weeks 1–3 | Back-heavy: Weeks 3–5 |
 
@@ -75,11 +86,11 @@ git clone <this repo> && cd <repo>
 # Verify the contracts — needs nothing but uv.
 uv run contracts/check.py
 
-# Person A
+# Divyansh Shukla (A)
 cd dataplane && uv sync --all-extras && uv run pytest
 ```
 
-**Person B:** `controlplane/` is yours and unopinionated — see
+**Aditya Gupta (B):** `controlplane/` is yours and unopinionated — see
 [`controlplane/README.md`](controlplane/README.md) for the two constraints that bind
 your language choice (there are only two, and they both come from F-21).
 
@@ -98,6 +109,7 @@ working in parallel and two people working in sequence on a timeline with no sla
 | | |
 |---|---|
 | Requirements spec | **Frozen.** Changes to §3 or §4 require explicit re-scoping against §6. |
+| Amendments | [SCOPE-CHANGE-001](docs/SCOPE-CHANGE-001.md) — single inference engine. **Accepted.** Supersedes F-9 as frozen. |
 | Interface contract (C-1 – C-6) | Freezes **end of Week 1** — see [`docs/week1-freeze-checklist.md`](docs/week1-freeze-checklist.md) |
 | Feature freeze | **End of Week 3.** No new system capability after this point. |
 | Slack | None. If a week is lost, §7 of the spec defines what survives. |
@@ -105,6 +117,7 @@ working in parallel and two people working in sequence on a timeline with no sla
 ## Reading order for a new contributor
 
 1. [`docs/requirements-spec.pdf`](docs/requirements-spec.pdf) — what is being measured and why.
-2. [`docs/two-person-split-and-interface-contract.md`](docs/two-person-split-and-interface-contract.md) — where the seam is, and the six artifacts across it.
-3. [`docs/week1-freeze-checklist.md`](docs/week1-freeze-checklist.md) — what must be true before the contract freezes.
-4. Your half's README.
+2. [`docs/SCOPE-CHANGE-001.md`](docs/SCOPE-CHANGE-001.md) — read straight after the spec; it supersedes F-9 and changes what the pool is.
+3. [`docs/two-person-split-and-interface-contract.md`](docs/two-person-split-and-interface-contract.md) — where the seam is, and the six artifacts across it.
+4. [`docs/week1-freeze-checklist.md`](docs/week1-freeze-checklist.md) — what must be true before the contract freezes.
+5. Your half's README.

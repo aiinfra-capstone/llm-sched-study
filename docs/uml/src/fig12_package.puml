@@ -1,0 +1,56 @@
+@startuml fig12_package
+!include theme.iuml
+title Figure 12 — Package View: The Shared-Policy Invariant
+
+skinparam componentStyle rectangle
+skinparam nodesep 30
+skinparam ranksep 60
+
+package "configs" {
+  [experiment YAML + seeds\none file per run] as C
+}
+
+package "harness" #FFFCF5 {
+  [gen_trace.py  ·  replay.py\nmanifest.py  ·  logging_jsonl.py] as H
+}
+
+package "live" {
+  [scheduler.py  ·  capability_view.py\nworker.py — one runtime, llama.cpp  ·  client.py] as L
+}
+
+package "sim" #FFFCF5 {
+  [des.py  ·  sim_node.py\nservice_time.py] as S
+}
+
+package "policies" {
+  [dispatch_policy.py — interface: choose(request, node_states, now, rng)\nround_robin  ·  jsq  ·  static_weighted  ·  wjsq  ·  threshold\ncost_model.py — lookup table / <= 6-parameter regression] as P
+}
+
+package "analysis" #FFFCF5 {
+  [join.py  ·  metrics.py\nfigures.py  ·  validate.py] as A
+}
+
+C ..> H : parameterises
+C ..> S : parameterises
+H ..> L : drives, open loop
+H ..> S : same trace (F-17)
+L .[#B45309].> P : **imports**
+S .[#B45309].> P : **imports**
+L ..> A : per-process records
+S ..> A : per-process records
+H ..> A : run manifest
+
+note right of P
+  **The invariant of the study.** `live` and `sim` both depend on
+  `policies`; `policies` depends on neither, and imports no clock,
+  no socket and no global RNG. A policy is therefore never
+  reimplemented for the simulator, and a simulated result travels
+  the same code path as a hardware result (F-21).
+end note
+
+note bottom of A
+  Consumes only the joined record set, so hardware runs and simulated
+  runs are analysed by identical code and are directly comparable —
+  the precondition for the validation criterion of F-23.
+end note
+@enduml

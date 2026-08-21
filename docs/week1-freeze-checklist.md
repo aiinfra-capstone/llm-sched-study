@@ -1,7 +1,7 @@
 # Week-1 Freeze Checklist
 
-The requirements spec is already frozen, with one accepted amendment —
-[SCOPE-CHANGE-001](SCOPE-CHANGE-001.md), which supersedes F-9 and is reflected below.
+The [requirements spec](requirements-spec.md) is frozen, and now incorporates
+[SCOPE-CHANGE-001](SCOPE-CHANGE-001.md) (single inference engine) as F-9 / F-9a / F-9b.
 **The interface contract (C-1 – C-6) freezes at end of Week 1.** After that, changes require the same re-scoping ritual as the spec:
 state the change, state what it costs against the §6 timeline, both people agree, one PR.
 

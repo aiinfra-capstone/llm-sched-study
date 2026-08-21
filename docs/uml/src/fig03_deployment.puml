@@ -1,0 +1,108 @@
+@startuml fig03_deployment
+!include theme.iuml
+title Figure 3 — Deployment View: Heterogeneous Pool on a Trusted LAN
+
+skinparam nodesep 26
+skinparam ranksep 55
+
+node "harness-host" #FFFCF5 {
+  artifact "config.yaml + seed" as CFG
+  artifact "trace.jsonl" as TR
+  artifact "run_manifest.json" as RM
+  component "replay.py\nopen-loop · no runtime RNG" as REP
+  component "Thin Client" as CLI
+}
+
+node "sched-host" {
+  component "Scheduler\nPython + asyncio · control plane only" as SCHED
+}
+
+cloud "Trusted LAN\nno authentication boundary" as LAN
+
+node "node-A\ndiscrete GPU · class G1" as NA {
+  component "Worker Wrapper" as WA
+  component "llama.cpp · GGUF 7-8B\n-ngl 99" as EA <<reused>>
+}
+node "node-B\nolder GPU · class G2" as NB {
+  component "Worker Wrapper" as WB
+  component "llama.cpp · GGUF 7-8B\n-ngl 40" as EB <<reused>>
+}
+node "node-C\nlaptop GPU · class G3" as NC {
+  component "Worker Wrapper" as WC
+  component "llama.cpp · GGUF 7-8B\n-ngl 20" as EC <<reused>>
+}
+node "node-D\nCPU only · class C1" as ND {
+  component "Worker Wrapper" as WD
+  component "llama.cpp · GGUF 7-8B\n-ngl 0 · threads only" as ED <<reused>>
+}
+
+rectangle "vLLM · AWQ 7-8B on node-A\none operating point, identical replayed trace" as VGAP <<measured condition, not a pool member>> #F3F3F1
+
+node "analysis-host" #FFFCF5 {
+  database "results/\nper-request records" as RES
+  component "Record Joiner\n+ figure scripts" as AN
+  component "Discrete-Event Simulator" as SIM
+}
+
+CFG -right-> REP
+TR -right-> REP
+CFG -down-> RM
+REP -down-> CLI
+
+CLI -down- LAN : <<gRPC>>  **Submit**\n<<gRPC>>  **full response, direct from worker (F-11)**
+SCHED -down- LAN : <<gRPC>>  **Dispatch**  ·  **Heartbeat**
+
+NA -[hidden]right-> NB
+NB -[hidden]right-> NC
+NC -[hidden]right-> ND
+
+LAN -down- NA
+LAN -down- NB
+LAN -down- NC
+LAN -down- ND
+
+WA -down-> EA
+WB -down-> EB
+WC -down-> EC
+WD -down-> ED
+
+TR .right.> SIM : same trace replayed\nin simulation (F-17)
+NA .down.> RES : <<offline>> JSONL
+ND .down.> RES : <<offline>> JSONL
+SCHED .down.> RES : <<offline>> JSONL\ndecision records (F-3)
+CLI .down.> RES : <<offline>> JSONL
+SIM -down-> RES
+RES -right-> AN
+
+note right of SCHED
+  Single point of failure, accepted and justified: milliseconds
+  of scheduling work against seconds of worker service time,
+  at 3–5 nodes (F-12).
+end note
+
+note right of NA
+  Engine and quantization are **constant across every node**. R is set by
+  hardware class and by per-node offload and thread configuration (F-9a),
+  which is what makes it tunable on physical hardware rather than only in
+  simulation. Offload values are illustrative; final values from Week 2.
+end note
+
+note bottom of VGAP
+  The engine gap is **measured once and reported as a magnitude**, not
+  assumed away (F-9b). vLLM participates in no policy comparison and
+  appears in no figure other than the engine-gap result. It bounds
+  external validity (threat R9).
+end note
+
+note bottom of RES
+  Host clocks are **not** synchronised. Every process reports only
+  durations it measured itself; the stages are reassembled offline
+  by joining on req_id (F-18).
+end note
+
+legend right
+  <color:#BFD6D1>███</color>  system under study
+  <color:#EBC98F>███</color>  instrumentation
+  <color:#C9C9C2>███</color>  reused third-party runtime
+endlegend
+@enduml

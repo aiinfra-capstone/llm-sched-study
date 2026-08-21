@@ -1,0 +1,55 @@
+@startuml fig09_state_request
+!include theme.iuml
+title Figure 9 — State Machine: Request Lifecycle
+
+state "Generated" as GEN
+state "Released" as REL
+state screen <<choice>>
+state "Excluded" as EXC <<terminal>>
+state "Queued" as Q
+state "Dispatched" as D
+state "In Flight" as IF {
+  state "Prefill" as PF
+  state "Decode" as DEC
+  [*] --> PF
+  PF --> DEC : first token
+  DEC --> [*] : output_tokens reached\n(ignore_eos forces exact length)
+  DEC : joins and leaves an engine-owned\nrunning batch mid-generation
+}
+state "Timed Out" as TO
+state "Failed" as F <<terminal>>
+state "Completed" as CP
+state "Recorded" as RC
+state "Discarded (warmup)" as DIS <<terminal>>
+state "Counted in p50 / p95 / p99" as CNT <<terminal>>
+
+[*] --> GEN : gen_trace.py, offline, seeded
+GEN --> REL : replay.py releases at\nscheduled offset (open-loop)
+REL --> screen : scheduler admission check
+screen --> EXC : outside admissible set (F-13)
+screen --> Q : admissible on >= 1 node
+EXC --> [*] : counted in the cliff characterisation\n(F-15), never in the primary tail statistics
+
+Q --> D : policy.choose() returns node_id\nDecisionRecord written (F-3)
+D --> IF : accepted by worker
+IF --> CP : full response returned
+IF --> TO : exceeds timeout ceiling
+TO --> D : retry whole request\n(no partial state — streaming\nis excluded from the base system)
+TO --> F : retry budget exhausted
+CP --> RC
+F --> RC
+RC --> DIS : arrival inside warmup window
+RC --> CNT : arrival inside measurement window
+
+note right of Q
+  queue_wait begins here and is
+  measured entirely on one machine.
+end note
+
+note bottom of TO
+  Under extreme R this is a categorical
+  failure, not a latency tail. Admission
+  is what keeps it rare enough that tail
+  statistics stay meaningful.
+end note
+@enduml

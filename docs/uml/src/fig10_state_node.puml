@@ -1,0 +1,59 @@
+@startuml fig10_state_node
+!include theme.iuml
+title Figure 10 — State Machine: Worker Node and Its Capability Estimate
+
+state "Offline" as OFF
+state "Registering" as REG
+state "Calibrating" as CAL
+state "Serving" as SRV {
+  state "Idle" as IDLE
+  state "Batching" as BAT
+  state "Saturated" as SAT
+  [*] --> IDLE
+  IDLE --> BAT : first request admitted
+  BAT --> BAT : request joins / leaves\nthe running batch
+  BAT --> IDLE : in-flight set empties
+  BAT --> SAT : KV-cache pressure or\nqueue depth above threshold
+  SAT --> BAT : pressure released
+}
+state "Draining" as DRN
+state "Unreachable" as UNR
+
+[*] --> OFF
+OFF --> REG : process start
+REG --> CAL : specs reported to scheduler
+CAL --> SRV : cost model fitted\n(throughput x prompt length x concurrency)
+CAL : short warmup benchmark;\nwithout it "hardware-aware" is guesswork
+SRV --> DRN : operator drain\n(churn experiment)
+DRN --> OFF : in-flight set empty
+SRV --> UNR : heartbeat missed > k intervals
+UNR --> SRV : heartbeat resumes
+UNR --> OFF : declared lost;\nin-flight requests retried elsewhere
+
+note right of SRV
+  Observed throughput here is **non-stationary**.
+  Its autocorrelation time tau and variance
+  envelope are measured directly (MPR-1) and
+  become the independent variable of H3 rather
+  than an assumption to be swept under the rug.
+end note
+
+state "Estimate freshness at the scheduler" as EST {
+  state "Fresh" as FRESH
+  state "Ageing" as AGE
+  state "Stale" as STALE
+  [*] --> FRESH
+  FRESH --> AGE : age approaches tau
+  AGE --> STALE : age exceeds tau
+  STALE --> FRESH : heartbeat received\nor staleness injection s reset
+  AGE --> FRESH : heartbeat received
+}
+
+SRV -[#B45309,dashed]-> EST : heartbeat (F-10) resets age;\ninjected staleness s (F-8) holds it open
+
+note bottom of EST
+  This sub-state is scheduler-side, not node-side:
+  it tracks what the scheduler *believes*, which is
+  precisely the quantity H3 manipulates.
+end note
+@enduml

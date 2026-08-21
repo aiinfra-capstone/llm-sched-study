@@ -1,0 +1,5 @@
+# Repo-level tooling that lives outside dataplane/ — contracts/check.py and
+# docs/spec_to_md.py. This is a lint config only; it does NOT make the repo root a
+# Python package. dataplane/ carries its own [tool.ruff] and is unaffected.
+line-length = 100
+exclude = ["dataplane", "controlplane", "docs/uml"]

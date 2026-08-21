@@ -23,6 +23,24 @@ jobs:
       # the same commit — an example that no longer exercises the schema is how
       # drift gets in (§12.2).
       - run: uv run contracts/check.py
+      # Repo-level tooling lives outside dataplane/, so it needs its own lint pass.
+      - run: uv run --with ruff ruff check contracts/check.py docs/spec_to_md.py
+      - run: uv run --with ruff ruff format --check contracts/check.py docs/spec_to_md.py
+
+  spec:
+    name: Spec mirror is current
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      # The spec is authored in Word, which git cannot diff. docs/requirements-spec.md
+      # is a generated mirror, and this check fails if the .docx moved without it —
+      # otherwise a spec edit could land in a PR with nobody able to see what changed.
+      - run: uv sync --all-groups
+        working-directory: dataplane
+      - run: uv run --directory dataplane python ../docs/spec_to_md.py --check
 
   dataplane:
     name: "Data plane — Divyansh (A)"
@@ -35,7 +53,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-      - run: uv sync --all-extras
+      - run: uv sync --all-groups
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - run: uv run pytest -q

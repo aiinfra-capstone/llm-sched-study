@@ -1,0 +1,127 @@
+@startuml fig06_class_simulator
+!include theme.iuml
+title Figure 6 — Class View: Discrete-Event Simulator and Validation (F-21 – F-24)
+
+skinparam nodesep 20
+skinparam ranksep 50
+skinparam wrapWidth 400
+
+package "Shared with the live system — imported, not reimplemented" {
+  interface DispatchPolicy <<interface>> {
+    +choose(request : Request, node_states : list[NodeState], now : float, rng : Random) : NodeId
+  }
+  interface Clock <<interface>> {
+    +now() : float
+  }
+  class Trace <<from Figure 5>> {
+    +requests : list[Request]
+    +checksum : str
+  }
+  class StageRecord <<from Figure 5>> {
+    +req_id : str
+    +queue_wait : float
+    +service_prefill : float
+    +service_decode : float
+    +end_to_end : float
+  }
+}
+
+package "Discrete-event simulator" #FFFCF5 {
+  class DiscreteEventSimulator {
+    -clock : SimClock
+    -events : EventHeap
+    -policy : DispatchPolicy
+    -nodes : list[SimNode]
+    +run(trace : Trace) : list[StageRecord]
+  }
+  class SimClock {
+    +now : float
+    +advance_to(t : float) : void
+  }
+  class EventHeap {
+    +push(at : float, kind : ArrivalOrCompletion, req_id : str) : void
+    +pop() : Event
+  }
+  class SimNode {
+    +node_id : NodeId
+    +queue : deque[Request]
+    +in_flight : list[Request]
+    +batch_capacity : int
+    +tok_s_nominal : float
+  }
+  abstract class ServiceTimeModel {
+    +{abstract} sample(r : Request, n : SimNode, rng : Random) : float
+  }
+  class FittedServiceTimeModel {
+    +source : "measured hardware, Week 2"
+    +prompt_length_terms : float[<= 6]
+    +concurrency_term : float
+    +noise : StochasticComponent
+  }
+  class StochasticComponent {
+    +sigma : float
+    +tau : float
+    +sample(now : float, rng : Random) : float
+  }
+  DiscreteEventSimulator *--> SimClock
+  DiscreteEventSimulator *--> EventHeap
+  DiscreteEventSimulator *--> "1..*" SimNode
+  DiscreteEventSimulator o--> ServiceTimeModel
+  ServiceTimeModel <|-- FittedServiceTimeModel
+  FittedServiceTimeModel *--> StochasticComponent
+}
+
+package "Validation (F-23)" #FFFCF5 {
+  class Validator {
+    +tolerance_pct : float
+    +compare(sim : MetricSet, hw : MetricSet) : ValidationReport
+  }
+  class ValidationReport {
+    +operating_points : int
+    +p50_error : float
+    +p95_error : float
+    +within_tolerance : bool
+    +validated_range : str
+  }
+  class SweepRunner {
+    +axes : {R, load, staleness, policy, N}
+    +run() : list[StageRecord]
+    +label : "simulated"
+  }
+  Validator ..> ValidationReport : produces
+  SweepRunner ..> ValidationReport : gated by
+}
+
+SimClock ..|> Clock
+DiscreteEventSimulator o--> DispatchPolicy
+DiscreteEventSimulator ..> Trace : consumes the identical trace (F-17)
+DiscreteEventSimulator ..> StageRecord : emits the identical record shape
+SweepRunner o--> DiscreteEventSimulator
+Validator ..> DiscreteEventSimulator
+
+note top of DispatchPolicy
+  The simulator holds a **DispatchPolicy object**, not a copy of one. Any
+  divergence between simulated and live routing is therefore a difference
+  in service time or in state — never a difference in policy (F-21).
+end note
+
+note left of FittedServiceTimeModel
+  Every parameter comes from the Week-2 calibration campaign: throughput against
+  prompt length and concurrency, plus a noise term fitted to the measured variance
+  envelope and autocorrelation time tau (F-22).
+end note
+
+note right of SimNode
+  `batch_capacity` models llama.cpp's **fixed slot count exactly**, for every
+  node in the pool — a fixed number of parallel sequences each holding a fixed
+  KV share. It is not vLLM's dynamic paged-KV admission, where any integer
+  capacity is emergent. A uniform engine removes that asymmetry, so no
+  approximation is absorbed into the F-23 tolerance.
+end note
+
+note bottom of SweepRunner
+  Runs only the axes hardware cannot reach — R beyond the physical pool ratio,
+  N > 5, controlled staleness — and only after validation passes. Every figure
+  it produces is labelled simulated (F-24, threat R2).
+end note
+@enduml

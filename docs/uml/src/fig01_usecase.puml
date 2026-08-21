@@ -1,0 +1,61 @@
+@startuml fig01_usecase
+!include theme.iuml
+title Figure 1 — Use Case View of the Measurement Testbed
+
+left to right direction
+skinparam nodesep 18
+skinparam ranksep 70
+
+actor "Experimenter" as EX
+actor "Node Operator" as OP
+actor "Policy Author" as PA
+
+rectangle "Measurement testbed" {
+  usecase "Calibrate per-node cost model\nthroughput x prompt length x concurrency" as UC1
+  usecase "Measure throughput non-stationarity\nautocorrelation time tau, variance envelope" as UC2
+  usecase "Determine the admissible request set" as UC3
+  usecase "Characterise the heterogeneity cliff" as UC4
+  usecase "Generate a deterministic trace\nseeded arrivals, lengths, priority mix" as UC5
+  usecase "Replay a trace open-loop" as UC6
+  usecase "Select dispatch policy from config" as UC7
+  usecase "Inject estimate staleness s" as UC8
+  usecase "Identify the load band in which\npolicy measurably changes p99" as UC9
+  usecase "Sweep R x load x staleness x policy x N" as UC10
+  usecase "Validate the simulator against hardware" as UC11
+  usecase "Join per-request records\nand generate every figure" as UC12
+}
+
+actor "Inference Engine\nllama.cpp · GGUF" as ENG
+
+OP --> UC1
+OP --> UC2
+OP --> UC3
+EX --> UC5
+EX --> UC6
+EX --> UC9
+EX --> UC10
+EX --> UC12
+PA --> UC7
+PA --> UC8
+
+UC1 --> ENG
+UC2 --> ENG
+
+UC6 ..> UC5 : <<include>>
+UC6 ..> UC7 : <<include>>
+UC10 ..> UC8 : <<include>>
+UC11 ..> UC6 : <<include>>
+UC11 ..> UC10 : <<include>>
+UC4 ..> UC3 : <<extend>>
+
+note bottom of UC2
+  Standalone contribution (MPR-1): achievable on hardware
+  alone by Week 2, independent of any policy comparison.
+end note
+
+note bottom of UC10
+  Runs the axes hardware cannot reach — R beyond the physical
+  pool ratio, N > 5, controlled staleness. Every figure produced
+  here is labelled simulated (F-24).
+end note
+@enduml

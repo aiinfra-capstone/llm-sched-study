@@ -1,6 +1,10 @@
 # Scope Change 001 — Single Inference Engine
 
-**Status:** Accepted
+**Status:** Accepted, and **integrated into the requirements specification** — F-9,
+F-9a and F-9b now read as §4 below, and threat R9 is in §8. This file is retained as the
+*decision record*: the spec states what the system must do, this states why it changed.
+Where the two differ, [the spec](requirements-spec.md) wins.
+
 **Raised:** Week 1 (inside the freeze window; §6 feature freeze is end of Week 3, §4 changes after Week 1 require explicit re-scoping)
 **Affects:** §0, §4.4, §5.1, §5.3, §6, §7, §8, §10; Figures 3, 6, 12
 **Supersedes:** F-9 as frozen
@@ -122,8 +126,9 @@ on real machines.
 
 ## 8. Figure edits
 
-PlantUML sources are not in this working copy; apply these to `src/` and rebuild per the
-FIGURES.md instructions.
+**Applied.** The sources now live at [`docs/uml/src/`](uml/src/) and the rendered set has
+been rebuilt — see [`docs/uml/FIGURES.md`](uml/FIGURES.md). The edits below are recorded
+for the decision trail.
 
 **`fig03_deployment.puml`**
 - node-A, node-B: `«reused» vLLM · AWQ 7-8B` → `«reused» llama.cpp · GGUF 7-8B`

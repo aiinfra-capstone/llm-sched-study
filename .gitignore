@@ -1,0 +1,31 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Generated protobuf stubs — regenerated from contracts/scheduling.proto
+*_pb2.py
+*_pb2.pyi
+*_pb2_grpc.py
+
+# ---------------------------------------------------------------------------
+# Measurement output. None of this is committed: traces are regenerable from
+# (config, seed) byte-for-byte (C-2), and logs are large and per-run. What IS
+# committed is the run manifest (C-6), which carries the seed, the trace
+# sha256, and the git shas needed to reproduce any of it (F-20).
+# ---------------------------------------------------------------------------
+traces/
+runs/
+results/
+*.parquet
+figures/out/
+
+# Calibration snapshots are the exception: the TIME-ORDERED C-3 series is an
+# input to B's DES and to H3, so it is versioned. Keep it under contracts/.
+!contracts/examples/*.json

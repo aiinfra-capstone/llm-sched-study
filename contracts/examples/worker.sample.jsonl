@@ -1,0 +1,1 @@
+{"run_id":"run_0142","req_id":"r000417","node_id":"n2","engine":"vllm","queue_wait_ns":88000000,"prefill_ns":210000000,"decode_ns":1790000000,"service_ns":2000000000,"prompt_tokens":512,"output_tokens":128,"batch_size_at_admission":3,"inflight_at_admission":2,"kv_occupancy_at_admission":0.41,"status":"ok"}

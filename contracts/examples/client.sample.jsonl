@@ -1,0 +1,1 @@
+{"run_id":"run_0142","req_id":"r000417","intended_offset_s":37.4210,"actual_send_offset_s":37.4232,"send_lag_ms":2.2,"e2e_duration_ns":2140883000,"status":"ok","output_tokens":128,"responding_node":"n2","chosen_node_from_ack":"n2","dispatch_ack_ns":1420000}

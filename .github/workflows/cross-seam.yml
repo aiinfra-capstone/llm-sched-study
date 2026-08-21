@@ -1,0 +1,88 @@
+# The two tests that straddle the seam between Person A and Person B.
+#
+# Both span code owned by different people, which is exactly why they run here
+# and not on somebody's laptop. §12.1: "Run it in CI, not by hand."
+#
+# They are guarded: each job checks whether its implementation exists yet and
+# emits a notice instead of failing until it does. Remove the guard once the
+# implementation lands (determinism: Week 3-4; validation: Week 4).
+
+name: Cross-seam
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  determinism:
+    name: "§12.1 — dispatch sequence identical across vehicles"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Does the implementation exist yet?
+        id: guard
+        run: |
+          if [ -f tools/determinism_test.sh ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # THE TEST: same trace, same seed, deterministic service times injected
+      # into the DES, assert the DISPATCH SEQUENCE is byte-identical between the
+      # live scheduler and the simulator.
+      #
+      # This is the guard against silent policy drift — the failure mode that
+      # invalidates F-23 validation without either system appearing to break.
+      # Both still run; both still produce plausible numbers.
+      - name: Run determinism test
+        if: steps.guard.outputs.ready == 'true'
+        run: bash tools/determinism_test.sh
+
+      - name: Not implemented yet
+        if: steps.guard.outputs.ready != 'true'
+        run: |
+          echo "::notice title=determinism::Not implemented yet (due Week 3-4)."
+          echo "Same trace + same seed + deterministic DES service times"
+          echo "=> assert identical dispatch sequence. See docs/week1-freeze-checklist.md."
+
+  validation:
+    name: "F-23 — simulator agrees with hardware"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Are validation anchors committed yet?
+        id: guard
+        run: |
+          if [ -d validation/anchors ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # THE TEST: run the same trace through both vehicles at three operating
+      # points, join both output Parquets, compare p50 and p95 end-to-end
+      # latency against the stated tolerance.
+      #
+      # Report OBSERVED ERROR, not just pass/fail. The observed error is a
+      # reported number in the writeup (F-23), and R-2 turns on it.
+      - name: Run F-23 validation
+        if: steps.guard.outputs.ready == 'true'
+        run: bash tools/validate_f23.sh
+
+      - name: Not implemented yet
+        if: steps.guard.outputs.ready != 'true'
+        run: |
+          echo "::notice title=F-23::Not implemented yet (due Week 4)."
+          echo "Three operating points, both vehicles, compare p50/p95."
+          echo "Report observed error, not just pass/fail."

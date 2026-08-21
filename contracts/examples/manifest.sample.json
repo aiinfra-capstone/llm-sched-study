@@ -1,0 +1,28 @@
+{
+  "run_id": "run_0142",
+  "started_unix": 1777400000,
+  "vehicle": "hardware",
+  "config_hash": "9c1e0a77b3d24f8e65c1902ab4de7731",
+  "config": {"_comment": "verbatim config goes here"},
+  "trace_path": "traces/t_lam3.5_s20260421.jsonl",
+  "trace_sha256": "f4a9c2b18e5d3407a6b90c1de2f83455a7c604b9e1d2f38a05c7b6e94d310f28",
+  "policy": "wjsq",
+  "lambda": 3.5,
+  "staleness_s": 0.0,
+  "warmup_s": 60,
+  "duration_s": 600,
+  "cost_model_snapshots": {"n1": "cm_rtx3090_awq_20260428T1412Z",
+                           "n2": "cm_rtx3090_awq_20260428T1412Z",
+                           "n3": "cm_cpu_q4km_20260428T1412Z"},
+  "nodes": [
+    {"node_id": "n1", "host": "box-a", "engine": "vllm", "engine_version": "0.6.x",
+     "model": "llama3-8b", "quant": "awq", "gpu": "RTX 3090", "driver": "550.x",
+     "prefix_caching": false, "max_batch": 8}
+  ],
+  "git_shas": {"worker": "a3f1c09", "scheduler": "77bd120",
+               "harness": "a3f1c09", "sim": "77bd120"},
+  "f18_status": "full",
+  "validity": {"max_send_lag_ms": 3.9, "send_lag_violations": 0,
+               "dropped_requests": 0, "heartbeat_gaps": 0,
+               "engine_restarts": 0, "valid": true}
+}

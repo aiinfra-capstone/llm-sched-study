@@ -1,0 +1,21 @@
+{
+  "cost_model_schema": 1,
+  "snapshot_id": "cm_rtx3090_awq_20260428T1412Z",
+  "node_class": "rtx3090_awq_llama3_8b",
+  "measured_at_unix": 1777392720,
+  "calibration_run_ids": ["cal_0031", "cal_0032"],
+  "form": "lookup_table",
+  "entries": [
+    {"prompt_bucket": [257, 1024], "output_bucket": [65, 192], "concurrency": 1,
+     "service_ms_mean": 1840.0, "service_ms_p50": 1795.0, "service_ms_p95": 2210.0,
+     "tokens_per_s": 69.6, "n_samples": 40},
+    {"prompt_bucket": [257, 1024], "output_bucket": [65, 192], "concurrency": 4,
+     "service_ms_mean": 3120.0, "service_ms_p50": 3040.0, "service_ms_p95": 4015.0,
+     "tokens_per_s": 41.0, "n_samples": 40}
+  ],
+  "stochastic": {"model": "lognormal_multiplier", "sigma": 0.113,
+                 "autocorr_time_s": 42.0, "fit_r2": 0.87},
+  "admissibility": {"max_prompt": 2048, "max_output": 256, "timeout_ceiling_ms": 60000},
+  "provenance": {"engine": "vllm", "engine_version": "0.6.x", "quant": "awq",
+                 "gpu": "RTX 3090", "driver": "550.x", "prefix_caching": false}
+}

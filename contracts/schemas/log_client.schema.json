@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/CAPSTONE_ORG/REPO/contracts/schemas/log_client.schema.json",
+  "title": "C-4 — client_{run_id}.jsonl (Person A)",
+  "description": "Appended locally, never written over the network. Joined offline on req_id.",
+  "type": "object",
+  "required": ["run_id", "req_id", "intended_offset_s", "actual_send_offset_s",
+               "send_lag_ms", "e2e_duration_ns", "status", "output_tokens",
+               "responding_node", "chosen_node_from_ack", "dispatch_ack_ns"],
+  "additionalProperties": false,
+  "properties": {
+    "run_id": { "type": "string" },
+    "req_id": { "type": "string" },
+    "intended_offset_s": { "type": "number" },
+    "actual_send_offset_s": { "type": "number" },
+    "send_lag_ms": { "type": "number",
+      "description": "The open-loop guard. Assert per request; if ANY request in the measurement window exceeds the threshold (suggest 50 ms), the run is marked invalid in the manifest rather than analysed." },
+    "e2e_duration_ns": { "type": "integer", "description": "Client-local monotonic duration." },
+    "status": { "enum": ["ok", "timeout", "oom", "engine_error"] },
+    "output_tokens": { "type": "integer" },
+    "responding_node": { "type": "string" },
+    "chosen_node_from_ack": { "type": "string" },
+    "dispatch_ack_ns": { "type": "integer" }
+  }
+}

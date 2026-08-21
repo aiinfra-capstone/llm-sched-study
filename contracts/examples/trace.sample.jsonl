@@ -1,0 +1,5 @@
+{"record":"header","trace_schema":1,"gen_seed":20260421,"n_requests":4,"duration_s":600,"arrival":{"process":"mmpp","lambda_base":3.5,"burst_lambda":14.0,"burst_mean_s":8.0,"quiet_mean_s":45.0},"length_dist":{"buckets":["p128_o64","p512_o128","p2048_o256"],"weights":[0.5,0.35,0.15]},"priority_mix":{"0":0.7,"1":0.3},"admissible":{"max_prompt":2048,"max_output":256,"timeout_ceiling_ms":60000},"vocab_size":128000,"reserved_ids_excluded":true,"generator_git_sha":"a3f1c09"}
+{"record":"req","req_id":"r000001","arrival_offset_s":0.0000,"prompt_len":512,"output_len":128,"bucket_id":"p512_o128","priority":0,"content_seed":91827364}
+{"record":"req","req_id":"r000002","arrival_offset_s":0.2841,"prompt_len":128,"output_len":64,"bucket_id":"p128_o64","priority":1,"content_seed":55120933}
+{"record":"req","req_id":"r000003","arrival_offset_s":0.9017,"prompt_len":2048,"output_len":256,"bucket_id":"p2048_o256","priority":0,"content_seed":13398471}
+{"record":"req","req_id":"r000004","arrival_offset_s":1.4402,"prompt_len":512,"output_len":128,"bucket_id":"p512_o128","priority":0,"content_seed":78201145}

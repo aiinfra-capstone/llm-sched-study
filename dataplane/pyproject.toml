@@ -1,0 +1,40 @@
+[project]
+name = "dataplane"
+version = "0.1.0"
+description = "Person A — worker wrapper, measurement harness, results pipeline, figures"
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "grpcio>=1.60",
+    "grpcio-tools>=1.60",
+    "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+# Kept out of the base install so the pipeline stays laptop-runnable (§8.4:
+# "no network, no engine") and CI does not drag in CUDA wheels.
+pipeline = ["pandas>=2.2", "pyarrow>=15.0"]
+figures  = ["matplotlib>=3.8"]
+# The worker's engine deps are environment-specific and NOT pinned here.
+# See README.md — vLLM's supported Python matrix pins the worker env (§10).
+
+[project.scripts]
+gen-trace = "dataplane.harness.gen_trace:main"
+replay    = "dataplane.harness.replay:main"
+pipeline  = "dataplane.pipeline.join:main"
+
+[dependency-groups]
+dev = ["pytest>=8.0", "ruff>=0.6"]
+
+[build-system]
+requires = ["uv_build>=0.9"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-root = "src"
+
+[tool.ruff]
+line-length = 100
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/CAPSTONE_ORG/REPO/contracts/schemas/joined_record.schema.json",
+  "title": "C-5 — Joined record (one row per request)",
+  "description": "Emitted as Parquet by Person A's pipeline, which is a PURE FUNCTION of (manifest, three log files). No network, no engine, runnable on a laptop. Figure scripts consume Parquet only. Keeping these two stages separate means B can hand A a directory of simulator logs and A's pipeline processes them with zero changes.\n\nTHE HONEST HANDLING OF F-18: F-18 asks for transport_in and transport_out as separate stages. Without clock synchronisation across machines you CANNOT measure them separately — you can only measure the sum of everything not accounted for by single-host durations. Report it as one residual, state why, and note that on a LAN it is small enough that its decomposition does not affect any hypothesis. Do NOT install PTP to fix this; it is a week you do not have, for a number you do not need.\n\nCLOCK DISCIPLINE (§12.3): there is NO cross-host subtraction anywhere in this schema. transport_residual_ms is named 'residual' precisely so nobody mistakes it for a measurement.",
+  "type": "object",
+  "required": ["run_id", "req_id", "policy", "lambda", "staleness_s", "R", "node_count",
+               "bucket_id", "prompt_len", "output_len", "priority",
+               "intended_offset_s", "send_lag_ms", "e2e_ms", "status",
+               "chosen_node", "decide_us", "chosen_queue_depth", "chosen_est_age_ms",
+               "queue_wait_ms", "service_ms", "transport_residual_ms", "is_warmup"],
+  "properties": {
+    "run_id":            { "type": "string",  "$comment": "from manifest" },
+    "policy":            { "type": "string",  "$comment": "from manifest" },
+    "lambda":            { "type": "number",  "$comment": "from manifest" },
+    "staleness_s":       { "type": "number",  "$comment": "from manifest" },
+    "R":                 { "type": "number",  "$comment": "from manifest — heterogeneity ratio max/min node throughput" },
+    "node_count":        { "type": "integer", "$comment": "from manifest" },
+
+    "req_id":            { "type": "string",  "$comment": "from trace" },
+    "bucket_id":         { "type": "string",  "$comment": "from trace" },
+    "prompt_len":        { "type": "integer", "$comment": "from trace" },
+    "output_len":        { "type": "integer", "$comment": "from trace" },
+    "priority":          { "type": "integer", "$comment": "from trace — see §13 open item" },
+
+    "intended_offset_s": { "type": "number",  "$comment": "from client" },
+    "send_lag_ms":       { "type": "number",  "$comment": "from client" },
+    "e2e_ms":            { "type": "number",  "$comment": "from client — client-local monotonic" },
+    "status":            { "type": "string",  "$comment": "from client" },
+
+    "chosen_node":            { "type": ["string", "null"], "$comment": "from scheduler" },
+    "decide_us":              { "type": "number",  "$comment": "from scheduler" },
+    "chosen_queue_depth":     { "type": "integer", "$comment": "from scheduler" },
+    "chosen_est_age_ms":      { "type": "integer", "$comment": "from scheduler" },
+    "best_alt_node":          { "type": ["string", "null"], "$comment": "from scheduler — derived from candidates[]" },
+    "best_alt_est_service_ms":{ "type": ["number", "null"], "$comment": "from scheduler — derived from candidates[]" },
+    "routing_error_ms":       { "type": ["number", "null"], "$comment": "from scheduler — derived; §5.4 dependent variable" },
+
+    "queue_wait_ms":     { "type": "number",  "$comment": "from worker — worker-local" },
+    "prefill_ms":        { "type": ["number", "null"], "$comment": "from worker — null if F-18 partial" },
+    "decode_ms":         { "type": ["number", "null"], "$comment": "from worker — null if F-18 partial" },
+    "service_ms":        { "type": "number",  "$comment": "from worker — worker-local" },
+
+    "transport_residual_ms": { "type": "number",
+      "description": "DERIVED: e2e_ms - queue_wait_ms - service_ms - decide_us/1000. A residual, not a measurement." },
+    "is_warmup": { "type": "boolean",
+      "description": "DERIVED: intended_offset_s < manifest.warmup_s — computed from the TRACE, never from run wall-clock, so warmup discard is identical in hardware and simulator runs (§12.5)." }
+  }
+}

@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/CAPSTONE_ORG/REPO/contracts/schemas/manifest.schema.json",
+  "title": "C-6 — Run manifest",
+  "description": "One JSON per run, written by the launcher BEFORE the run and finalised after. F-20: every experiment reproducible from a single config file plus a seed.\n\n`vehicle` is 'hardware' or 'simulator', and F-24 requires every simulated figure to be labelled. Make the figure scripts READ THIS FIELD and stamp the plot automatically — labelling by hand fails exactly once, in the final report.",
+  "type": "object",
+  "required": ["run_id", "started_unix", "vehicle", "config_hash", "config",
+               "trace_path", "trace_sha256", "policy", "lambda", "staleness_s",
+               "warmup_s", "duration_s", "cost_model_snapshots", "nodes",
+               "git_shas", "validity"],
+  "properties": {
+    "run_id": { "type": "string" },
+    "started_unix": { "type": "integer" },
+    "vehicle": { "enum": ["hardware", "simulator"],
+      "description": "F-24: figure scripts read this and stamp simulated plots automatically." },
+    "config_hash": { "type": "string" },
+    "config": { "type": "object", "description": "Verbatim config." },
+    "trace_path": { "type": "string" },
+    "trace_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$",
+      "description": "The trace's identity everywhere downstream. Replay client verifies before t0." },
+    "policy": { "enum": ["round_robin", "jsq", "static_weighted", "wjsq", "threshold"] },
+    "lambda": { "type": "number" },
+    "staleness_s": { "type": "number", "minimum": 0 },
+    "warmup_s": { "type": "number", "minimum": 0,
+      "description": "Drives is_warmup in C-5, computed from the trace's intended_offset_s in BOTH vehicles." },
+    "duration_s": { "type": "number" },
+    "cost_model_snapshots": {
+      "type": "object",
+      "description": "node_id -> C-3 snapshot_id. Which snapshot each node's estimate came from.",
+      "additionalProperties": { "type": "string" }
+    },
+    "nodes": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object",
+        "description": "Everything runtime-specific — ignore_eos, min_tokens/max_tokens, enable_prefix_caching=False, llama.cpp slot reuse disabled — is set once at engine construction and recorded HERE, so the settings that eliminate your confounds are auditable from the results.",
+        "required": ["node_id", "host", "engine", "engine_version", "model",
+                     "quant", "gpu", "driver", "prefix_caching", "max_batch"],
+        "properties": {
+          "node_id": { "type": "string" },
+          "host": { "type": "string" },
+          "engine": { "enum": ["vllm", "llamacpp"] },
+          "engine_version": { "type": "string" },
+          "model": { "type": "string" },
+          "quant": { "type": "string" },
+          "gpu": { "type": "string" },
+          "driver": { "type": "string" },
+          "prefix_caching": { "type": "boolean" },
+          "max_batch": { "type": "integer" }
+        }
+      }
+    },
+    "git_shas": {
+      "type": "object",
+      "required": ["worker", "scheduler", "harness", "sim"],
+      "properties": {
+        "worker":    { "type": "string" },
+        "scheduler": { "type": "string" },
+        "harness":   { "type": "string" },
+        "sim":       { "type": "string" }
+      }
+    },
+    "f18_status": { "enum": ["full", "partial"],
+      "description": "'partial' when the pinned engine version does not expose the prefill/decode split. Record it here rather than faking the split." },
+    "validity": {
+      "type": "object",
+      "required": ["max_send_lag_ms", "send_lag_violations", "dropped_requests",
+                   "heartbeat_gaps", "engine_restarts", "valid"],
+      "properties": {
+        "max_send_lag_ms": { "type": "number" },
+        "send_lag_violations": { "type": "integer",
+          "description": "Non-zero => run marked invalid and NOT analysed." },
+        "dropped_requests": { "type": "integer" },
+        "heartbeat_gaps": { "type": "integer", "description": "Detected via Heartbeat.seq gaps." },
+        "engine_restarts": { "type": "integer" },
+        "valid": { "type": "boolean" }
+      }
+    }
+  }
+}

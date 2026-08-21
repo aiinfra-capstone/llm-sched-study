@@ -52,7 +52,7 @@ an example that no longer exercises the schema is how drift gets in.
 Stubs are **not** committed (see `.gitignore`); generate them into your own tree:
 
 ```bash
-# Python (Person A)
+# Python (Divyansh, A)
 uv run --with grpcio-tools python -m grpc_tools.protoc \
   -Icontracts --python_out=. --grpc_python_out=. contracts/scheduling.proto
 ```

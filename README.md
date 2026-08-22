@@ -95,6 +95,78 @@ sort of thing that quietly invalidates measurement studies:
    identified by its SHA-256, so the same workload can be replayed across every policy and
    across the hardware/simulator boundary.
 
+### The pinned engine
+
+*R* is a hardware property only if the engine underneath it does not move, so the engine is
+pinned as part of the contract rather than installed per machine and hoped to match:
+
+| | |
+|---|---|
+| Source | [`ggml-org/llama.cpp`](https://github.com/ggml-org/llama.cpp) tag `b10569`, commit `5a32f7b66ef6cfb3e60deea26e3454cc6ad3438c` |
+| Model | `Meta-Llama-3-8B-Instruct`, GGUF |
+| Quantization | `Q4_K_M` |
+| Backends | CUDA 13.2 and Vulkan, **both built from that one commit** |
+| Install root | `~/opt/llama.cpp/` — outside the repo; the pin travels in the manifest, not in git |
+
+Two backends are built because the pool is not backend-homogeneous by luck of hardware: an
+NVIDIA node runs CUDA, and Vulkan is what a non-NVIDIA node — or one whose distribution has
+no CUDA toolkit — can run *without changing the engine*. Same source commit, same model,
+same quantization; only the compute backend differs.
+
+**A backend is not a free variable inside a comparison.** Every node in a given policy
+comparison runs the same one. Where a machine can run both, the CUDA/Vulkan throughput gap
+is measured during the Week-2 calibration campaign as two `node_class` entries — the same
+move F-9b makes for vLLM, and for the same reason: the cost of the choice becomes a number
+in the writeup instead of an assumption underneath it.
+
+The contract already carries the pin. `manifest.nodes[]` records `engine_version`, `model`,
+`quant`, `gpu`, `driver`, and the F-9a knobs under `engine_config`. The backend and the
+binary's SHA-256 ride inside `engine_version` (`b10569+cuda13.2`, `b10569+vulkan`), which
+the schema holds as a free string — a first-class `backend` field would be a **Week-1
+contract change** and has to be raised before the freeze, not after.
+
+```bash
+# Prerequisites, once per node (Fedora 43)
+sudo dnf install -y vulkan-headers glslc                                  # Vulkan backend
+CUDA_REPO=https://developer.download.nvidia.com/compute/cuda/repos/fedora43/x86_64
+sudo dnf config-manager addrepo --from-repofile=$CUDA_REPO/cuda-fedora43.repo
+sudo dnf install -y cuda-toolkit-13-2                                     # CUDA backend
+
+# One source tree, pinned; two build trees
+git clone --branch b10569 --depth 1 https://github.com/ggml-org/llama.cpp.git \
+  ~/opt/llama.cpp/src
+
+cmake -S ~/opt/llama.cpp/src -B ~/opt/llama.cpp/b10569-cuda \
+  -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=75
+cmake --build ~/opt/llama.cpp/b10569-cuda -j"$(nproc)"
+
+cmake -S ~/opt/llama.cpp/src -B ~/opt/llama.cpp/b10569-vulkan \
+  -DCMAKE_BUILD_TYPE=Release -DGGML_VULKAN=ON
+cmake --build ~/opt/llama.cpp/b10569-vulkan -j"$(nproc)"
+
+# These hashes go in the manifest. A node whose hash does not match is not in the pool.
+sha256sum ~/opt/llama.cpp/b10569-*/bin/llama-server
+
+# The weights (~4.9 GB), same file on every node
+curl -L --output-dir ~/models/gguf --create-dirs -O \
+  https://huggingface.co/bartowski/Meta-Llama-3-8B-Instruct-GGUF/resolve/main/Meta-Llama-3-8B-Instruct-Q4_K_M.gguf
+
+# 4920734272 bytes; verify before a node joins the pool
+sha256sum ~/models/gguf/Meta-Llama-3-8B-Instruct-Q4_K_M.gguf
+# 8ba9baf3a7345f705a11878397500fb25174034f0fd784e83aa4a96aaa47735f
+```
+
+`CMAKE_CUDA_ARCHITECTURES` is per node — `75` is Turing (GTX 16-series, RTX 20-series), `86`
+is Ampere, `89` is Ada. Setting it wrong costs a long JIT stall on first token, which then
+contaminates the very tail latencies MPR-1 is measuring.
+
+> **Verify F-18 before the contract freezes.** The prefill/decode split reads `prompt_ms`
+> and `predicted_ms` from `llama-server`'s `timings` block. Confirm the pinned build emits
+> them **on both backends**; if it does not, log `service_ns` only and set
+> `f18_status: "partial"` in the manifest rather than faking the split. This is the one
+> thing about the engine that can still force a contract change, so it is worth doing on
+> day one rather than in Week 3.
+
 ## What it produces even if things go wrong
 
 The window has no slack, so the result ladder is defined in advance and strictly ordered:
@@ -157,6 +229,9 @@ around that.
 ## Getting started
 
 Requires [`uv`](https://docs.astral.sh/uv/). Nothing else — no GPU needed to run the checks.
+
+Bringing up an actual worker node is a separate step — see [*The pinned engine*](#the-pinned-engine)
+for the llama.cpp tag, the two backend builds, and the GGUF.
 
 ```bash
 git clone git@github.com:aiinfra-capstone/llm-sched-study.git

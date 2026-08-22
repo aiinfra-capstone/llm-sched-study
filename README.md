@@ -127,25 +127,35 @@ contract change** and has to be raised before the freeze, not after.
 
 ```bash
 # Prerequisites, once per node (Fedora 43)
-sudo dnf install -y vulkan-headers glslc                                  # Vulkan backend
+# vulkan-loader-devel is easy to miss: headers and glslc alone leave cmake reporting
+# "Could NOT find Vulkan (missing: Vulkan_LIBRARY)" on a box with a working driver.
+sudo dnf install -y vulkan-headers vulkan-loader-devel glslc              # Vulkan backend
 CUDA_REPO=https://developer.download.nvidia.com/compute/cuda/repos/fedora43/x86_64
 sudo dnf config-manager addrepo --from-repofile=$CUDA_REPO/cuda-fedora43.repo
 sudo dnf install -y cuda-toolkit-13-2                                     # CUDA backend
+
+# The rpm does not put nvcc on PATH, and cmake will not find it on its own.
+export PATH=/usr/local/cuda-13.2/bin:$PATH
 
 # One source tree, pinned; two build trees
 git clone --branch b10569 --depth 1 https://github.com/ggml-org/llama.cpp.git \
   ~/opt/llama.cpp/src
 
 cmake -S ~/opt/llama.cpp/src -B ~/opt/llama.cpp/b10569-cuda \
-  -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=75
-cmake --build ~/opt/llama.cpp/b10569-cuda -j"$(nproc)"
+  -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=75 \
+  -DLLAMA_BUILD_NUMBER=10569
+cmake --build ~/opt/llama.cpp/b10569-cuda -j6      # not $(nproc): see the note below
 
 cmake -S ~/opt/llama.cpp/src -B ~/opt/llama.cpp/b10569-vulkan \
-  -DCMAKE_BUILD_TYPE=Release -DGGML_VULKAN=ON
+  -DCMAKE_BUILD_TYPE=Release -DGGML_VULKAN=ON -DLLAMA_BUILD_NUMBER=10569
 cmake --build ~/opt/llama.cpp/b10569-vulkan -j"$(nproc)"
 
-# These hashes go in the manifest. A node whose hash does not match is not in the pool.
-sha256sum ~/opt/llama.cpp/b10569-*/bin/llama-server
+# `llama-server` is a ~12 KB wrapper — the engine is in the shared libraries beside it, so
+# hash those. `--version` is what a running node can prove about itself, and is the value
+# manifest.nodes[].engine_version is asserting.
+~/opt/llama.cpp/b10569-cuda/bin/llama-server --version
+#   version: 0.2.0-dev (build 10569, commit 5a32f7b)
+sha256sum ~/opt/llama.cpp/b10569-*/bin/libllama.so ~/opt/llama.cpp/b10569-*/bin/libggml-*.so
 
 # The weights (~4.9 GB), same file on every node
 curl -L --output-dir ~/models/gguf --create-dirs -O \
@@ -156,16 +166,37 @@ sha256sum ~/models/gguf/Meta-Llama-3-8B-Instruct-Q4_K_M.gguf
 # 8ba9baf3a7345f705a11878397500fb25174034f0fd784e83aa4a96aaa47735f
 ```
 
+Two Fedora-specific traps, both hit on the first build. The CUDA rpm installs `nvcc` under
+`/usr/local/cuda-13.2/bin` and does not add it to `PATH`, so cmake reports no CUDA compiler
+on a box that plainly has one. And CUDA 13.2 accepts GCC up to 15, which is exactly what
+Fedora 43 ships — so no compat toolchain is needed here, but check `host_config.h` before
+assuming that on a newer release.
+
+`-DLLAMA_BUILD_NUMBER` is not cosmetic. llama.cpp derives its build number by counting
+commits, so a `--depth 1` clone stamps the binary `build 1` and the engine can no longer
+say which pin it is. Passing the number explicitly restores the one field that lets a
+running server prove it is b10569: `--version` then reports the build *and* the commit,
+which is exactly what `engine_version` claims about it.
+
+Use `-j6` rather than `-j$(nproc)` for the CUDA build on a 16 GB machine: `nvcc`
+instantiates ggml's kernel templates at several GB per translation unit, and a parallel
+build that gets OOM-killed halfway leaves a tree that looks configured and is not.
+
 `CMAKE_CUDA_ARCHITECTURES` is per node — `75` is Turing (GTX 16-series, RTX 20-series), `86`
 is Ampere, `89` is Ada. Setting it wrong costs a long JIT stall on first token, which then
 contaminates the very tail latencies MPR-1 is measuring.
 
-> **Verify F-18 before the contract freezes.** The prefill/decode split reads `prompt_ms`
-> and `predicted_ms` from `llama-server`'s `timings` block. Confirm the pinned build emits
-> them **on both backends**; if it does not, log `service_ns` only and set
-> `f18_status: "partial"` in the manifest rather than faking the split. This is the one
-> thing about the engine that can still force a contract change, so it is worth doing on
-> day one rather than in Week 3.
+> **F-18 on the CUDA build: confirmed, `f18_status: "full"`.** The pinned build's
+> `/completion` response carries a `timings` block with both halves of the split —
+> `prompt_ms` / `prompt_n` for prefill and `predicted_ms` / `predicted_n` for decode — so
+> the prefill/decode split comes from one code path for the whole pool, as F-9 intended.
+> `/slots` returns exactly `--parallel` entries with `is_processing`, which is the worker's
+> `LiveState.kv_frac`: llama.cpp exposes slot occupancy, not paged-KV occupancy.
+>
+> **Still to check on the Vulkan build.** If a backend does not emit it, log `service_ns`
+> only and set `f18_status: "partial"` rather than faking the split. This was the one thing
+> about the engine that could still have forced a contract change, which is why it was
+> worth doing on day one rather than in Week 3.
 
 ### The model set
 

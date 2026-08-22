@@ -17,6 +17,12 @@ decision that must be closed *before* the freeze, not after.
       F-9; the second runtime integration is withdrawn from Week 1)
 - [ ] `engine_config` (`-ngl`, `--threads`, `--parallel`) plumbed into the manifest's
       node block, because under F-9a this *is* the experimental condition
+- [ ] **F-18 prefill/decode split verified on BOTH backends before the freeze.**
+      CUDA (b10569): **confirmed** — `/completion` returns `timings.prompt_ms` /
+      `.prompt_n` and `.predicted_ms` / `.predicted_n`, so `f18_status: "full"`, and
+      `/slots` returns exactly `--parallel` entries for `LiveState.kv_frac`. Vulkan:
+      not yet built. If a backend does not emit the block, log `service_ns` only and set
+      `f18_status: "partial"` rather than faking the split.
 - [ ] Launcher asserts `validity.colocated_nodes == 0` — one logical node per physical
       host, or the contention confound comes straight back
 - [x] Trace generator produces a **byte-identical file** on regeneration from the same

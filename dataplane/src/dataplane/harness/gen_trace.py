@@ -33,6 +33,25 @@ __all__ = ["TRACE_SCHEMA_VERSION", "generate", "load"]
 
 TRACE_SCHEMA_VERSION = 1
 
+# Tokenizer facts per staged model. `vocab_size` is the sampling ceiling the materializer
+# draws below; `reserved_ids_excluded` says whether that ceiling actually excludes the
+# model's special tokens, which depends on where the model puts them:
+#
+#   Llama-3 / 3.2  specials at the TOP (128000-128255 of 128256) -> a ceiling excludes them
+#   Mistral-v0.3   specials at the BOTTOM (<unk>=0, <s>=1, </s>=2) -> a ceiling cannot
+#
+# The false flag on Mistral is honest, not broken: with `ignore_eos` and a forced
+# output_len, and no prompt ever decoded back to text, an id 2 inside a prompt changes
+# nothing that is measured. A trace claiming `true` while sampling id 2 would be the
+# actual problem. See harness/prompts.py for why excluding a low floor properly needs a
+# C-2 field that does not exist yet.
+MODELS: dict[str, dict[str, Any]] = {
+    "llama3-8b": {"vocab_size": 128000, "reserved_ids_excluded": True},
+    "llama32-3b": {"vocab_size": 128000, "reserved_ids_excluded": True},
+    "llama32-1b": {"vocab_size": 128000, "reserved_ids_excluded": True},
+    "mistral-7b-v03": {"vocab_size": 32768, "reserved_ids_excluded": False},
+}
+
 # Header field order is fixed to match contracts/examples/trace.sample.jsonl. Byte-identical
 # regeneration is a property of this module's output, so field order is part of the format.
 _HEADER_FIELDS = (
@@ -81,6 +100,27 @@ def _generator_git_sha() -> str:
         return out.stdout.strip() or "unknown"
     except (subprocess.SubprocessError, OSError):
         return "unknown"
+
+
+def _check_model(config: dict[str, Any]) -> None:
+    """If a config names a model, its tokenizer facts must match the table.
+
+    A config saying `mistral-7b-v03` while carrying Llama-3's vocab_size would produce
+    prompts full of ids the model does not have, and nothing downstream would notice: the
+    trace stores seeds, not tokens, so the mistake surfaces only as strange prefill
+    numbers, weeks later, in someone else's figure.
+    """
+    name = config.get("model")
+    if name is None:
+        return
+    if name not in MODELS:
+        raise ValueError(f"unknown model {name!r}; known: {sorted(MODELS)}")
+    for key, expected in MODELS[name].items():
+        actual = config.get(key)
+        if actual is not None and actual != expected:
+            raise ValueError(
+                f"config says model={name!r} but {key}={actual!r}; the table says {expected!r}"
+            )
 
 
 def _parse_bucket(bucket_id: str) -> tuple[int, int]:
@@ -148,6 +188,7 @@ def generate(config: dict[str, Any], path: str | Path) -> str:
     the replay client refuses to start against a file whose hash does not match.
     """
     path = Path(path)
+    _check_model(config)
     seed = int(config["gen_seed"])
     duration_s = float(config["duration_s"])
     vocab_size = int(config["vocab_size"])
@@ -190,7 +231,9 @@ def generate(config: dict[str, Any], path: str | Path) -> str:
         "priority_mix": config["priority_mix"],
         "admissible": admissible,
         "vocab_size": vocab_size,
-        "reserved_ids_excluded": True,  # see harness/prompts.py — this is a claim about vocab_size
+        # A claim about vocab_size, not a filter applied anywhere. Honest per model —
+        # see MODELS above and the docstring in harness/prompts.py.
+        "reserved_ids_excluded": bool(config.get("reserved_ids_excluded", True)),
         "generator_git_sha": _generator_git_sha(),
     }
     assert tuple(header) == _HEADER_FIELDS, "header field order drifted from the C-2 sample"
@@ -255,15 +298,25 @@ def main() -> int:
     ap.add_argument("config", type=Path, help="JSON trace config")
     ap.add_argument("-o", "--out", type=Path, required=True, help="output .jsonl path")
     ap.add_argument("--seed", type=int, help="override gen_seed from the config")
+    ap.add_argument(
+        "--model",
+        choices=sorted(MODELS),
+        help="set vocab_size and reserved_ids_excluded from the tokenizer table. The "
+        "model is held constant within a pool (F-9); this picks which run set the trace "
+        "belongs to, not a per-node knob.",
+    )
     args = ap.parse_args()
 
     config = json.loads(args.config.read_text())
     if args.seed is not None:
         config["gen_seed"] = args.seed
+    if args.model is not None:
+        config = {**config, "model": args.model, **MODELS[args.model]}
 
     sha = generate(config, args.out)
     header, body = load(args.out, expect_sha256=sha)
-    print(f"{args.out}  {len(body)} requests over {header['duration_s']}s")
+    model = config.get("model", "unspecified")
+    print(f"{args.out}  {len(body)} requests over {header['duration_s']}s  model={model}")
     print(f"sha256  {sha}")
     print("        ^ this is the trace's identity: put it in manifest.trace_sha256")
     return 0

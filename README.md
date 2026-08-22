@@ -103,8 +103,8 @@ pinned as part of the contract rather than installed per machine and hoped to ma
 | | |
 |---|---|
 | Source | [`ggml-org/llama.cpp`](https://github.com/ggml-org/llama.cpp) tag `b10569`, commit `5a32f7b66ef6cfb3e60deea26e3454cc6ad3438c` |
-| Model | `Meta-Llama-3-8B-Instruct`, GGUF |
-| Quantization | `Q4_K_M` |
+| Model | `Meta-Llama-3-8B-Instruct` GGUF — the primary condition; three more are staged, see [*The model set*](#the-model-set) |
+| Quantization | `Q4_K_M`, held constant across every model and every node |
 | Backends | CUDA 13.2 and Vulkan, **both built from that one commit** |
 | Install root | `~/opt/llama.cpp/` — outside the repo; the pin travels in the manifest, not in git |
 
@@ -166,6 +166,50 @@ contaminates the very tail latencies MPR-1 is measuring.
 > `f18_status: "partial"` in the manifest rather than faking the split. This is the one
 > thing about the engine that can still force a contract change, so it is worth doing on
 > day one rather than in Week 3.
+
+### The model set
+
+One model is an anecdote. A reviewer will ask whether a scheduling result is a property of
+scheduling or a property of Llama-3-8B, and "we only ran one model" is not an answer. Four
+GGUFs are staged, chosen to vary along two axes that can be named in a sentence each:
+
+| Model | `Q4_K_M` | Fits 4 GB VRAM | What it is for |
+|---|---|---|---|
+| `Llama-3.2-1B-Instruct` | ~0.8 GB | fully, `-ngl 99` | Fast iteration; the harness smoke path |
+| `Llama-3.2-3B-Instruct` | ~2.0 GB | fully, `-ngl 99` | Scale rung; a fully GPU-resident node class |
+| `Mistral-7B-Instruct-v0.3` | ~4.4 GB | partial | **Architecture control** at the 8B's size class |
+| `Meta-Llama-3-8B-Instruct` | ~4.9 GB | partial | The primary condition |
+
+Scale (1B → 3B → 8B, one family, one quantization) separates *bigger model* from
+*different model*. Mistral-7B against Llama-3-8B at the same quantization separates
+*architecture* from *size*. Between them a reviewer gets variety that answers a question
+rather than variety that just looks like effort.
+
+> **The model is held constant inside a pool, exactly like the engine and the
+> quantization.** F-9 is not only about llama.cpp. A pool running two models has an *R*
+> confounded with a model effect, and neither the H1 2×2 decomposition nor the *R*-sweep
+> can pull those apart afterwards. Variety here is a **replication axis across run sets** —
+> the same hypotheses re-run end to end at a second model — and `manifest.nodes[].model`
+> with `.quant` is what makes that auditable instead of assumed.
+
+The payoff is not only rhetorical. The 1B and 3B builds fit entirely in 4 GB of VRAM, so on
+the same card they reach `-ngl 99` node classes the 8B cannot — which *widens the
+synthesizable R range*, and §7 asks for that range to be reported as a range rather than a
+single figure (MPR-2).
+
+```bash
+cd ~/models/gguf
+for m in \
+  bartowski/Llama-3.2-1B-Instruct-GGUF/Llama-3.2-1B-Instruct-Q4_K_M.gguf \
+  bartowski/Llama-3.2-3B-Instruct-GGUF/Llama-3.2-3B-Instruct-Q4_K_M.gguf \
+  bartowski/Mistral-7B-Instruct-v0.3-GGUF/Mistral-7B-Instruct-v0.3-Q4_K_M.gguf
+do
+  f=$(basename "$m")
+  curl -sL --fail -C - -o "$f" "https://huggingface.co/$(dirname "$m")/resolve/main/$f"
+  sha256sum "$f" | tee "$f.sha256"    # a node verifies this before it joins the pool
+done
+```
+
 
 ## What it produces even if things go wrong
 

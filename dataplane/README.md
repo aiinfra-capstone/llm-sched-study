@@ -167,6 +167,11 @@ uv sync --all-groups
 # F-16 — a trace is a pure function of (config, seed). The printed sha256 is its identity.
 uv run gen-trace configs/smoke.json -o traces/smoke.jsonl
 
+# --model sets vocab_size and reserved_ids_excluded from the tokenizer table in
+# gen_trace.MODELS. It picks which RUN SET a trace belongs to, not a per-node knob:
+# the model is held constant inside a pool, exactly like the engine and the quant.
+uv run gen-trace configs/smoke.json --model mistral-7b-v03 -o traces/smoke-mistral.jsonl
+
 # The fake scheduler, from the repo root. --loopback answers from an analytic service-time
 # model so this half is not blocked on B's fake worker. It is NOT a worker: its timings
 # mean nothing and no calibration may be run against it.

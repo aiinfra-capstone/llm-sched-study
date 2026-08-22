@@ -8,11 +8,24 @@ agree today are two implementations that drift in Week 3.
 Determinism here is `numpy.random.default_rng`, which is a documented, versioned bit
 generator (PCG64) — not `random`, whose stream is a CPython implementation detail.
 
-`reserved_ids_excluded` in the trace header is about `vocab_size`, not about a filter
-applied here: Llama-3 keeps its special tokens at the TOP of the vocabulary
-(128000-128255 of 128256), so a `vocab_size` set to 128000 already excludes them and
-sampling the whole `[0, vocab_size)` range is safe. Set `vocab_size` below the special
-block for whatever model is pinned, and this stays true.
+`reserved_ids_excluded` in the trace header is a claim about `vocab_size`, not about a
+filter applied here — and whether it can be claimed depends on where the model puts its
+special tokens:
+
+  * **Llama-3 / Llama-3.2** keep specials at the TOP (128000-128255 of 128256), so a
+    `vocab_size` of 128000 excludes them by construction and the header says `true`.
+  * **Mistral-7B-v0.3** keeps them at the BOTTOM (`<unk>`=0, `<s>`=1, `</s>`=2 of 32768).
+    A ceiling cannot exclude a floor, so the header says `false` and means it.
+
+`false` is honest rather than harmful here. The study measures service time as a function
+of length, the worker runs with `ignore_eos` and a forced `output_len`, and no prompt is
+ever decoded back to text — so an `</s>` landing inside a prompt changes nothing that is
+measured. What would be harmful is a trace claiming `true` while sampling id 2, because
+the next person to read that header would believe it.
+
+Excluding a low floor properly needs the floor recorded in the trace, and C-2's header is
+`additionalProperties: false` with no field for it. That is a Week-1 contract question,
+not something to paper over here: raise it before the freeze or leave the flag honest.
 """
 
 from __future__ import annotations

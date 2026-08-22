@@ -30,6 +30,13 @@ decision that must be closed *before* the freeze, not after.
       sequence, deterministic, and agreed with the generator
 - [x] C-4 client and worker log schemas + fixture files committed
 - [x] `uv run contracts/check.py` green
+- [ ] **C-2 decision before the freeze:** the header's `reserved_ids_excluded` is a claim
+      about `vocab_size`, and a ceiling cannot exclude a floor. Llama-3 keeps its specials
+      at the top so the flag is `true`; Mistral-v0.3 keeps `<unk>`/`<s>`/`</s>` at 0-2 so
+      it is `false`. Either accept `false` as honest — nothing measured changes, the worker
+      forces `output_len` with `ignore_eos` and no prompt is decoded back to text — or add
+      a `reserved_id_floor` field to C-2. It cannot be added after the freeze, and the
+      header is `additionalProperties: false`.
 
 ## Aditya Gupta (B)
 

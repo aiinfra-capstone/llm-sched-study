@@ -1,4 +1,5 @@
 {
+  "model": "llama3-8b",
   "gen_seed": 20260421,
   "n_requests": 40,
   "duration_s": 20,
@@ -10,10 +11,24 @@
     "quiet_mean_s": 45.0
   },
   "length_dist": {
-    "buckets": ["p128_o64", "p512_o128"],
-    "weights": [0.6, 0.4]
+    "buckets": [
+      "p128_o64",
+      "p512_o128"
+    ],
+    "weights": [
+      0.6,
+      0.4
+    ]
   },
-  "priority_mix": {"0": 0.7, "1": 0.3},
-  "admissible": {"max_prompt": 2048, "max_output": 256, "timeout_ceiling_ms": 60000},
-  "vocab_size": 128000
+  "priority_mix": {
+    "0": 0.7,
+    "1": 0.3
+  },
+  "admissible": {
+    "max_prompt": 2048,
+    "max_output": 256,
+    "timeout_ceiling_ms": 60000
+  },
+  "vocab_size": 128000,
+  "reserved_ids_excluded": true
 }

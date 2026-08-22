@@ -35,3 +35,6 @@ figures/out/
 docs/uml/out/png/
 docs/uml/out/pdf/
 docs/uml/.plantuml/
+
+# protoc output — regenerated from contracts/scheduling.proto on import
+dataplane/src/dataplane/_generated/

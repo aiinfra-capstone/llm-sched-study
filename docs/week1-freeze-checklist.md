@@ -19,17 +19,17 @@ decision that must be closed *before* the freeze, not after.
       node block, because under F-9a this *is* the experimental condition
 - [ ] Launcher asserts `validity.colocated_nodes == 0` — one logical node per physical
       host, or the contention confound comes straight back
-- [ ] Trace generator produces a **byte-identical file** on regeneration from the same
+- [x] Trace generator produces a **byte-identical file** on regeneration from the same
       seed and parameters — as a **test**, not an assumption
-      - [ ] `arrival_offset_s` serialized at exactly 4 decimal places
-      - [ ] Three independent RNG streams from one `SeedSequence` (arrival / length / content)
-      - [ ] SHA-256 of the trace recorded and used as its identity downstream
-- [ ] Replay client runs against the **fake scheduler**, open-loop, with `send_lag_ms`
+      - [x] `arrival_offset_s` serialized at exactly 4 decimal places
+      - [x] Three independent RNG streams from one `SeedSequence` (arrival / length / content)
+      - [x] SHA-256 of the trace recorded and used as its identity downstream
+- [x] Replay client runs against the **fake scheduler**, open-loop, with `send_lag_ms`
       asserted per request
-- [ ] Prompt materializer: `(content_seed, prompt_len, vocab_size)` → exact token
+- [x] Prompt materializer: `(content_seed, prompt_len, vocab_size)` → exact token
       sequence, deterministic, and agreed with the generator
-- [ ] C-4 client and worker log schemas + fixture files committed
-- [ ] `uv run contracts/check.py` green
+- [x] C-4 client and worker log schemas + fixture files committed
+- [x] `uv run contracts/check.py` green
 
 ## Aditya Gupta (B)
 

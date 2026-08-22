@@ -1,0 +1,273 @@
+"""F-16 — the seeded trace generator.
+
+    config -> SeedSequence(gen_seed).spawn(3)
+                +- rng_arrival  -> MMPP / Poisson offsets
+                +- rng_length   -> bucket draws + priority draws
+                +- rng_content  -> per-request content_seed
+             -> sort by offset -> assign req_ids -> write header + records -> sha256
+
+Three separate streams, so that changing the length distribution does not shift the
+arrival process underneath you. That is not tidiness — an R-sweep that accidentally
+re-rolls its own arrivals cannot attribute anything to R.
+
+Single-threaded, no I/O in the sampling loop, **no wall-clock reads anywhere**. A trace
+is a pure function of (config, seed), and its SHA-256 is its identity everywhere
+downstream: the run manifest carries it (C-6) and the replay client verifies it before
+t0. `tests/test_trace_determinism.py` is the guard, and it is a test rather than an
+assumption because the usual way this breaks is float formatting, silently.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import re
+import subprocess
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+
+__all__ = ["TRACE_SCHEMA_VERSION", "generate", "load"]
+
+TRACE_SCHEMA_VERSION = 1
+
+# Header field order is fixed to match contracts/examples/trace.sample.jsonl. Byte-identical
+# regeneration is a property of this module's output, so field order is part of the format.
+_HEADER_FIELDS = (
+    "record",
+    "trace_schema",
+    "gen_seed",
+    "n_requests",
+    "duration_s",
+    "arrival",
+    "length_dist",
+    "priority_mix",
+    "admissible",
+    "vocab_size",
+    "reserved_ids_excluded",
+    "generator_git_sha",
+)
+
+# "p512_o128" -> prompt_len 512, output_len 128. The bucket id IS the length pair; there
+# is no second table to fall out of sync with.
+_BUCKET_RE = re.compile(r"^p(\d+)_o(\d+)$")
+
+# The one line in the file whose formatting is load-bearing. 4 decimal places, fixed by
+# the C-2 schema, because "%r" of a float is where byte-stability goes to die.
+_REQ_LINE = (
+    '{{"record":"req","req_id":"{req_id}","arrival_offset_s":{offset:.4f},'
+    '"prompt_len":{prompt_len},"output_len":{output_len},"bucket_id":"{bucket_id}",'
+    '"priority":{priority},"content_seed":{content_seed}}}'
+)
+
+
+def _generator_git_sha() -> str:
+    """The generator's own commit, resolved from this file's repo — not the caller's cwd.
+
+    Recorded in the header so a trace can be traced back to the code that produced it
+    (F-20). Falls back to "unknown" rather than raising: an unversioned checkout should
+    still be able to generate a trace, it just cannot claim provenance for it.
+    """
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(Path(__file__).resolve().parent), "rev-parse", "--short", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
+        )
+        return out.stdout.strip() or "unknown"
+    except (subprocess.SubprocessError, OSError):
+        return "unknown"
+
+
+def _parse_bucket(bucket_id: str) -> tuple[int, int]:
+    m = _BUCKET_RE.match(bucket_id)
+    if m is None:
+        raise ValueError(f"bucket_id {bucket_id!r} is not of the form p<prompt>_o<output>")
+    return int(m.group(1)), int(m.group(2))
+
+
+def _arrival_offsets(
+    rng: np.random.Generator, arrival: dict, n_cap: int, duration_s: float
+) -> list[float]:
+    """Arrival offsets from a Poisson or 2-state Markov-modulated Poisson process.
+
+    Stops at whichever bound binds first: `n_requests` or `duration_s`. `n_requests` in
+    the config is therefore a CAP; the header records how many were actually written, so
+    a header is always self-consistent with the body beneath it.
+
+    The MMPP switch is exact rather than approximate: when the next interarrival would
+    cross a state boundary, time advances to the boundary and the draw is retaken under
+    the new rate. The exponential is memoryless, so this is the same process — and `t`
+    strictly increases on that path, so the loop terminates.
+    """
+    process = arrival["process"]
+    offsets: list[float] = []
+    t = 0.0
+
+    if process == "poisson":
+        rate = float(arrival["lambda_base"])
+        while len(offsets) < n_cap:
+            t += float(rng.exponential(1.0 / rate))
+            if t > duration_s:
+                break
+            offsets.append(t)
+        return offsets
+
+    if process != "mmpp":
+        raise ValueError(f"unknown arrival process {process!r} (expected 'poisson' or 'mmpp')")
+
+    rates = {"quiet": float(arrival["lambda_base"]), "burst": float(arrival["burst_lambda"])}
+    dwell = {"quiet": float(arrival["quiet_mean_s"]), "burst": float(arrival["burst_mean_s"])}
+    state = "quiet"  # every trace starts quiet, by convention
+    state_end = t + float(rng.exponential(dwell[state]))
+
+    while len(offsets) < n_cap:
+        dt = float(rng.exponential(1.0 / rates[state]))
+        if t + dt > state_end:
+            t = state_end
+            state = "burst" if state == "quiet" else "quiet"
+            state_end = t + float(rng.exponential(dwell[state]))
+            if t > duration_s:
+                break
+            continue
+        t += dt
+        if t > duration_s:
+            break
+        offsets.append(t)
+    return offsets
+
+
+def generate(config: dict[str, Any], path: str | Path) -> str:
+    """Write a C-2 trace file and return its SHA-256.
+
+    The return value is the trace's identity: it goes into `manifest.trace_sha256`, and
+    the replay client refuses to start against a file whose hash does not match.
+    """
+    path = Path(path)
+    seed = int(config["gen_seed"])
+    duration_s = float(config["duration_s"])
+    vocab_size = int(config["vocab_size"])
+    admissible = config["admissible"]
+
+    rng_arrival, rng_length, rng_content = (
+        np.random.default_rng(s) for s in np.random.SeedSequence(seed).spawn(3)
+    )
+
+    offsets = sorted(
+        _arrival_offsets(rng_arrival, config["arrival"], int(config["n_requests"]), duration_s)
+    )
+    n = len(offsets)
+    if n == 0:
+        raise ValueError("arrival process produced no requests; check lambda and duration_s")
+
+    buckets: list[str] = list(config["length_dist"]["buckets"])
+    weights = np.asarray(config["length_dist"]["weights"], dtype=float)
+    lengths = [_parse_bucket(b) for b in buckets]
+    for bucket_id, (p_len, o_len) in zip(buckets, lengths, strict=True):
+        if p_len > admissible["max_prompt"] or o_len > admissible["max_output"]:
+            raise ValueError(f"bucket {bucket_id!r} exceeds the F-13 admissible envelope")
+
+    # Bulk draws, in a fixed order, from the length stream only — never from the arrival
+    # stream, which is what keeps offsets invariant under a change of length_dist.
+    bucket_idx = rng_length.choice(len(buckets), size=n, p=weights / weights.sum())
+    prio_keys = sorted(config["priority_mix"], key=int)
+    prio_w = np.asarray([config["priority_mix"][k] for k in prio_keys], dtype=float)
+    prio_idx = rng_length.choice(len(prio_keys), size=n, p=prio_w / prio_w.sum())
+    content_seeds = rng_content.integers(0, 2**31 - 1, size=n, dtype=np.int64)
+
+    header = {
+        "record": "header",
+        "trace_schema": TRACE_SCHEMA_VERSION,
+        "gen_seed": seed,
+        "n_requests": n,  # what was written, not what was asked for
+        "duration_s": duration_s,
+        "arrival": config["arrival"],
+        "length_dist": config["length_dist"],
+        "priority_mix": config["priority_mix"],
+        "admissible": admissible,
+        "vocab_size": vocab_size,
+        "reserved_ids_excluded": True,  # see harness/prompts.py — this is a claim about vocab_size
+        "generator_git_sha": _generator_git_sha(),
+    }
+    assert tuple(header) == _HEADER_FIELDS, "header field order drifted from the C-2 sample"
+
+    lines = [json.dumps(header, separators=(",", ":"), sort_keys=False)]
+    lines += [
+        _REQ_LINE.format(
+            req_id=f"r{i:06d}",
+            offset=offset,
+            prompt_len=lengths[b][0],
+            output_len=lengths[b][1],
+            bucket_id=buckets[b],
+            priority=int(prio_keys[p]),
+            content_seed=int(cs),
+        )
+        for i, (offset, b, p, cs) in enumerate(
+            zip(offsets, bucket_idx, prio_idx, content_seeds, strict=True), start=1
+        )
+    ]
+
+    blob = ("\n".join(lines) + "\n").encode()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(blob)
+    return hashlib.sha256(blob).hexdigest()
+
+
+def load(path: str | Path, expect_sha256: str | None = None) -> tuple[dict, list[dict]]:
+    """Read a trace back, verifying the schema version and (optionally) the hash.
+
+    §12.2: reject an unknown `trace_schema` loudly rather than defaulting. A loader that
+    guesses is how a format change becomes a silently wrong figure six weeks later.
+    """
+    path = Path(path)
+    blob = path.read_bytes()
+
+    if expect_sha256 is not None:
+        actual = hashlib.sha256(blob).hexdigest()
+        if actual != expect_sha256:
+            raise ValueError(
+                f"trace sha256 mismatch: file is {actual}, manifest says {expect_sha256}"
+            )
+
+    records = [json.loads(line) for line in blob.decode().splitlines() if line.strip()]
+    if not records or records[0].get("record") != "header":
+        raise ValueError(f"{path}: first line is not a header record")
+
+    header, body = records[0], records[1:]
+    if header["trace_schema"] != TRACE_SCHEMA_VERSION:
+        raise ValueError(
+            f"{path}: trace_schema {header['trace_schema']} is not supported "
+            f"(this build reads {TRACE_SCHEMA_VERSION}); refusing to guess"
+        )
+    if len(body) != header["n_requests"]:
+        raise ValueError(
+            f"{path}: header claims {header['n_requests']} requests, file has {len(body)}"
+        )
+    return header, body
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="F-16 — generate a seeded, byte-reproducible trace")
+    ap.add_argument("config", type=Path, help="JSON trace config")
+    ap.add_argument("-o", "--out", type=Path, required=True, help="output .jsonl path")
+    ap.add_argument("--seed", type=int, help="override gen_seed from the config")
+    args = ap.parse_args()
+
+    config = json.loads(args.config.read_text())
+    if args.seed is not None:
+        config["gen_seed"] = args.seed
+
+    sha = generate(config, args.out)
+    header, body = load(args.out, expect_sha256=sha)
+    print(f"{args.out}  {len(body)} requests over {header['duration_s']}s")
+    print(f"sha256  {sha}")
+    print("        ^ this is the trace's identity: put it in manifest.trace_sha256")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

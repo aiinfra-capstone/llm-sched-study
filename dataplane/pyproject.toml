@@ -29,6 +29,7 @@ pipeline  = "dataplane.pipeline.join:main"
 dev = [
     "pytest>=8.0",
     "ruff>=0.6",
+    "jsonschema>=4.21", # C-4 conformance from the harness's own suite, not just contracts/check.py
 ]
 
 [build-system]

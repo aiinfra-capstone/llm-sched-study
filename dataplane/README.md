@@ -159,6 +159,33 @@ the manifest** rather than analysed.
 > shows up as send-lag violations. Go is a legitimate choice here and the seam
 > (gRPC + JSONL) fully supports it. Decide from measured send-lag, not in advance.
 
+### Running it
+
+```bash
+uv sync --all-groups
+
+# F-16 — a trace is a pure function of (config, seed). The printed sha256 is its identity.
+uv run gen-trace configs/smoke.json -o traces/smoke.jsonl
+
+# The fake scheduler, from the repo root. --loopback answers from an analytic service-time
+# model so this half is not blocked on B's fake worker. It is NOT a worker: its timings
+# mean nothing and no calibration may be run against it.
+uv run --project dataplane python fixtures/fake_scheduler/serve.py --loopback
+
+# F-17 — open-loop replay. Exits non-zero and says why when the run is invalid.
+uv run replay traces/smoke.jsonl \
+  --scheduler 127.0.0.1:50051 --run-id run_0001 --sha256 <printed above> \
+  --advertise <this host's LAN address> --nodes nodes.json
+```
+
+`--nodes` is the launcher's C-6 node block. Without it the client writes `validity.json`
+alone instead of a manifest: under F-9a the per-node `engine_config` *is* the experimental
+condition, and a harness that invents one emits a manifest that lies about what ran.
+
+C-1 stubs are generated from `contracts/scheduling.proto` on first import of
+`dataplane.proto` and are never committed — the proto is the contract, the stubs are a
+build artifact, and a committed copy is a second thing that can disagree with it.
+
 ## `pipeline/` — F-19
 
 A **pure function** of `(manifest, three log files)` → one Parquet file. No network, no

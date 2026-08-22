@@ -161,9 +161,7 @@ sha256sum ~/opt/llama.cpp/b10569-*/bin/libllama.so ~/opt/llama.cpp/b10569-*/bin/
 curl -L --output-dir ~/models/gguf --create-dirs -O \
   https://huggingface.co/bartowski/Meta-Llama-3-8B-Instruct-GGUF/resolve/main/Meta-Llama-3-8B-Instruct-Q4_K_M.gguf
 
-# 4920734272 bytes; verify before a node joins the pool
-sha256sum ~/models/gguf/Meta-Llama-3-8B-Instruct-Q4_K_M.gguf
-# 8ba9baf3a7345f705a11878397500fb25174034f0fd784e83aa4a96aaa47735f
+# Hashes live in one place, ~/models/gguf/SHA256SUMS — see The model set below.
 ```
 
 Two Fedora-specific traps, both hit on the first build. The CUDA rpm installs `nvcc` under
@@ -204,12 +202,12 @@ One model is an anecdote. A reviewer will ask whether a scheduling result is a p
 scheduling or a property of Llama-3-8B, and "we only ran one model" is not an answer. Four
 GGUFs are staged, chosen to vary along two axes that can be named in a sentence each:
 
-| Model | `Q4_K_M` | Fits 4 GB VRAM | What it is for |
-|---|---|---|---|
-| `Llama-3.2-1B-Instruct` | ~0.8 GB | fully, `-ngl 99` | Fast iteration; the harness smoke path |
-| `Llama-3.2-3B-Instruct` | ~2.0 GB | fully, `-ngl 99` | Scale rung; a fully GPU-resident node class |
-| `Mistral-7B-Instruct-v0.3` | ~4.4 GB | partial | **Architecture control** at the 8B's size class |
-| `Meta-Llama-3-8B-Instruct` | ~4.9 GB | partial | The primary condition |
+| Model | `Q4_K_M` bytes | Fits 4 GB VRAM | What it is for |
+|---|---:|---|---|
+| `Llama-3.2-1B-Instruct` | 807,694,464 | fully, `-ngl 99` | Fast iteration; the harness smoke path |
+| `Llama-3.2-3B-Instruct` | 2,019,377,696 | fully, `-ngl 99` | Scale rung; a fully GPU-resident node class |
+| `Mistral-7B-Instruct-v0.3` | 4,372,812,000 | partial | **Architecture control** at the 8B's size class |
+| `Meta-Llama-3-8B-Instruct` | 4,920,734,272 | partial | The primary condition |
 
 Scale (1B → 3B → 8B, one family, one quantization) separates *bigger model* from
 *different model*. Mistral-7B against Llama-3-8B at the same quantization separates
@@ -237,8 +235,19 @@ for m in \
 do
   f=$(basename "$m")
   curl -sL --fail -C - -o "$f" "https://huggingface.co/$(dirname "$m")/resolve/main/$f"
-  sha256sum "$f" | tee "$f.sha256"    # a node verifies this before it joins the pool
 done
+sha256sum *.gguf > SHA256SUMS
+```
+
+`~/models/gguf/SHA256SUMS` is the check a node runs before it joins the pool — `sha256sum
+-c SHA256SUMS` — because "the same model" has to mean the same bytes, not the same name on
+a HuggingFace page that can be re-uploaded under you:
+
+```
+6f85a640a97cf2bf5b8e764087b1e83da0fdb51d7c9fab7d0fece9385611df83  Llama-3.2-1B-Instruct-Q4_K_M.gguf
+6c1a2b41161032677be168d354123594c0e6e67d2b9227c84f296ad037c728ff  Llama-3.2-3B-Instruct-Q4_K_M.gguf
+8ba9baf3a7345f705a11878397500fb25174034f0fd784e83aa4a96aaa47735f  Meta-Llama-3-8B-Instruct-Q4_K_M.gguf
+1270d22c0fbb3d092fb725d4d96c457b7b687a5f5a715abe1e818da303e562b6  Mistral-7B-Instruct-v0.3-Q4_K_M.gguf
 ```
 
 

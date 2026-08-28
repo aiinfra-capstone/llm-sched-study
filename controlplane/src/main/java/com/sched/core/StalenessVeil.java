@@ -1,23 +1,39 @@
 package com.sched.core;
 
 import com.sched.core.interfaces.StateStore;
+import com.sched.core.interfaces.Clock;
 import java.util.List;
+import java.util.Map;
+import java.util.ArrayList;
+import java.util.TreeMap;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class StalenessVeil implements StateStore {
-    private final StateStore realStore;
-    private final long stalenessNs;
+    private final Map<String, TreeMap<Long, NodeView>> hist = new ConcurrentHashMap<>();
+    private final long staleNs;
+    private final Clock clk;
 
-    public StalenessVeil(StateStore realStore, long stalenessNs) {
-        this.realStore = realStore;
-        this.stalenessNs = stalenessNs;
+    public StalenessVeil(long staleNs, Clock clk) {
+        this.staleNs = staleNs;
+        this.clk = clk;
+    }
+
+    public void updateNode(NodeView nv) {
+        long curr = clk.nowNs();
+        hist.computeIfAbsent(nv.nodeId(), k -> new TreeMap<>()).put(curr, nv);
     }
 
     @Override
     public List<NodeView> getAllNodes() {
-        // TODO: Later in the project, this will read from a time-ordered snapshot
-        // history
-        // to return the node states exactly as they were 'stalenessNs' ago.
-        // For Week 1 testing, it acts as a transparent pass-through.
-        return realStore.getAllNodes();
+        long tgt = clk.nowNs() - staleNs;
+        List<NodeView> views = new ArrayList<>();
+
+        for (TreeMap<Long, NodeView> h : hist.values()) {
+            Map.Entry<Long, NodeView> e = h.floorEntry(tgt);
+            if (e != null) {
+                views.add(e.getValue());
+            }
+        }
+        return views;
     }
 }

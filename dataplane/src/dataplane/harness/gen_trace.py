@@ -194,17 +194,11 @@ def generate(config: dict[str, Any], path: str | Path) -> str:
     vocab_size = int(config["vocab_size"])
     admissible = config["admissible"]
 
-    rng_arrival, rng_length, rng_content = (
-        np.random.default_rng(s) for s in np.random.SeedSequence(seed).spawn(3)
-    )
-
-    offsets = sorted(
-        _arrival_offsets(rng_arrival, config["arrival"], int(config["n_requests"]), duration_s)
-    )
-    n = len(offsets)
-    if n == 0:
-        raise ValueError("arrival process produced no requests; check lambda and duration_s")
-
+    # Validated before a single arrival is drawn. F-13 is a property of the *config*, not
+    # of the requests that happened to be sampled from it, and checking it after the
+    # arrival process means a config with an inadmissible bucket passes silently whenever
+    # Poisson happens to return zero arrivals — and reports the wrong reason when it does
+    # not. This block draws from no RNG stream, so hoisting it cannot move a trace byte.
     buckets: list[str] = list(config["length_dist"]["buckets"])
     weights = np.asarray(config["length_dist"]["weights"], dtype=float)
     lengths = [_parse_bucket(b) for b in buckets]
@@ -216,6 +210,17 @@ def generate(config: dict[str, Any], path: str | Path) -> str:
             raise ValueError(f"bucket {bucket_id!r} has a zero length; both must be >= 1")
         if p_len > admissible["max_prompt"] or o_len > admissible["max_output"]:
             raise ValueError(f"bucket {bucket_id!r} exceeds the F-13 admissible envelope")
+
+    rng_arrival, rng_length, rng_content = (
+        np.random.default_rng(s) for s in np.random.SeedSequence(seed).spawn(3)
+    )
+
+    offsets = sorted(
+        _arrival_offsets(rng_arrival, config["arrival"], int(config["n_requests"]), duration_s)
+    )
+    n = len(offsets)
+    if n == 0:
+        raise ValueError("arrival process produced no requests; check lambda and duration_s")
 
     # Bulk draws, in a fixed order, from the length stream only — never from the arrival
     # stream, which is what keeps offsets invariant under a change of length_dist.

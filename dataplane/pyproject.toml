@@ -24,6 +24,9 @@ dependencies = [
 gen-trace = "dataplane.harness.gen_trace:main"
 replay    = "dataplane.harness.replay:main"
 pipeline  = "dataplane.pipeline.join:main"
+calibrate = "dataplane.calibration.campaign:main"   # Week 2: the campaign (F-6, F-9a, MPR-1)
+r-range   = "dataplane.calibration.rrange:main"     # Week 2: the synthesizable R range (F-9a)
+launch    = "dataplane.harness.launch:main"        # F-9a: refuses a co-located pool
 
 [dependency-groups]
 dev = [

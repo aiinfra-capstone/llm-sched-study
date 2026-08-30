@@ -17,12 +17,25 @@ decision that must be closed *before* the freeze, not after.
       F-9; the second runtime integration is withdrawn from Week 1)
 - [ ] `engine_config` (`-ngl`, `--threads`, `--parallel`) plumbed into the manifest's
       node block, because under F-9a this *is* the experimental condition
-- [ ] **F-18 prefill/decode split verified on BOTH backends before the freeze.**
-      CUDA (b10569): **confirmed** — `/completion` returns `timings.prompt_ms` /
-      `.prompt_n` and `.predicted_ms` / `.predicted_n`, so `f18_status: "full"`, and
-      `/slots` returns exactly `--parallel` entries for `LiveState.kv_frac`. Vulkan:
-      not yet built. If a backend does not emit the block, log `service_ns` only and set
-      `f18_status: "partial"` rather than faking the split.
+- [x] **F-18 prefill/decode split verified on BOTH backends — both `full`.**
+      CUDA (`b10569+cuda13.2`): `/completion` returns `timings.prompt_ms` / `.prompt_n`
+      and `.predicted_ms` / `.predicted_n`; `/slots` returns exactly `--parallel` entries
+      for `LiveState.kv_frac`.
+      Vulkan (`b10569+vulkan`): **also `full`** — same `timings` block, same `/slots`
+      shape, checked against the built binary on `Llama-3.2-1B-Instruct` (prefill
+      745.9 ms / decode 451.1 ms, 4 slots). So the prefill/decode split comes from one
+      code path for the whole pool regardless of backend, and the `partial` fallback is
+      not needed by either.
+
+      **This was the last thing about the engine that could have forced a contract
+      change, and it will not.** `engine_version` continues to carry the backend as a
+      free string (`b10569+cuda13.2`, `b10569+vulkan`); no `backend` field is needed in
+      C-6.
+
+      Note for the Week-2 CUDA/Vulkan gap measurement: this box exposes **two** Vulkan
+      devices — the GTX 1650 Ti and an integrated AMD Radeon (RADV RENOIR) — so the same
+      machine can produce a Vulkan node class on either. It does not help the *R* range,
+      because F-9a still forbids two logical nodes on one host.
 - [ ] Launcher asserts `validity.colocated_nodes == 0` — one logical node per physical
       host, or the contention confound comes straight back
 - [x] Trace generator produces a **byte-identical file** on regeneration from the same
@@ -95,17 +108,73 @@ with no slack, not on merit.
 
 ### Also decide by end of Week 2 (not Week 1, but do not forget)
 
-- [ ] **C-3 `form`** — F-7 permits a lookup table *or* a ≤6-parameter regression.
-      Pick one and commit. Supporting both doubles Aditya's interpolation logic for no
-      research gain.
-- [ ] **Synthesizable *R* range** — sweep `-ngl` / `--threads` / `--parallel` per machine
-      and establish what range of *R* the physical pool can actually reach (F-9a).
-      Report it as a **range**, not a single figure (§7, MPR-2). This is new work that
-      F-9a adds to Week 2, and it is what buys the reduction in threat R2.
-- [ ] **F-9b engine-gap measurement** — vLLM vs llama.cpp on the strongest node, one
-      operating point, identical replayed trace. One number, reported as a bound on
-      external validity (threat R9). Do not let this slip past Week 2: it is the
-      evidence that the single-engine decision was accounted for rather than hidden.
+- [x] **C-3 `form` — RESOLVED: `lookup_table`.** Committed as a module constant
+      (`calibration/cost_model.py:FORM`), not a parameter, because an option is a thing
+      that gets set differently in two places. Three reasons:
+      1. Concurrency is the axis that matters and it is the one a small regression cannot
+         fit. Service time is flat while slots are free, then bends sharply once
+         `--parallel` saturates — the knee F-4 is about. A ≤6-parameter form either
+         smooths it away or spends most of its parameters describing it.
+      2. The table *is* the measurement. A regression interposes a functional form between
+         what the hardware did and what the scheduler believes, and when the simulator
+         later disagrees with hardware (F-23) I could not tell a policy effect from a fit
+         artifact.
+      3. F-7 also asks for interpretable and inspectable. A reviewer reads a cell off the
+         JSON and checks it against a plot.
+
+      The cost, stated: the table only knows its grid. Off-grid queries need
+      interpolation, which is Aditya's side of the seam.
+      `cost_model.predict_service_ms` is the reference implementation his scheduler must
+      agree with **at grid points** — disagreement there is a seam bug, not a matter of
+      taste, and it is what the cross-environment determinism test would catch.
+- [x] **Synthesizable *R* range — MEASURED, and it is 1.00×.** Two
+      `Meta-Llama-3-8B-Instruct` node classes on the one machine I have, both
+      `--parallel 4`, sustained at concurrency 4: `-ngl 20` gives 6.39 decode tok/s and
+      `-ngl 0` gives 3.85. **Configuration alone reaches 1.66×; deployable *R* is 1.00×**,
+      because both classes sit on the same physical host and F-9a forbids co-locating
+      logical nodes.
+
+      `uv run r-range runs/calibration/llama3-8b` reports both figures and says which is
+      which, because quoting the configured number as if it were deployable would claim a
+      heterogeneity the pool cannot be run at.
+
+      **This blocks MPR-2, and the fix is a second machine, not code.** Two things follow
+      that we should talk about before Week 3:
+      1. MPR-2 is the 2×2 decomposition *across the synthesized R range*. With one host
+         there is no range, so Week 3's "multi-node pool" needs at least a second physical
+         machine on the LAN or it cannot happen at all.
+      2. Even ignoring co-location, 1.66× is narrow — a GTX 1650 Ti holding 20 of 33
+         layers is not far ahead of the same box's CPU. The 10–100× in the research
+         question needs genuinely different machines, not a wider `-ngl` sweep on this one.
+
+      The R-range tool refuses to compute a ratio across two *models* (F-9), so the
+      1B class's 70.3 tok/s does not enter this number.
+- [ ] **F-9b engine-gap measurement — BLOCKED ON VRAM, needs a decision.**
+      F-9b asks for vLLM (AWQ, same model class) on the strongest node against an
+      identical replayed trace. The strongest node I have is a GTX 1650 Ti: **4096 MiB
+      total, compute capability 7.5**. Turing is supported by vLLM, so that is not the
+      problem — the problem is that `Meta-Llama-3-8B-Instruct` in 4-bit AWQ is roughly
+      5.7 GB of weights before any KV cache. It does not fit, and no vLLM flag makes it
+      fit. Confirmed against the card, not assumed: `nvidia-smi` reports 4096 MiB with
+      about 2.5 GB free once a server is up.
+
+      Three ways out, and it is a scoping call rather than an engineering one:
+      1. **Run F-9b at a smaller model** — `Llama-3.2-3B-Instruct` AWQ is about 2.2 GB and
+         fits. The engine gap is still measured and still reported as a magnitude, but at
+         3B rather than at the 8B primary condition, so the bound on threat R9 is stated
+         at a different size class than the study's headline. Cheapest, and honest as long
+         as the writeup says which model the number came from.
+      2. **Run it on a machine with more VRAM** — Aditya's, or any node that can hold an
+         8B AWQ. Keeps F-9b exactly as specified. Costs a machine I do not currently have
+         in the pool.
+      3. **Defer and report it as not measured**, which weakens R9 to an argument rather
+         than a number. This is the option F-9b exists to prevent, so it should be the
+         last resort.
+
+      My recommendation is (1) with the model named in the caption. **Not decided
+      unilaterally** — F-9b is the evidence that the single-engine decision was accounted
+      for rather than hidden, so which version of it we run is a decision both of us
+      should sign off on.
 
 ---
 

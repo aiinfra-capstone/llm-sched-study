@@ -127,9 +127,12 @@ contract change** and has to be raised before the freeze, not after.
 
 ```bash
 # Prerequisites, once per node (Fedora 43)
-# vulkan-loader-devel is easy to miss: headers and glslc alone leave cmake reporting
-# "Could NOT find Vulkan (missing: Vulkan_LIBRARY)" on a box with a working driver.
-sudo dnf install -y vulkan-headers vulkan-loader-devel glslc              # Vulkan backend
+# All four matter, and each one only announces itself when the previous is satisfied:
+# without vulkan-loader-devel cmake says "Could NOT find Vulkan (missing: Vulkan_LIBRARY)"
+# on a box with a working driver, and without spirv-headers-devel it then fails on
+# find_package(SPIRV-Headers). The "missing components: glslangValidator" line FindVulkan
+# prints along the way is noise — only glslc is REQUIRED.
+sudo dnf install -y vulkan-headers vulkan-loader-devel glslc spirv-headers-devel
 CUDA_REPO=https://developer.download.nvidia.com/compute/cuda/repos/fedora43/x86_64
 sudo dnf config-manager addrepo --from-repofile=$CUDA_REPO/cuda-fedora43.repo
 sudo dnf install -y cuda-toolkit-13-2                                     # CUDA backend
@@ -251,6 +254,146 @@ a HuggingFace page that can be re-uploaded under you:
 ```
 
 
+### The calibration campaign
+
+Week 2 turns the pinned engine into numbers. One campaign per node class produces all
+three of the week's deliverables, and it is one command:
+
+```bash
+uv run calibrate --config configs/calibration_1b_dense.json --out runs/calibration
+uv run r-range runs/calibration --out runs/r_range.json
+```
+
+The campaign has two phases and one by-product:
+
+- **A grid pass** over every (prompt bucket × output bucket × concurrency) cell, warmed and
+  then sampled. This is the C-3 lookup table. Warmup is discarded *per cell*, not once per
+  campaign: the first request into a new `-ngl` pays kernel JIT and the first at a new
+  concurrency pays slot allocation, and either folded into a cell mean becomes a one-off
+  cost the scheduler then applies to every request forever.
+- **A sustained segment** at one operating point, held under constant load for minutes.
+  This is what τ and the variance envelope are measured on.
+- **A snapshot series**, re-fitting the sustained cell on a rolling window every 60 s. This
+  is the least obvious requirement in C-3 and the most expensive to get wrong: if I hand
+  Aditya a single fitted model, his staleness injection (F-8) has to *synthesize* age by
+  perturbing parameters, and H3 stops being a result about real drift and becomes a study
+  of his perturbation model.
+
+Failures are counted, never fitted. A timeout is a censored observation, and a cell mean
+that averaged in the 60 s ceiling would report my own `--timeout` setting as the node's
+speed. The counts feed the Week-3 admissible-set work (F-13) and the cliff
+characterization (F-15).
+
+**C-3 `form` is `lookup_table`**, committed as a module constant rather than a runtime
+option — F-7 allowed either that or a ≤6-parameter regression, and supporting both doubles
+Aditya's interpolation logic for no research gain. The deciding reason is that service
+time against concurrency is flat while slots are free and then bends sharply once
+`--parallel` saturates, and that knee — which is what F-4 is about — is exactly what a
+six-parameter form cannot hold.
+
+### MPR-1: what the hardware actually said
+
+Measuring τ on an LLM serving node turns out to be bounded below by two things that are
+easy to miss, and finding them is most of what Week 2 produced:
+
+1. **You only learn a node's rate when a request finishes.** So the finest timescale the
+   throughput series can carry is one request. Worse, spreading each request's tokens
+   across its own decode interval — which is the honest way to build the series, since a
+   request does not produce its tokens at the instant it completes — *induces* correlation
+   out to one request duration. A τ of that order is indistinguishable from the binning.
+2. **llama.cpp decodes its `--parallel` slots as one batch**, so requests do not finish
+   independently, they finish in bursts. The completion process is near-periodic, and the
+   ACF of a near-periodic signal has peaks and troughs that an exponential fit will
+   happily read as decay.
+
+The second one was not a theoretical worry. On a 660 s segment at 0.78 completions/s with
+four slots — about two bursts per 10 s window — τ came out *censored* at 6, 8 and 12 s
+windows and ≈16 s at 10 and 15 s windows, **from the same samples**: the windows that
+happened to be near-integer multiples of the ~5 s burst period averaged it out, and the
+others aliased against it. A number that moves with the binning is a number about the
+binning, and it would have been very easy to report the 16 s.
+
+Both floors are now enforced by the instrument rather than left to judgement.
+`resolution_floor_s` is the larger of the median request duration and the window;
+`cadence_limited` is true below five slot turnovers per window; and `tau_resolved` is false
+unless τ clears both. A run that cannot support a τ says so and keeps its samples instead
+of throwing an exception and losing ten minutes of GPU time.
+
+With those satisfied — 1308 samples, 22 completions and 5.5 slot turnovers per window —
+the answer for the one node class I have measured properly is a **negative result**:
+
+| | `gtx1650ti_ngl99_p4_q4km_llama32_1b`, `--parallel 4`, saturated, 600 s |
+|---|---|
+| τ | **not resolvable; ≤ 10 s** (`tau_censored`, ACF shows no decay, *r²* = 0) |
+| Variance envelope | p05–p95 = **64.0 – 76.8 tok/s**, band **1.20×**, CV **0.077** |
+| Standard-error inflation | **1.00×** — 59 independent windows in 59 |
+| Median decode throughput | 70.3 tok/s |
+| σ (lognormal multiplier, F-22) | 0.035 |
+
+This is not a quiet machine: over the campaign the GPU went from 48 °C to a peak of 79 °C
+and its SM clock ranged 300–1905 MHz, so it is thermally throttling exactly as the
+motivation predicts. The throughput variance is real — a 20 % band — but at every timescale
+this measurement can see it is **white**, not drifting. The claim MPR-1 was set up to make
+is that a single calibrated tok/s figure is a moving average over a non-stationary process;
+on this node class the honest report is that the naive standard error of that figure is not
+inflated at all.
+
+Two caveats that belong next to the number rather than in a footnote. This is **one node
+class on one machine over one ten-minute segment** — it is not a claim about consumer GPUs
+in general. And it has a direct consequence for H3: if τ on this hardware sits below ~10 s,
+then "estimate staleness approaching τ" is a regime any sane heartbeat interval is already
+inside, so H3's staleness axis has to be re-grounded on hardware that actually drifts, or
+stated as a simulator-only result. That is a Week-4/5 conversation and it is better to have
+it now than after the sweeps.
+
+### The synthesizable *R* range — and the machine I do not have
+
+F-9a's promise is that *R* is tunable on real hardware, because with the engine, the
+quantization **and the model** all held constant, per-node capability is set by `-ngl`,
+`--threads` and `--parallel` alone. Week 2 is where that promise gets a number. Two node
+classes of `Meta-Llama-3-8B-Instruct`, both `--parallel 4`, sustained at concurrency 4:
+
+| Node class | `-ngl` | Decode tok/s |
+|---|---:|---:|
+| `gtx1650ti_ngl20_p4_q4km_llama3_8b` | 20 | 6.39 |
+| `cpu_ngl0_p4_q4km_llama3_8b` | 0 | 3.85 |
+
+```
+R in [1.00, 1.00] deployable across 1 host(s) from 2 node class(es);
+configuration alone reaches 1.66 but F-9a forbids co-locating the extremes on one host
+```
+
+Two numbers, and conflating them would overstate the result badly. **Configuration alone
+reaches 1.66×.** **Deployable *R* is 1.00×** — because both classes were measured on the
+same physical machine, and F-9a forbids running two logical nodes on one host, since they
+would contend for PCIe, memory bandwidth and cache and reintroduce as contention the exact
+confound per-node throttling exists to remove.
+
+So the honest Week-2 statement is that **the physical pool cannot yet span any
+heterogeneity at all**, and the fix is not code — it is a second machine. MPR-2 is the 2×2
+decomposition *across the synthesized R range*, so it stays out of reach until the pool has
+at least two hosts. That is worth knowing in Week 2 rather than Week 4.
+
+Also worth stating: 1.66× is a narrow span even ignoring co-location, because a GTX 1650 Ti
+holding 20 of 33 layers is not far ahead of the same box's CPU. Reaching the 10–100× the
+research question is about will need genuinely different machines, not just a wider `-ngl`
+sweep on this one.
+
+The `Llama-3.2-1B-Instruct` class reaches 70.3 tok/s on the same card at `-ngl 99`, which
+is roughly 18× the CPU 8B — but that is **not an *R***, and the tool refuses to compute it
+as one:
+
+```
+ValueError: R would be computed across 2 models (['Llama-3.2-1B-Instruct',
+'Meta-Llama-3-8B-Instruct']), which confounds the heterogeneity ratio with a model
+effect (F-9). Compute one range per model and report them separately
+```
+
+Model variety is a replication axis *across run sets* — the same hypotheses re-run end to
+end at a second model — not a way to widen *R* inside one pool. The guard is in the tool
+rather than in a reviewer's memory because that is the kind of mistake that produces a
+plausible number nobody questions.
+
 ## What it produces even if things go wrong
 
 The window has no slack, so the result ladder is defined in advance and strictly ordered:
@@ -269,7 +412,7 @@ MPR-1 stands alone as a measurement contribution and needs no scheduler comparis
 
 ```
 contracts/       The interface between the two halves — six frozen artifacts.
-dataplane/       Workers, measurement harness, results pipeline, figures.   (Python)
+dataplane/       Workers, calibration campaign, harness, results pipeline.  (Python)
 controlplane/    Scheduler, the five policies, discrete-event simulator.
 fixtures/        Fake scheduler and fake worker, so neither half blocks on the other.
 docs/            Spec, decision records, UML figure set.
@@ -351,7 +494,7 @@ of Week 1.
 | Week | Focus |
 |---|---|
 | 1 | Worker wrapper, heartbeat, thin client, measurement harness. One query routed and measured end to end. |
-| 2 | Calibration campaign; τ and the variance envelope; synthesizable *R* range. **MPR-1.** |
+| 2 | Calibration campaign; τ and the variance envelope; synthesizable *R* range. **MPR-1.** — *campaign built and run; τ reported as a bound with the two measurement floors that bound it; R range measured and blocked on a second host; F-9b outstanding* |
 | 3 | Multi-node pool; all five policies behind one config value; load band identified. **Feature freeze.** |
 | 4 | Discrete-event simulator sharing policy code; validated against hardware. |
 | 5 | Sweeps: *R* × load × staleness × policy. Hypotheses tested. |

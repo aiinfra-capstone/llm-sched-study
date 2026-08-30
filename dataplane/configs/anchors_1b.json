@@ -8,7 +8,7 @@
       "node_id": "gtx1650ti",
       "host": "fedora",
       "engine": "llamacpp",
-      "engine_version": "b10569+cuda13.2",
+      "engine_version": "b10569+p1+cuda13.2",
       "model": "Llama-3.2-1B-Instruct",
       "quant": "Q4_K_M",
       "gpu": "NVIDIA GeForce GTX 1650 Ti",

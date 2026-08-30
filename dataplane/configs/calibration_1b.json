@@ -44,7 +44,7 @@
   "seed": 20260830,
   "provenance": {
     "engine": "llamacpp",
-    "engine_version": "b10569+cuda13.2",
+    "engine_version": "b10569+p1+cuda13.2",
     "quant": "Q4_K_M",
     "gpu": "NVIDIA GeForce GTX 1650 Ti",
     "driver": "580.173.02",

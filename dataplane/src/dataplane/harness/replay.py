@@ -257,19 +257,21 @@ async def replay(
     validity = manifest_mod.Validity(
         max_send_lag_ms=max((r["send_lag_ms"] for r in windowed), default=0.0),
         send_lag_violations=sum(1 for r in windowed if r["send_lag_ms"] > send_lag_threshold_ms),
-        # A **dropped** request is one this client never heard back about at all: the
-        # Dispatch RPC failed, the scheduler refused it, or no ResponseDelivery arrived
-        # inside the ceiling. `responding_node` is empty in exactly those cases, and it is
-        # the right test rather than `status != "ok"`.
+        # Every request that did not come back `ok`, whatever went wrong: no dispatch, no
+        # delivery, or a delivery carrying `timeout` / `oom` / `engine_error`.
         #
-        # The difference matters, and getting it wrong made F-15 unimplementable. A request
-        # the worker served and reported as `timeout`, `oom` or `engine_error` **is a
-        # measurement** — it is the cliff, which F-15 requires be characterized as a
-        # standalone observation. Counting those as dropped marks any run that touches the
-        # cliff invalid, so the one thing F-15 asks for could never be analysed. Failures
-        # stay in the C-4 status column and in `admissible.Cliff`, where they are the data;
-        # validity is about whether the load generator did its job.
-        dropped_requests=sum(1 for r in windowed if not r["responding_node"]),
+        # I loosened this to "no response at all" for a while, because the pinned engine
+        # returned HTTP 500 on about 1% of requests and under the strict rule almost no run
+        # could ever be valid. That was treating the symptom. The 500 was a bug in
+        # llama.cpp's `/completion` path (`patches/`), and with it fixed the strict rule is
+        # the right one: a replay runs *inside* the admissible set, where by construction
+        # nothing should fail. A failure there means the run is not measuring what it
+        # claims, and that is exactly what `valid` is for.
+        #
+        # The F-15 cliff is characterized from the calibration campaign's observations,
+        # which deliberately probe *outside* the admissible set. It does not need replay
+        # runs to be allowed to fail.
+        dropped_requests=sum(1 for r in windowed if r["status"] != "ok"),
     )
     return ReplayResult(records=records, validity=validity, header=header)
 

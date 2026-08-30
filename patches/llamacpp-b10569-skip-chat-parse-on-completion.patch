@@ -1,0 +1,80 @@
+Subject: [PATCH] server: do not run the chat parser on the non-OAI /completion path
+
+Applies to ggml-org/llama.cpp b10569 (commit 5a32f7b, 2026-08-21).
+Apply with:  git -C ~/opt/llama.cpp/src apply <this file>
+
+WHAT GOES WRONG
+
+`/completion` serializes through `server_task_result_cmpl_final::to_json_non_oaicompat()`,
+which references `oaicompat_msg` exactly zero times. But `update()` populates it
+unconditionally, and populating it means running `common_chat_parse` ->
+`common_chat_peg_parse`, which *throws* on output it cannot parse
+(common/chat.cpp:3873). The exception escapes as an HTTP 500 and the completion is
+lost. The parse is dead work on that path, and it is dead work that can fail.
+
+Any request that forces its own output length can reach it. With `n_predict` +
+`ignore_eos` the generation stops wherever the budget runs out, which can be
+mid-UTF-8-character, and the parser rejects a lone continuation byte:
+
+    common_chat_peg_parse: unparsed Content-only output: <0xB2>
+    srv operator(): got exception: {"error":{"code":500,"message":"The model
+      produced output that does not match the expected Content-only format"}}
+
+Measured at 2 failures per 200 requests on Llama-3.2-1B-Instruct Q4_K_M with
+random-token prompts, and deterministic for a given (prompt, n_predict).
+
+WHY THE EXISTING LENIENT HANDLING DOES NOT COVER IT
+
+chat.cpp:3840 already sets COMMON_PEG_PARSE_FLAG_LENIENT, and there is a recovery
+path for unparseable output -- but it is gated `if (is_partial && result.end > 0)`
+(chat.cpp:3851). A non-streaming final result has `is_partial == false`, so it never
+applies; and when the bad byte lands at position 0, `result.end == 0`, so the
+streaming path throws too. That is why `"stream": true` returns the same error as
+its first SSE event rather than avoiding it.
+
+This is the same failure as ggml-org/llama.cpp#20193, reached through `max_tokens`
+instead. PR #20191 (merged 2026-03-08) added the lenient flag and the partial
+recovery above; both are already present in b10569 and neither covers the final
+result. The call is still unconditional on master.
+
+WHAT THIS CHANGES
+
+Guarding on `res_type` restores the invariant that a response format which does not
+use the parsed message does not pay for it -- and cannot fail because of it. The
+OpenAI, Anthropic and Responses paths are untouched, and `timings` is unaffected:
+verified `f18_status == "full"` with prefill/decode still reported after the patch.
+
+diff --git a/tools/server/server-task.cpp b/tools/server/server-task.cpp
+index 258cdcf..66d73ca 100644
+--- a/tools/server/server-task.cpp
++++ b/tools/server/server-task.cpp
+@@ -992,7 +992,11 @@ void server_task_result_cmpl_partial::update(task_result_state & state) {
+     if (is_begin) {
+         return; // begin marker only flushes headers, skip parsing
+     }
+-    state.update_chat_msg(content, true, oaicompat_msg_diffs);
++    if (res_type != TASK_RESPONSE_TYPE_NONE) {
++        // Same reasoning as the final result: the streaming /completion path renders
++        // through to_json_non_oaicompat() and never reads the parsed message.
++        state.update_chat_msg(content, true, oaicompat_msg_diffs);
++    }
+ 
+     // Copy current state for use in to_json_*() (reflects state BEFORE this chunk)
+     thinking_block_started = state.thinking_block_started;
+diff --git a/tools/server/server-task.h b/tools/server/server-task.h
+index 25ff015..c481a07 100644
+--- a/tools/server/server-task.h
++++ b/tools/server/server-task.h
+@@ -365,7 +365,11 @@ struct server_task_result_cmpl_final : server_task_result {
+ 
+     virtual void update(task_result_state & state) override {
+         is_updated = true;
+-        oaicompat_msg = state.update_chat_msg(content, false, oaicompat_msg_diffs);
++        if (res_type != TASK_RESPONSE_TYPE_NONE) {
++            // /completion renders through to_json_non_oaicompat(), which never reads
++            // oaicompat_msg. Parsing there buys nothing and can throw.
++            oaicompat_msg = state.update_chat_msg(content, false, oaicompat_msg_diffs);
++        }
+ 
+         oai_resp_id = state.oai_resp_id;
+         oai_resp_reasoning_id = state.oai_resp_reasoning_id;

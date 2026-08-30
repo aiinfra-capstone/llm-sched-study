@@ -102,7 +102,7 @@ pinned as part of the contract rather than installed per machine and hoped to ma
 
 | | |
 |---|---|
-| Source | [`ggml-org/llama.cpp`](https://github.com/ggml-org/llama.cpp) tag `b10569`, commit `5a32f7b66ef6cfb3e60deea26e3454cc6ad3438c` |
+| Source | [`ggml-org/llama.cpp`](https://github.com/ggml-org/llama.cpp) tag `b10569`, commit `5a32f7b66ef6cfb3e60deea26e3454cc6ad3438c`, **plus one patch** — [`patches/`](patches) |
 | Model | `Meta-Llama-3-8B-Instruct` GGUF — the primary condition; three more are staged, see [*The model set*](#the-model-set) |
 | Quantization | `Q4_K_M`, held constant across every model and every node |
 | Backends | CUDA 13.2 and Vulkan, **both built from that one commit** |
@@ -121,9 +121,42 @@ in the writeup instead of an assumption underneath it.
 
 The contract already carries the pin. `manifest.nodes[]` records `engine_version`, `model`,
 `quant`, `gpu`, `driver`, and the F-9a knobs under `engine_config`. The backend and the
-binary's SHA-256 ride inside `engine_version` (`b10569+cuda13.2`, `b10569+vulkan`), which
-the schema holds as a free string — a first-class `backend` field would be a **Week-1
-contract change** and has to be raised before the freeze, not after.
+binary's SHA-256 ride inside `engine_version` (`b10569+p1+cuda13.2`, `b10569+p1+vulkan`),
+which the schema holds as a free string — a first-class `backend` field would be a
+**Week-1 contract change** and has to be raised before the freeze, not after.
+
+#### The `+p1` — why the engine is patched rather than upgraded
+
+`llama-server` returned HTTP 500 on about 1 request in 100 —
+*"The model produced output that does not match the expected Content-only format"* — and
+lost the completion. The cause is in
+`server_task_result_cmpl_final::update()`: it populates `oaicompat_msg` unconditionally,
+which runs the chat PEG parser, which throws on output it cannot parse. But `/completion`
+renders through `to_json_non_oaicompat()`, which reads `oaicompat_msg` **zero times**. The
+parse is dead work on that path, and it is dead work that can fail. It fires because
+`n_predict` + `ignore_eos` stops generation wherever the budget runs out, sometimes
+mid-UTF-8-character, and the parser rejects the lone continuation byte.
+
+**Upgrading does not fix it**, which is why the pin moved sideways rather than forward.
+The lenient-parsing fix for the same failure ([#20191](https://github.com/ggml-org/llama.cpp/pull/20191),
+merged March 2026, for [#20193](https://github.com/ggml-org/llama.cpp/issues/20193)) is
+already in b10569 — our commit is five months later — and it only rescues *partial*
+parses, so the final result of a non-streaming `/completion` still throws. The call is
+still unconditional on master.
+
+So the fix is a two-line guard on `res_type`, kept as a patch in
+[`patches/`](patches) with its full rationale, applied to **both** backend builds so the
+pool stays homogeneous under F-9. `llama-server --version` still reports
+`build 10569, commit 5a32f7b` — it has no idea the tree was modified — which is precisely
+why `engine_version` carries `+p1` and why the manifest records the binary hash. A pin
+that a running node cannot prove is not a pin.
+
+```bash
+git -C ~/opt/llama.cpp/src apply \
+  ~/Documents/capstone/patches/llamacpp-b10569-skip-chat-parse-on-completion.patch
+cmake --build ~/opt/llama.cpp/b10569-cuda   --target llama-server -j6
+cmake --build ~/opt/llama.cpp/b10569-vulkan --target llama-server -j"$(nproc)"
+```
 
 ```bash
 # Prerequisites, once per node (Fedora 43)

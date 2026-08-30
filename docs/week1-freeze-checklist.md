@@ -56,7 +56,18 @@ decision that must be closed *before* the freeze, not after.
       sequence, deterministic, and agreed with the generator
 - [x] C-4 client and worker log schemas + fixture files committed
 - [x] `uv run contracts/check.py` green
-- [ ] **C-2 decision before the freeze:** the header's `reserved_ids_excluded` is a claim
+- [x] **C-2 decision — closed by the freeze itself: `reserved_ids_excluded` stays a
+      boolean, and `false` is the honest value for a model like Mistral.** No
+      `reserved_id_floor` field was added before the contract froze at end of Week 1, and the
+      header is `additionalProperties: false`, so the alternative expired rather than being
+      rejected. Recording it because an item left unticked reads like an oversight, and this
+      one is a decision.
+
+      Nothing measured changes either way: the worker forces `output_len` with `ignore_eos`
+      and no prompt is ever decoded back to text, so a reserved id inside a prompt is a token
+      the model has and nothing more. The original text follows.
+
+      **(original)** the header's `reserved_ids_excluded` is a claim
       about `vocab_size`, and a ceiling cannot exclude a floor. Llama-3 keeps its specials
       at the top so the flag is `true`; Mistral-v0.3 keeps `<unk>`/`<s>`/`</s>` at 0-2 so
       it is `false`. Either accept `false` as honest — nothing measured changes, the worker
@@ -83,7 +94,12 @@ decision that must be closed *before* the freeze, not after.
 
 - [ ] **End-to-end single request:** real worker, real scheduler, response returns
       worker → client directly (F-11)
-- [ ] Harness replays a seeded trace and emits a joined per-request record set
+- [x] Harness replays a seeded trace and emits a joined per-request record set
+      — `uv run pipeline runs/anchors/anchor1b_mid_* --trace ...` produces `joined.parquet`
+      from real client and worker logs. The scheduler columns are null until Aditya's
+      scheduler is the one in the path: my fixture writes no C-4 decision record, because a
+      fixture with no state store cannot fill in `candidates[].estimate_age_ms` honestly and
+      fabricating it would be worse than the gap.
 - [ ] All six contract artifacts tagged `contract-v1`
 
 ---
@@ -358,12 +374,16 @@ with no slack, not on merit.
       guard starts failing constantly, check whether the guard is wrong before you widen
       it.** I nearly widened it.
 
-- [ ] **F-20 gap worth closing: `campaign.json` does not embed the config it ran.** C-6
-      manifests carry `config` verbatim precisely so a run can be reproduced from the record
-      rather than from a file someone may since have edited. The calibration report does not,
-      so reproducibility rides on a mutable path — and that is exactly how the sustained-cell
-      drift went unnoticed while a campaign was mid-flight. Small change; it should carry the
-      config and a hash of it, the way the manifest does.
+- [x] **F-20 gap closed: `campaign.json` now embeds the config it ran, plus its hash.** C-6
+      manifests carry `config` verbatim precisely so a run reproduces from the record rather
+      than from a file someone may since have edited; the calibration report did not, so
+      reproducibility rode on a mutable path — and that is exactly how a sustained-cell edit
+      went unnoticed while a campaign was mid-flight. Same canonical hash the manifest uses,
+      so the two artifacts agree on what "the same config" means.
+
+      **Not backfilled.** The runs already on disk predate the field. Writing provenance
+      after the fact is the weakness the field exists to remove, so they stay without it and
+      it applies from the next campaign on.
 
 ---
 

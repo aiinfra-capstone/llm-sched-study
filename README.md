@@ -293,8 +293,8 @@ Week 2 turns the pinned engine into numbers. One campaign per node class produce
 three of the week's deliverables, and it is one command:
 
 ```bash
-uv run calibrate --config configs/calibration_1b_dense.json --out runs/calibration
-uv run r-range runs/calibration --out runs/r_range.json
+uv run calibrate --config configs/calibration_1b_dense.json --out runs/calibration/llama32-1b
+uv run r-range   runs/calibration/llama3-8b --out runs/calibration/llama3-8b/r_range.json
 ```
 
 The campaign has two phases and one by-product:
@@ -730,6 +730,7 @@ dataplane/       Workers, calibration campaign, harness, results pipeline.  (Pyt
 controlplane/    Scheduler, the five policies, discrete-event simulator.
 fixtures/        Fake scheduler and fake worker, so neither half blocks on the other.
 docs/            Spec, decision records, UML figure set.
+patches/         Changes to the pinned engine, with the reasoning that justifies them.
 runs/            Measurement output. Only the run manifests and Week 3's two
                  determinations are versioned; the rest regenerates from a seed.
 assets/          Images used by this README.
@@ -797,6 +798,29 @@ uv run admissible runs/calibration/llama32-1b --out runs/admissible/llama32-1b.j
 uv run anchors    configs/anchors_1b.json                        # F-23 — 4 operating points
 uv run load-band  runs/anchors --out runs/anchors/load_band.json  # §5.5
 ```
+
+Before the pool spans more than one machine, `preflight` checks the network the run will
+actually use — and in particular the direction nothing else exercises:
+
+```bash
+uv run preflight --serve 0.0.0.0:50071          # on the CLIENT host
+uv run preflight --probe <client-host>:50071    # from EACH worker host
+uv run preflight configs/preflight_lan.json --out runs/preflight.json
+```
+
+Under F-11 the worker returns responses **directly to the client**, so the client's port has
+to be reachable *inbound* from every worker host. Nothing about bringing the scheduler up
+tests that, and when it is blocked the failure is not loud: the dispatch succeeds, the
+worker serves the request, the record says `timeout`, and a firewall is indistinguishable
+from a saturated pool. Hence the two-sided `--serve` / `--probe` pair.
+
+Two things it deliberately does **not** check. Bandwidth, because a five-node pool at the
+measured load band runs at about **0.08 Mbit/s** — a `Dispatch` is 754 bytes on average, a
+`Deliver` is 33, a heartbeat 47 — and even a 30 ms hop is roughly 2% of the fastest
+end-to-end latency measured here. And clock synchronisation, because no duration in this
+study is computed by subtracting stamps taken on different hosts, and heartbeat gaps are
+found through `Heartbeat.seq` rather than through time. NTP is not needed; that is a
+property the design paid for deliberately.
 
 Rebuild the UML figures (needs `java` and `graphviz`):
 

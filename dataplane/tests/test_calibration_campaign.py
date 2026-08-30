@@ -329,13 +329,30 @@ def test_a_config_built_in_code_still_reports_what_it_ran() -> None:
     """`from_dict` keeps the file's bytes; a config assembled directly has none to keep, so
     `as_dict` reconstructs it from the fields rather than reporting nothing."""
     built = camp.CampaignConfig(
-        node_class="n", model="m", host="h", endpoint="http://x",
-        prompt_edges=[1, 128], output_edges=[1, 64], prompt_lens=[64], output_lens=[32],
-        concurrencies=[1], samples_per_cell=1, warmup_per_cell=0,
-        sustained={"prompt_len": 64, "output_len": 32, "concurrency": 1,
-                   "duration_s": 1.0, "window_s": 0.5},
-        provenance={}, admissibility={}, vocab_size=1000, seed=1,
-        snapshot_every_s=1.0, snapshot_window_s=1.0,
+        node_class="n",
+        model="m",
+        host="h",
+        endpoint="http://x",
+        prompt_edges=[1, 128],
+        output_edges=[1, 64],
+        prompt_lens=[64],
+        output_lens=[32],
+        concurrencies=[1],
+        samples_per_cell=1,
+        warmup_per_cell=0,
+        sustained={
+            "prompt_len": 64,
+            "output_len": 32,
+            "concurrency": 1,
+            "duration_s": 1.0,
+            "window_s": 0.5,
+        },
+        provenance={},
+        admissibility={},
+        vocab_size=1000,
+        seed=1,
+        snapshot_every_s=1.0,
+        snapshot_window_s=1.0,
     )
     assert built.raw is None
     d = built.as_dict()

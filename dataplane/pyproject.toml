@@ -31,6 +31,7 @@ worker     = "dataplane.worker.serve:main"            # Week 3: one live pool no
 admissible = "dataplane.calibration.admissible:main"  # Week 3: the admissible set + cliff (F-13/F-15)
 anchors    = "dataplane.harness.anchors:main"         # Week 3: the F-23 validation anchors
 load-band  = "dataplane.pipeline.loadband:main"       # Week 3: the controlled load band (§5.5)
+preflight  = "dataplane.harness.preflight:main"       # before a multi-host pool: prove the LAN
 
 [dependency-groups]
 dev = [

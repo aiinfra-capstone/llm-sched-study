@@ -13,6 +13,46 @@ uv sync --all-groups
 uv run pytest
 ```
 
+### Tests
+
+`uv run pytest` is what CI runs, and it enforces **100% statement and branch coverage** of
+`src/dataplane`. That is not a vanity number. This half of the repo is an instrument, and a
+line of the harness that no test executes is a line whose behaviour I would be assuming
+when I report a measurement taken through it. If a new line is unreachable from a test, the
+honest options are to test it or to delete it.
+
+The generated protobuf stubs are excluded — they are protoc output, regenerated on import
+and gitignored (§12.2). What they must actually *do* is asserted in `test_proto_stubs.py`.
+
+Three groups of tests do not run by default, for three different reasons:
+
+| | |
+|---|---|
+| `test_forward_w[1-5]_*.py` | Written against work scheduled for a later week. They **skip**, and `-rs` prints the reason for every skip — so the skip list in a CI log is the remaining backlog of my half. |
+| `-m perf` | `test_replay_load.py` measures send-lag under sustained load. That is a property of the machine, not of the code, so a shared runner cannot assert a threshold on it without either flaking or being set so loose it proves nothing. Run it on the load host: `uv run pytest -m perf -s`. |
+| `-m integration` | Runs by default, but it launches real subprocesses and binds real sockets. Slower than the rest. |
+
+Because the coverage gate is on by default, running a subset needs `--no-cov`:
+
+```bash
+uv run pytest tests/test_manifest.py --no-cov
+```
+
+`test_golden_trace.py` is the one test that can notice the generator itself changing.
+Everything else about determinism compares this build against itself — generate twice, get
+the same bytes — which stays true even if the output is wrong, because both sides move
+together. A reference computed once and written down is the only check on a claim about
+*later*, and "the trace regenerates byte-for-byte from (config, seed)" is entirely a claim
+about later. I found the gap by mutation testing: swapping `rng_length` and `rng_content`
+in `generate` changed every byte of every trace the harness produces, and the whole suite
+still passed.
+
+`test_properties.py` is Hypothesis. It exists for the invariants stated as universals in
+the source — most importantly the three RNG streams: changing the length mix must not
+move the arrivals or the prompt content, or an *R*-sweep cannot attribute anything to *R*.
+A hand-written example checking two length distributions is not evidence for a claim about
+all of them.
+
 ---
 
 ## `worker/` — F-9, F-9a, F-9b, F-10, F-11

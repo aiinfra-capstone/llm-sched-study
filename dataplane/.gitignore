@@ -1,0 +1,12 @@
+# Tooling caches and coverage data, all regenerable. These live here rather than in the
+# repo-root ignore file because they are artifacts of *this* package's test command —
+# the control plane will have its own, in whatever language it settles on (F-21).
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.pytest_cache/
+.ruff_cache/
+# Hypothesis's example database. Replaying a shrunk counterexample locally is useful;
+# committing one would pin the suite to a failure that has already been fixed.
+.hypothesis/

@@ -394,6 +394,226 @@ end at a second model — not a way to widen *R* inside one pool. The guard is i
 rather than in a reviewer's memory because that is the kind of mistake that produces a
 plausible number nobody questions.
 
+### The live pool: what a node actually is
+
+Week 1 gave me an engine *adapter* — something that can drive `llama-server` and describe
+what came back. Week 3 needs a node: a process on the network that answers `Execute`,
+serves the request, and returns the response to the client. That is
+[`worker/serve.py`](dataplane/src/dataplane/worker/serve.py), and three of its decisions are
+measurement decisions rather than plumbing.
+
+**The wrapper owns admission, not the engine.** llama.cpp will happily accept more requests
+than it has slots and queue them internally, and if I let it, that wait lands inside
+`service_ns` where nothing can separate it from compute. So the wrapper holds a semaphore of
+exactly `--parallel` permits. `queue_wait_ns` is time spent waiting for a permit and
+`service_ns` is the engine's own span, which is what makes C-4's two duration columns mean
+two different things — and it is why the simulator can model a node as a fixed-capacity
+server without approximating anything: the slot count *is* `SimNode.batch_capacity`.
+
+**`Execute` returns before the work is done.** It answers `queued=true` and hands the
+request to a task. A worker that blocked until the completion came back would apply
+backpressure to the scheduler, and backpressure at the scheduler silently converts an
+open-loop experiment into a closed-loop one — the single failure mode the replay client's
+send-lag guard exists to catch. The guard watches the client; this is the other end of the
+same rule.
+
+**The response goes to the client, not back through the scheduler (F-11).** The
+`client_endpoint` rides on the request for exactly this reason.
+
+One cost paid on purpose: `/slots` is read once per request, after the permit is acquired
+and before the completion is posted. It costs a loopback round trip that lands in neither
+`queue_wait_ns` nor `service_ns`, and it buys a `kv_occupancy_at_admission` that is a
+reading rather than a value copied from a heartbeat up to a second old. A stale per-request
+field is indistinguishable from a fresh one once it is in the log.
+
+Bringing a node up is three processes, and they are deliberately three:
+
+```bash
+# 1. the engine
+llama-server -m ~/models/gguf/Llama-3.2-1B-Instruct-Q4_K_M.gguf \
+             --host 127.0.0.1 --port 18080 \
+             -ngl 99 --threads 6 --parallel 4 -c 8192 --slots --no-webui
+
+# 2. the node — one per physical host (F-9a)
+uv run worker --node-id gtx1650ti --engine http://127.0.0.1:18080 \
+              --bind 0.0.0.0:50061 --scheduler <scheduler-host>:50051 \
+              --slots 4 --engine-version b10569+cuda13.2 --log-dir runs/worker
+
+# 3. the scheduler. Aditya's LiveSchedulerApp goes here; until the seam findings in
+#    issue #5 are closed I drive the pool with my own fixture, which round-robins
+#    blindly and writes no decision record.
+uv run python fixtures/fake_scheduler/serve.py --bind 0.0.0.0:50051 --worker <node>:50061
+```
+
+Nothing here starts anything else. An engine, a wrapper and a scheduler have three
+lifetimes, and a campaign runner that owned all three would hide an engine restart inside a
+Python traceback — `engine_restarts` is a field in the C-6 validity block precisely because
+it is a thing to be *counted*, not something to be papered over by a supervisor.
+
+### The admissible set, and the cliff outside it
+
+F-13 says the primary study operates over a `(prompt, output)` range that **every** pool
+node can serve inside a stated timeout ceiling, and that the restricted range is reported
+alongside results. It is an intersection, not an average: one slow node shrinks the whole
+study's range. `uv run admissible` computes it from the C-3 snapshots the calibration
+campaign already wrote, so the boundary is measured rather than assumed:
+
+```
+$ uv run admissible runs/calibration/llama32-1b --out runs/admissible/llama32-1b.json
+model: Llama-3.2-1B-Instruct
+admissible set: prompt <= 512, output <= 128 at a 60000 ms ceiling
+trace buckets inside it: p128_o64, p256_o64, p512_o128
+  gtx1650ti_ngl99_p4_q4km_llama32_1b   prompt<=512  output<=128  worst p95 0 ms at concurrency 0
+  NOTE: gtx1650ti_ngl99_p4_q4km_llama32_1b admits prompts to 512 on samples that reach
+        only 256 — the bucket ceiling is claimed, not measured
+```
+
+Three things in that output are deliberate.
+
+**The boundary is drawn on p95, not the mean.** A bucket whose mean fits under the ceiling
+but whose p95 does not will time out one request in twenty, and those timeouts land in
+exactly the tail statistics the study is about.
+
+**"At every calibrated concurrency", not at concurrency 1.** A bucket that fits when the
+node is idle and blows the ceiling at `--parallel 4` is not admissible, because the
+scheduler will absolutely put four requests on that node under load — that is what the load
+band *is*.
+
+**The last line is the honesty check, and it is the one I expect to be argued with.** A
+bucket is named by its **ceiling** and sampled in its **interior**. The `(129, 512)` bucket
+was admitted on samples that reach 256 tokens, so "prompt ≤ 512" is a claim about 512 that
+nothing in the campaign tested. The envelope still reports the ceiling — that is what C-2's
+header and the trace generator consume — but `evidence` in the JSON reports what was
+actually measured, and the difference is printed rather than left for someone to notice in
+Week 6.
+
+The cliff (F-15) is computed from the campaign's **discarded** samples, because a fitted
+cost table excludes failures by construction and therefore cannot say where the cliff is.
+That is what those samples are for.
+
+The tool refuses to intersect across two models for the same reason `r-range` refuses to
+divide across them: F-9 holds the model constant across a pool, so an envelope spanning two
+models describes a pool that cannot exist.
+
+### Validation anchors, and the load band they also locate
+
+F-23 fixes the form of the Week-4 answer to *does the simulator agree with the machine?* —
+p50 and p95 end-to-end latency, within a stated tolerance, at **three or more operating
+points**, on **identical replayed traces**. `uv run anchors` produces the hardware half, and
+those two emphasised phrases are the whole design.
+
+**Three points, not one.** A simulator tuned at a single load is not validated, it is
+fitted. The interesting failure is a service-time model that is right when the node is idle
+and wrong when it is saturated, and a single anchor at either end cannot see it.
+
+**One trace across all of them.** The points differ only by `rate_scale`: the same trace
+file, replayed with its arrival timeline compressed. Three separately seeded traces would
+change the length draw and the burst structure along with the rate, and a disagreement
+between vehicles could then be a workload difference rather than a simulator error. Sharing
+the trace is also what makes `trace_sha256` identical across the set, which is the property
+`load_anchors` refuses to run without.
+
+```
+$ uv run anchors configs/anchors_1b.json
+     quiet  x0.80  lambda=0.72/s  198/200 ok  max send lag 6.6 ms  VALID
+     light  x1.15  lambda=1.03/s  198/200 ok  max send lag 3.7 ms  VALID
+       mid  x1.45  lambda=1.30/s  198/200 ok  max send lag 2.8 ms  VALID
+     heavy  x2.20  lambda=1.98/s  198/200 ok  max send lag 2.7 ms  VALID
+
+4/4 anchors valid, written under runs/anchors
+```
+
+Four points rather than three, because F-23's "at least 3" is a floor and a sweep that
+loses one run to a send-lag violation should still have an anchor set. Each is the same 200
+requests of `Llama-3.2-1B-Instruct` on one GTX 1650 Ti at `-ngl 99 --parallel 4`; only the
+clock differs. The manifests are committed under [`runs/anchors`](runs/anchors) — they are
+the whole record, since the trace regenerates from its seed.
+
+The operating points are chosen against the pool's **measured** capacity, and the first
+sweep exists to measure it. My estimate from the C-3 table's concurrency-4 cells was 2.9
+req/s; the pool actually retires about 1.65, because the table prices a cell at a controlled
+concurrency and a real length mix does not hold concurrency still. That first sweep is kept
+under [`runs/sweeps/capacity_probe_1b`](runs/sweeps/capacity_probe_1b) with its own note,
+because it is what the anchor rates were chosen from and because it is where the
+`engine_error`s finally got a cause.
+
+#### About those `engine_error`s
+
+Two requests in every two hundred come back as `engine_error`, and the reason is not the
+hardware:
+
+```
+W common_chat_peg_parse: unparsed Content-only output: <0xB2>
+W srv operator(): got exception: {"error":{"code":500,
+    "message":"The model produced output that does not match the expected Content-only
+               format","type":"server_error"}}
+```
+
+A lone UTF-8 continuation byte. Forced-length generation (`n_predict` + `ignore_eos`) ends
+mid-character, and this build runs `/completion` output through the chat content parser.
+The work was done; the engine refused to hand it over. It is a **response-serialization
+failure, not a capacity limit**, and it is the same signature as the periodic
+`engine_error`s the Week-2 CPU node produced and that I could not explain at the time.
+
+It is not avoidable from my side. `--no-jinja`, `--reasoning-format none` and
+`--reasoning off` each leave the rate unchanged at 2 in 200, and Llama-3's BPE has no
+separate byte-fallback token set to suppress with a `logit_bias` — any token can end
+mid-character. So it is reported: the count is in every anchor's summary line, the status is
+in the C-4 log, and the rate is stated wherever an anchor is used.
+
+#### The load band
+
+Policy differences vanish at both ends of the load axis and for two different reasons —
+too light and nothing is queued, so every policy makes the same placement; too heavy and
+everything is queued, so no placement helps. §5.5 makes finding the band between them a
+prerequisite step and a reportable characterization in its own right, and it comes off the
+same runs:
+
+```
+$ uv run load-band runs/anchors
+load band: 1.03–1.30 req/s (reference p50 1386 ms, p99 4120 ms); one-node pool, so this is
+the band's physical bound only — policy separation is not demonstrated by these runs
+     quiet  lambda= 0.72/s  n=194  p50= 1385.6  p95= 3713.1  p99= 4120.3  drift=   -64.8 ms
+     light  lambda= 1.03/s  n=191  p50= 1981.8  p95= 4524.7  p99= 5478.4  drift=  -103.2 ms
+       mid  lambda= 1.30/s  n=188  p50= 2979.7  p95= 5939.4  p99= 7089.1  drift=  -209.9 ms
+     heavy  lambda= 1.98/s  n=178  p50=13793.6  p95=23601.3  p99=24674.0  drift=+12458.8 ms
+                                                          [retired only 1.57/s]
+```
+
+The band reads cleanly off those four rows. At 0.72 req/s the node is the reference — its
+tail is the length spread and nothing else. At 1.03 the tail is a third worse than the
+reference's with the *same* requests in it, which is queueing. At 1.30 it is still stable,
+its latency still flat across the run. At 1.98 both saturation readings fire at once: the
+fitted latency rise is +12.5 s against a p50 of 13.8 s, and the pool retired 1.57 req/s
+against 1.98 offered. So the pool's ceiling is about 1.6 req/s and the band sits just under
+it.
+
+Three rules, stated rather than tuned:
+
+**Onset is tail against tail.** A point is inside the band once its p99 is 20% worse than
+the *reference point's p99*. The first version of this rule compared p99 to the reference
+**p50**, which is wrong in a way that looked right: the trace mixes `p128_o64` with
+`p512_o128`, so p99 sits several times above p50 from the length spread alone — 1603 ms
+against 4987 ms on the lightest run, with no queue anywhere — and the rule fired at the
+floor of every sweep. The fix is free from the anchor design: every point replays the same
+trace, so the length composition is identical by construction and a tail-to-tail comparison
+isolates the one thing that changed.
+
+**Saturation is read two ways.** The trend test fits latency against arrival time and calls
+a point saturated when the fitted rise across the window is at least the run's own p50. The
+shortfall test compares achieved throughput to the offered rate — in an open-loop replay the
+trace fixes the offered rate, so a pool retiring less than that grew a backlog by definition.
+Both are here because the trend test missed a point the shortfall test caught: at 1.80 req/s
+against a pool that retires 1.65, the backlog builds slowly enough that over 111 seconds the
+fitted rise reached only 0.30 of the run's p50, while the pool was visibly retiring 1.63.
+
+**What one node cannot tell you.** With a single-node pool there is no placement to get
+wrong, so these runs bound the band from physics — queueing exists here, the queue clears
+here — but cannot demonstrate the thing the band is *defined* by, which is that policies
+differ inside it. `policy_separable` is `false` in the output until the pool has two hosts,
+and it stays in the JSON so a figure drawn from this sweep cannot quietly claim more than the
+runs support. It is the same second machine that MPR-2 is waiting on.
+
 ## What it produces even if things go wrong
 
 The window has no slack, so the result ladder is defined in advance and strictly ordered:
@@ -411,11 +631,14 @@ MPR-1 stands alone as a measurement contribution and needs no scheduler comparis
 ## Repository layout
 
 ```
-contracts/       The interface between the two halves — six frozen artifacts.
+contracts/       The interface between the two halves — six frozen artifacts,
+                 plus the committed C-3 snapshot series the simulator reads.
 dataplane/       Workers, calibration campaign, harness, results pipeline.  (Python)
 controlplane/    Scheduler, the five policies, discrete-event simulator.
 fixtures/        Fake scheduler and fake worker, so neither half blocks on the other.
 docs/            Spec, decision records, UML figure set.
+runs/            Measurement output. Only the run manifests and Week 3's two
+                 determinations are versioned; the rest regenerates from a seed.
 assets/          Images used by this README.
 ```
 
@@ -471,6 +694,17 @@ uv run contracts/check.py
 cd dataplane && uv sync --all-groups && uv run pytest
 ```
 
+With a node up (see [*The live pool*](#the-live-pool-what-a-node-actually-is)), the Week-2
+and Week-3 determinations are four commands, each of which writes the artifact it prints:
+
+```bash
+uv run calibrate  --config configs/calibration_1b.json --out runs/calibration/llama32-1b
+uv run r-range    runs/calibration/llama3-8b                     # F-9a — the R range
+uv run admissible runs/calibration/llama32-1b --out runs/admissible/llama32-1b.json
+uv run anchors    configs/anchors_1b.json                        # F-23 — 4 operating points
+uv run load-band  runs/anchors --out runs/anchors/load_band.json  # §5.5
+```
+
 Rebuild the UML figures (needs `java` and `graphviz`):
 
 ```bash
@@ -495,7 +729,7 @@ of Week 1.
 |---|---|
 | 1 | Worker wrapper, heartbeat, thin client, measurement harness. One query routed and measured end to end. |
 | 2 | Calibration campaign; τ and the variance envelope; synthesizable *R* range. **MPR-1.** — *campaign built and run; τ reported as a bound with the two measurement floors that bound it; R range measured and blocked on a second host; F-9b outstanding* |
-| 3 | Multi-node pool; all five policies behind one config value; load band identified. **Feature freeze.** |
+| 3 | Multi-node pool; all five policies behind one config value; load band identified. **Feature freeze.** — *node serving; admissible set determined; 4 valid F-23 anchors on one trace; load band 1.03–1.30 req/s. Still one host, so policy separation is not demonstrated, and the pinned engine 500s on ~1% of requests* |
 | 4 | Discrete-event simulator sharing policy code; validated against hardware. |
 | 5 | Sweeps: *R* × load × staleness × policy. Hypotheses tested. |
 | 6 | Analysis, threats to validity, literature positioning, writeup. |

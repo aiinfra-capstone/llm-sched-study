@@ -1,0 +1,52 @@
+{
+  "trace": "runs/traces/anchor_1b.trace.jsonl",
+  "trace_sha256": "bea054628d197527a530f04dc95f4170686c3b7651941698558e145f02c540cf",
+  "scheduler": "127.0.0.1:50051",
+  "nodes": [
+    {
+      "role": "pool",
+      "node_id": "gtx1650ti",
+      "host": "fedora",
+      "engine": "llamacpp",
+      "engine_version": "b10569+cuda13.2",
+      "model": "Llama-3.2-1B-Instruct",
+      "quant": "Q4_K_M",
+      "gpu": "NVIDIA GeForce GTX 1650 Ti",
+      "driver": "580.173.02",
+      "prefix_caching": false,
+      "max_batch": 4,
+      "engine_config": {
+        "ngl": 99,
+        "threads": 6,
+        "parallel": 4
+      }
+    }
+  ],
+  "policy": "round_robin",
+  "warmup_s": 10.0,
+  "bind": "127.0.0.1:0",
+  "settle_s": 20.0,
+  "tag": "anchor1b",
+  "out_root": "runs/anchors",
+  "cost_model_snapshots": {
+    "gtx1650ti": "cm_gtx1650ti_ngl99_p4_q4km_llama32_1b_20260830T090759Z_008"
+  },
+  "points": [
+    {
+      "name": "quiet",
+      "rate_scale": 0.8
+    },
+    {
+      "name": "light",
+      "rate_scale": 1.15
+    },
+    {
+      "name": "mid",
+      "rate_scale": 1.45
+    },
+    {
+      "name": "heavy",
+      "rate_scale": 2.2
+    }
+  ]
+}

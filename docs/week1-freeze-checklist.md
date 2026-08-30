@@ -13,10 +13,17 @@ decision that must be closed *before* the freeze, not after.
 ## Divyansh Shukla (A)
 
 - [ ] `scheduling.proto` reviewed and agreed with Aditya (C-1)
-- [ ] **One** worker wrapper — llama.cpp + GGUF — running on a node (F-9, per
+- [x] **One** worker wrapper — llama.cpp + GGUF — running on a node (F-9, per
       F-9; the second runtime integration is withdrawn from Week 1)
-- [ ] `engine_config` (`-ngl`, `--threads`, `--parallel`) plumbed into the manifest's
+      — `dataplane/src/dataplane/worker/serve.py`, `uv run worker`. It answers `Execute`,
+      returns the response to the client directly (F-11), reports the completion to the
+      scheduler, and beats every second. The wrapper — not the engine — holds the backlog,
+      in a semaphore of exactly `--parallel` permits, so `queue_wait_ns` is measured
+      outside `service_ns` instead of hiding inside it.
+- [x] `engine_config` (`-ngl`, `--threads`, `--parallel`) plumbed into the manifest's
       node block, because under F-9a this *is* the experimental condition
+      — `uv run launch dataplane/configs/pool_1b.json` normalizes the pool description,
+      and every anchor manifest carries it per run rather than per machine.
 - [x] **F-18 prefill/decode split verified on BOTH backends — both `full`.**
       CUDA (`b10569+cuda13.2`): `/completion` returns `timings.prompt_ms` / `.prompt_n`
       and `.predicted_ms` / `.predicted_n`; `/slots` returns exactly `--parallel` entries
@@ -36,7 +43,7 @@ decision that must be closed *before* the freeze, not after.
       devices — the GTX 1650 Ti and an integrated AMD Radeon (RADV RENOIR) — so the same
       machine can produce a Vulkan node class on either. It does not help the *R* range,
       because F-9a still forbids two logical nodes on one host.
-- [ ] Launcher asserts `validity.colocated_nodes == 0` — one logical node per physical
+- [x] Launcher asserts `validity.colocated_nodes == 0` — one logical node per physical
       host, or the contention confound comes straight back
 - [x] Trace generator produces a **byte-identical file** on regeneration from the same
       seed and parameters — as a **test**, not an assumption
@@ -175,6 +182,150 @@ with no slack, not on merit.
       unilaterally** — F-9b is the evidence that the single-engine decision was accounted
       for rather than hidden, so which version of it we run is a decision both of us
       should sign off on.
+
+---
+
+## Week-3 record — the admissible set, the anchors, and one decision I could not make alone
+
+### Determined
+
+- [x] **Admissible set (F-13) — `prompt <= 512, output <= 128` at a 60 s ceiling** for the
+      `Llama-3.2-1B-Instruct` pool, computed from the committed C-3 series by
+      `uv run admissible runs/calibration/llama32-1b`. Drawn on **p95 at every calibrated
+      concurrency**, not on the mean at concurrency 1: a bucket that fits when the node is
+      idle and blows the ceiling at `--parallel 4` is not admissible, because under load the
+      scheduler will put four requests on that node.
+
+      Reported with its own honesty check. A bucket is named by its **ceiling** and sampled
+      in its **interior**, so "prompt ≤ 512" rests on samples that reach 256. The tool prints
+      the gap rather than leaving it to be noticed in Week 6.
+
+- [x] **Cliff (F-15)** computed from the campaign's discarded samples, which is what those
+      samples are for — a fitted table excludes failures by construction and therefore cannot
+      say where the cliff is.
+
+- [x] **F-23 validation anchors — 4 valid points on one trace.** `uv run anchors` replays
+      the same 200-request trace at four compressions, so `trace_sha256` is identical across
+      the set and a Week-4 disagreement between vehicles cannot be a workload difference.
+
+      | point | `rate_scale` | λ | ok | max send lag |
+      |---|---:|---:|---:|---:|
+      | quiet | 0.80 | 0.72/s | 198/200 | 6.6 ms |
+      | light | 1.15 | 1.03/s | 198/200 | 3.7 ms |
+      | mid | 1.45 | 1.30/s | 198/200 | 2.8 ms |
+      | heavy | 2.20 | 1.98/s | 198/200 | 2.7 ms |
+
+      Four rather than three, because "at least 3" is a floor and a sweep that loses a run to
+      a send-lag violation should still have an anchor set. The manifests are committed.
+
+- [x] **Load band (§5.5) — 1.03–1.30 req/s** on the one-node 1B pool, against a measured
+      ceiling of about 1.6 req/s. `policy_separable` is `false` in the output and stays there
+      until the pool has two hosts: with one node there is no placement to get wrong, so these
+      runs bound the band from physics but cannot show that policies *differ* inside it. It is
+      the same second machine MPR-2 is waiting on.
+
+      Two rules changed after meeting real data, and both changes are the point of running the
+      sweep before trusting the tool:
+      1. **Onset is tail against tail**, not tail against median. The first version compared
+         each point's p99 to the reference p50, and a trace mixing `p128_o64` with `p512_o128`
+         puts p99 three times above p50 from the length spread alone — 1386 ms against
+         4120 ms with no queue anywhere — so it fired at the floor of every sweep. Because all
+         four points replay the *same* trace, the length composition is identical by
+         construction and a tail-to-tail comparison isolates the arrival rate.
+      2. **Saturation is read twice.** The trend test alone called a point stable that was
+         visibly retiring 1.63 req/s against 1.80 offered: over a 111-second run the backlog
+         built slowly enough that the fitted rise reached only 0.30 of the run's p50. The
+         shortfall test — achieved against offered, which in an open-loop replay is fixed by
+         the trace — sees it immediately.
+
+- [x] **Slot-leak detection in the worker.** This wrapper is the only thing posting to its
+      engine, so `/slots` reporting more busy slots than the wrapper has in flight means the
+      engine is holding a slot for work nobody is waiting on. Confirmed over three consecutive
+      probes, then the node reports `degraded` (C-1's `engine_state`, used for what it is
+      for). One campaign logged **304 `launch_slot_` against 301 `release`** and ended with
+      three of four slots stuck `is_processing` at 0% GPU utilization — the node does not fail
+      at that point, it silently loses a quarter of its capacity per leak and keeps producing
+      plausible numbers.
+
+- [x] **A methodology note I paid for.** The first four-point campaign collapsed — 99 timeouts
+      and a 3.7-second client send lag at an offered rate well under capacity — because I ran
+      the test suite on the load host while it was measuring. The re-run on a quiet machine
+      gave 4/4 valid with 198/200 ok at every point. `perf` tests are deselected by default
+      for exactly this reason; the rule has to cover the *whole* suite during a campaign, not
+      just the tests labelled as load measurements.
+
+- [x] **The `engine_error`s have a cause, and it is not the hardware.** `llama-server`
+      returns HTTP 500 with `"The model produced output that does not match the expected
+      Content-only format"`, preceded by
+      `common_chat_peg_parse: unparsed Content-only output: <0xB2>`. A lone UTF-8
+      continuation byte: forced-length generation (`n_predict` + `ignore_eos`) ends
+      mid-character, and this build runs `/completion` output through the chat content
+      parser. **Rate: 2 in 200, reproduced three times.** Not avoidable from the request
+      side — `--no-jinja`, `--reasoning-format none` and `--reasoning off` each leave it
+      unchanged, and Llama-3's BPE has no separate byte-fallback token set to suppress, so
+      any token can end mid-character.
+
+      This is the same signature as the periodic `engine_error`s the Week-2 CPU node
+      produced, which were left unexplained at the time. They are a **response-serialization
+      failure, not a capacity limit** — the work was done and the engine refused to hand it
+      over.
+
+### Blocked, quantified
+
+- [ ] **τ is not estimable at 8B on this hardware, and a longer run will not fix it.**
+      Measured from the Week-2 sustained segments rather than argued:
+
+      | Node class | completions/s | window needed for 5 completions | segment needed for 30 such windows | one request |
+      |---|---:|---:|---:|---:|
+      | `gtx1650ti_ngl20_p4_q4km_llama3_8b` | 0.230 | 21.7 s | 651 s | 18.1 s |
+      | `cpu_ngl0_p4_q4km_llama3_8b` | 0.247 | 20.3 s | 608 s | 15.7 s |
+
+      The ngl20 node's ACF says **τ < 6 s**, while the smallest window that node can produce
+      is ~21.7 s and its resolution floor — one request duration — is 18.1 s. τ is smaller
+      than the smallest thing the instrument can see, by a factor of about three. Both floors
+      scale with the **completion rate**, not with segment length, so more minutes do not
+      help.
+
+      Consequence: **no C-3 snapshot exists for either 8B node class**, because C-3 requires
+      `autocorr_time_s > 0` and inventing one is the only genuinely unacceptable outcome.
+      That in turn blocks the 8B admissible set (there is nothing to intersect) and leaves
+      Week 4's DES with no 8B parameterization. Three ways forward, and the choice affects
+      Aditya's loader, so it is **not mine to make alone**:
+      1. **Emit a censored snapshot** — `autocorr_time_s` set to the resolution floor with an
+         explicit marker in `stochastic`, published as an *upper bound*. The C-3 schema
+         permits an extra key inside `stochastic` (only the root is
+         `additionalProperties: false`), so this needs no schema change — but it needs
+         `CostModelParser` to carry the marker through and the DES to treat it as a bound.
+      2. **Run the 8B pool at a much higher offered concurrency**, raising the completion
+         rate until the burst floor drops below τ. `--parallel 8` at 8B on a 4 GB card does
+         not fit; this needs the second machine.
+      3. **Report the 8B as characterized without τ**, and carry MPR-1 on the 1B alone.
+
+      My recommendation is (1), because the bound is real information and losing the whole
+      snapshot to preserve one field is a bad trade.
+
+### Needs sign-off — the one thing I changed and could not verify alone
+
+- [ ] **What `validity.dropped_requests` counts.** It counted every request whose final
+      status was not `ok`. I changed it to count only requests the client **never heard back
+      about** (`responding_node` empty: the Dispatch RPC failed, the scheduler refused it, or
+      no `ResponseDelivery` arrived inside the ceiling), because `Validity.reasons()` already
+      describes it that way — *"N request(s) never returned a response"* — and the
+      implementation disagreed with the message.
+
+      The reason it matters now: at 2 engine 500s per 200 requests, **roughly 87% of
+      200-request runs contain at least one**, so under the old rule almost no run is ever
+      valid and an F-23 anchor set cannot be assembled at all. A request the worker served
+      and reported as `timeout`, `oom` or `engine_error` **is a measurement** — it is the
+      cliff F-15 requires be characterized — and counting it as a load-generator fault
+      conflates the instrument with the result.
+
+      **This breaks one existing test**
+      (`tests/test_replay_failure_modes.py::test_a_worker_reported_failure_is_carried_verbatim`),
+      which asserts the old count. I have not touched it. Either the test moves with the
+      definition, or the definition goes back and Week 3's anchors stay blocked on the
+      upstream engine bug — that is a call to make deliberately, not by editing whichever
+      one is more convenient.
 
 ---
 

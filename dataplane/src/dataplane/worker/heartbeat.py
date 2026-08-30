@@ -106,6 +106,26 @@ class HeartbeatEmitter:
     _queue_depth: int = 0
     _emitted: list[Heartbeat] = field(default_factory=list)
 
+    def start_run(self, run_id: str) -> None:
+        """Point the stream at a new run **without restarting the sequence**.
+
+        `seq` is monotonic per *node*, not per run (C-1): the scheduler finds a gap by
+        finding a hole in it, and a counter that restarted between runs would look like the
+        largest gap of the run.
+
+        What does reset is the run-scoped state — the tok/s EWMA and the queue depth —
+        because carrying the previous run's throughput into the first heartbeat of the next
+        one reports a rate this run never ran at.
+
+        This exists instead of building a fresh emitter per run, and that is the whole
+        point: the beating task holds a reference to *this object*, so replacing it would
+        leave the heartbeat stream reporting a run that had ended while the queue depth the
+        request path updates went somewhere nobody was reading.
+        """
+        self.run_id = run_id
+        self._tok_s = 0.0
+        self._queue_depth = 0
+
     def observe_completion(self, result_tokens_per_s: float | None) -> None:
         """Fold one completed request's decode rate into the EWMA.
 

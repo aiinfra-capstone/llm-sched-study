@@ -27,10 +27,14 @@ tail statistics the study is about.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from dataplane.calibration import cost_model
+from dataplane.calibration.cost_model import Observation
 
 __all__ = [
     "ANCHOR_ROOT",
@@ -41,7 +45,10 @@ __all__ = [
     "cliff_from_observations",
     "determine",
     "load_anchors",
+    "load_observations",
+    "measured_extent",
     "node_limit_from_snapshot",
+    "pool_envelope",
     "summary",
 ]
 
@@ -56,9 +63,13 @@ BUCKET_LADDER: tuple[tuple[int, int], ...] = (
     (2048, 256),
 )
 
-# Where F-23's validation anchors live. One directory per run, each holding the manifest
-# the harness wrote.
-ANCHOR_ROOT = Path("runs/anchors")
+# Where F-23's validation anchors live: one directory per run, each holding the manifest the
+# harness wrote. Resolved against the repository root rather than the working directory,
+# because a relative default fails in the one way that is hardest to notice — `load_anchors`
+# would return an empty list from anywhere but the repo root, and an empty list reads as
+# "no anchors have been collected" rather than "you are in the wrong directory". The test
+# suite runs from `dataplane/`, which is exactly that case.
+ANCHOR_ROOT = Path(__file__).resolve().parents[4] / "runs" / "anchors"
 
 
 @dataclass(frozen=True)
@@ -291,3 +302,160 @@ def cliff_from_observations(observations: list[Any], *, node_class: str) -> Clif
         first_failing_prompt=min((o.prompt_len for o in failed), default=None),
         first_failing_output=min((o.output_len for o in failed), default=None),
     )
+
+
+def load_observations(run_dir: str | Path) -> list[Observation]:
+    """Read a calibration run's raw samples back, failures included.
+
+    `observations.jsonl` carries a `segment` field the `Observation` dataclass has no slot
+    for — it is the campaign's own bookkeeping, not part of a sample — so unknown keys are
+    dropped rather than passed through. Dropping them here keeps the cliff computation
+    working when the campaign learns to record something new about a segment.
+    """
+    fields = {f.name for f in dataclasses.fields(Observation)}
+    path = Path(run_dir) / "observations.jsonl"
+    return [
+        Observation(**{k: v for k, v in json.loads(line).items() if k in fields})
+        for line in path.read_text().splitlines()
+        if line.strip()
+    ]
+
+
+def measured_extent(observations: list[Observation]) -> dict[str, int]:
+    """The longest prompt and output this node actually served, successfully.
+
+    This is the honesty check on an envelope, and it exists because a bucket is named by
+    its **ceiling** and sampled in its **interior**. The `(513, 2048)` bucket admitted on
+    the strength of samples at `prompt_len=1024` is a claim about 2048 that nothing in the
+    campaign tested. The envelope still reports the ceiling — that is what C-2's header
+    and the trace generator consume — but `evidence` reports what was measured, and when
+    the two differ the difference is printed rather than left for someone to notice.
+    """
+    ok = [o for o in observations if o.status == "ok"]
+    return {
+        "max_prompt_measured": max((o.prompt_len for o in ok), default=0),
+        "max_output_measured": max((o.output_len for o in ok), default=0),
+        "n_ok": len(ok),
+        "n_failed": len(observations) - len(ok),
+    }
+
+
+def pool_envelope(run_dirs: list[Path], *, timeout_ceiling_ms: int | None = None) -> dict[str, Any]:
+    """F-13 end to end: calibration runs in, the pool's admissible set out.
+
+    Each run directory contributes its **latest** C-3 snapshot. Latest rather than a merge
+    of the series, because the snapshots are a time-ordered history of one node under
+    drift (F-8) and averaging them would produce an envelope no snapshot ever claimed —
+    the point of the series is that the node is not the same node at t=0 and t=300.
+
+    Refuses to intersect across models for the same reason `rrange` refuses to divide
+    across them (F-9): the pool holds engine, quantization and model constant, so an
+    envelope spanning two models describes no pool that this study can run.
+    """
+    if not run_dirs:
+        raise ValueError(
+            "the admissible set is an intersection over the pool; got 0 calibration runs"
+        )
+    reports = [json.loads((d / "campaign.json").read_text()) for d in run_dirs]
+    models = {r.get("model", "unspecified") for r in reports}
+    if len(models) > 1:
+        raise ValueError(
+            f"calibration runs span {len(models)} models ({sorted(models)}); F-9 holds the "
+            "model constant across the pool, so intersecting their envelopes would describe "
+            "a pool that cannot exist. Determine one admissible set per model"
+        )
+
+    envelopes: list[dict[str, Any]] = []
+    evidence: list[dict[str, Any]] = []
+    cliffs: list[dict[str, Any]] = []
+    for run_dir, report in zip(run_dirs, reports, strict=True):
+        series = cost_model.load_series(run_dir / "snapshots")
+        if not series:
+            raise ValueError(
+                f"{run_dir} has no C-3 snapshots, so it states no service times and cannot "
+                "contribute an envelope — re-run the campaign for that node class"
+            )
+        snapshot = series[-1]
+        ceiling = int(snapshot["admissibility"]["timeout_ceiling_ms"])
+        envelopes.append(node_limit_from_snapshot(snapshot, ceiling))
+
+        observations = load_observations(run_dir)
+        node_class = report["node_class"]
+        evidence.append({"node_class": node_class, **measured_extent(observations)})
+        cliffs.append(cliff_from_observations(observations, node_class=node_class).to_dict())
+
+    envelope = determine(envelopes, timeout_ceiling_ms=timeout_ceiling_ms)
+    envelope["model"] = min(models)
+    envelope["buckets"] = buckets_within(envelope)
+    envelope["evidence"] = evidence
+    envelope["cliffs"] = cliffs
+    envelope["unmeasured_ceiling"] = [
+        {
+            "node_class": e["node_class"],
+            "claimed_prompt": envelope["max_prompt"],
+            "measured_prompt": e["max_prompt_measured"],
+        }
+        for e in evidence
+        if e["max_prompt_measured"] < envelope["max_prompt"]
+    ]
+    return envelope
+
+
+def main(argv: list[str] | None = None) -> int:
+    import argparse
+
+    ap = argparse.ArgumentParser(
+        description="F-13/F-15 — the pool's admissible set, and the cliff outside it"
+    )
+    ap.add_argument(
+        "root",
+        type=Path,
+        help="directory of calibration runs; every campaign.json under it is one pool node",
+    )
+    ap.add_argument(
+        "--ceiling-ms",
+        type=int,
+        help="override the timeout ceiling; default is the tightest one in the pool",
+    )
+    ap.add_argument("--out", type=Path, help="write the envelope as JSON here as well as printing")
+    args = ap.parse_args(argv)
+
+    run_dirs = sorted(p.parent for p in args.root.rglob("campaign.json"))
+    if not run_dirs:
+        raise SystemExit(
+            f"no campaign.json under {args.root} — the admissible set is measured, not "
+            "assumed; run the calibration campaign first"
+        )
+
+    envelope = pool_envelope(run_dirs, timeout_ceiling_ms=args.ceiling_ms)
+    print(f"model: {envelope['model']}")
+    print(summary(envelope))
+    print(f"trace buckets inside it: {', '.join(envelope['buckets']) or '(none)'}")
+    for node in envelope["per_node"]:
+        print(
+            f"  {node['node_class']:42} prompt<={node['max_prompt']:<5} "
+            f"output<={node['max_output']:<5} worst p95 {node['worst_p95_ms']:.0f} ms "
+            f"at concurrency {node['limiting_concurrency']}"
+        )
+    for gap in envelope["unmeasured_ceiling"]:
+        print(
+            f"  NOTE: {gap['node_class']} admits prompts to {gap['claimed_prompt']} on "
+            f"samples that reach only {gap['measured_prompt']} — the bucket ceiling is "
+            "claimed, not measured"
+        )
+    for cliff in envelope["cliffs"]:
+        if cliff["n_failed"]:
+            print(
+                f"  CLIFF: {cliff['node_class']} failed {cliff['n_failed']}/"
+                f"{cliff['n_total']} ({cliff['failure_rate']:.1%}) "
+                f"{cliff['failures_by_status']}; shortest failing request "
+                f"{cliff['first_failing_prompt']}p/{cliff['first_failing_output']}o"
+            )
+    if args.out:
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        args.out.write_text(json.dumps(envelope, indent=2) + "\n")
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover - module entry point
+    raise SystemExit(main())

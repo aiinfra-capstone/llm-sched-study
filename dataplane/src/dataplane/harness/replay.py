@@ -93,6 +93,7 @@ async def _fire(
     prompt: list[int],
     target_ns: int,
     t0: int,
+    intended_offset_s: float,
     run_id: str,
     stub: sched_grpc.SchedulerStub,
     sink: _DeliverySink,
@@ -107,7 +108,7 @@ async def _fire(
     record: dict[str, Any] = {
         "run_id": run_id,
         "req_id": req_id,
-        "intended_offset_s": rec["arrival_offset_s"],
+        "intended_offset_s": round(intended_offset_s, 6),
         "actual_send_offset_s": round((send_ns - t0) / 1e9, 6),
         "send_lag_ms": round((send_ns - target_ns) / 1e6, 3),
         "e2e_duration_ns": 0,
@@ -172,9 +173,28 @@ async def replay(
     bind: str = "0.0.0.0:0",
     advertise_host: str | None = None,
     warmup_s: float = 0.0,
+    rate_scale: float = 1.0,
     send_lag_threshold_ms: float = manifest_mod.SEND_LAG_THRESHOLD_MS,
 ) -> ReplayResult:
-    """Replay a trace open-loop against a scheduler and return the C-4 records + validity."""
+    """Replay a trace open-loop against a scheduler and return the C-4 records + validity.
+
+    `rate_scale` compresses the arrival timeline: every `arrival_offset_s` is divided by
+    it, so 2.0 replays the same trace at twice the offered load. This is how F-23's three
+    operating points are reached **without three traces**. The alternative — one seeded
+    trace per lambda — would vary the length draw and the burst structure along with the
+    rate, and the difference between two operating points would then be partly a
+    difference in workload. Here the request sequence is byte-identical across points and
+    the only thing that changes is when they arrive, which is what "operating point"
+    is supposed to mean.
+
+    It also keeps `trace_sha256` constant across the anchor set, which is the property
+    `admissible.load_anchors` refuses to run without: comparing a simulator to hardware on
+    two different traces cannot distinguish a simulator error from a workload difference.
+    """
+    if rate_scale <= 0:
+        raise ValueError(
+            f"rate_scale is a multiplier on offered load and must be > 0, got {rate_scale}"
+        )
     header, body = gen_trace.load(trace_path, expect_sha256=expect_sha256)
     timeout_s = header["admissible"]["timeout_ceiling_ms"] / 1000.0
 
@@ -206,7 +226,8 @@ async def replay(
 
             t0 = time.monotonic_ns()
             for rec in body:
-                target_ns = t0 + round(rec["arrival_offset_s"] * 1e9)
+                intended_offset_s = rec["arrival_offset_s"] / rate_scale
+                target_ns = t0 + round(intended_offset_s * 1e9)
                 delay_s = (target_ns - time.monotonic_ns()) / 1e9
                 if delay_s > 0:
                     await asyncio.sleep(delay_s)
@@ -217,6 +238,7 @@ async def replay(
                             prompt=prompts[rec["req_id"]],
                             target_ns=target_ns,
                             t0=t0,
+                            intended_offset_s=intended_offset_s,
                             run_id=run_id,
                             stub=stub,
                             sink=sink,
@@ -235,7 +257,19 @@ async def replay(
     validity = manifest_mod.Validity(
         max_send_lag_ms=max((r["send_lag_ms"] for r in windowed), default=0.0),
         send_lag_violations=sum(1 for r in windowed if r["send_lag_ms"] > send_lag_threshold_ms),
-        dropped_requests=sum(1 for r in windowed if r["status"] != "ok"),
+        # A **dropped** request is one this client never heard back about at all: the
+        # Dispatch RPC failed, the scheduler refused it, or no ResponseDelivery arrived
+        # inside the ceiling. `responding_node` is empty in exactly those cases, and it is
+        # the right test rather than `status != "ok"`.
+        #
+        # The difference matters, and getting it wrong made F-15 unimplementable. A request
+        # the worker served and reported as `timeout`, `oom` or `engine_error` **is a
+        # measurement** — it is the cliff, which F-15 requires be characterized as a
+        # standalone observation. Counting those as dropped marks any run that touches the
+        # cliff invalid, so the one thing F-15 asks for could never be analysed. Failures
+        # stay in the C-4 status column and in `admissible.Cliff`, where they are the data;
+        # validity is about whether the load generator did its job.
+        dropped_requests=sum(1 for r in windowed if not r["responding_node"]),
     )
     return ReplayResult(records=records, validity=validity, header=header)
 
@@ -258,6 +292,13 @@ def main() -> int:
     )
     ap.add_argument("--out", type=Path, default=Path("runs"), help="run directory root")
     ap.add_argument("--warmup-s", type=float, default=0.0)
+    ap.add_argument(
+        "--rate-scale",
+        type=float,
+        default=1.0,
+        help="compress the arrival timeline by this factor; 2.0 replays the same trace at "
+        "twice the offered load, and the trace hash stays the same (F-23)",
+    )
     ap.add_argument(
         "--policy",
         default="round_robin",
@@ -293,6 +334,7 @@ def main() -> int:
             bind=args.bind,
             advertise_host=args.advertise,
             warmup_s=args.warmup_s,
+            rate_scale=args.rate_scale,
             send_lag_threshold_ms=args.threshold_ms,
         )
     )
@@ -306,8 +348,10 @@ def main() -> int:
 
     if args.nodes is not None:
         config = {
-            "duration_s": result.header["duration_s"],
+            "duration_s": result.header["duration_s"] / args.rate_scale,
             "warmup_s": args.warmup_s,
+            "rate_scale": args.rate_scale,
+            "lambda": result.header["arrival"].get("lambda_base", 0.0) * args.rate_scale,
             "arrival": result.header["arrival"],
             "length_dist": result.header["length_dist"],
             "gen_seed": result.header["gen_seed"],

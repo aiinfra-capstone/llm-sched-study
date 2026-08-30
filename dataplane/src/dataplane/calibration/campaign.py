@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import dataclasses
 import json
 import time
 from dataclasses import dataclass, field
@@ -46,6 +47,7 @@ import numpy as np
 
 from dataplane.calibration import cost_model as cm
 from dataplane.calibration import stationarity as st
+from dataplane.harness import manifest as manifest_mod
 from dataplane.harness.prompts import materialize
 from dataplane.worker.adapter import ServiceResult, f18_status
 from dataplane.worker.llamacpp import LlamaCppAdapter
@@ -102,10 +104,23 @@ class CampaignConfig:
     seed: int
     snapshot_every_s: float
     snapshot_window_s: float
+    # The config file's own bytes, carried so the report can embed them. C-6 manifests do
+    # this and the campaign report did not, which left F-20 reproducibility resting on a
+    # file someone can edit after the fact — and that is exactly how a sustained-cell change
+    # went unnoticed while a campaign was mid-flight. `None` when a caller built the config
+    # in code rather than loading one; `as_dict()` reconstructs it in that case.
+    raw: dict[str, Any] | None = None
+
+    def as_dict(self) -> dict[str, Any]:
+        """What this campaign was configured with, verbatim where possible."""
+        if self.raw is not None:
+            return self.raw
+        return {f.name: getattr(self, f.name) for f in dataclasses.fields(self) if f.name != "raw"}
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> CampaignConfig:
         return cls(
+            raw=json.loads(json.dumps(d)),
             node_class=d["node_class"],
             model=d["model"],
             host=d["host"],
@@ -412,6 +427,10 @@ def _finish(result: CampaignResult, config: CampaignConfig) -> None:
         "node_class": config.node_class,
         "model": config.model,
         "host": config.host,
+        # F-20: the run is reproducible from the record, not from a path. Same canonical
+        # hash the C-6 manifest uses, so the two artifacts agree on what "same config" means.
+        "config": config.as_dict(),
+        "config_hash": manifest_mod.config_hash(config.as_dict()),
         "f18_status": result.f18,
         "n_grid_samples": len(result.observations),
         "n_sustained_samples": len(result.sustained),

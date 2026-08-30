@@ -1,0 +1,69 @@
+{
+  "max_prompt": 128,
+  "max_output": 64,
+  "timeout_ceiling_ms": 300000,
+  "limiting_node": "cpu_ngl0_p4_q4km_llama3_8b",
+  "per_node": [
+    {
+      "node_class": "cpu_ngl0_p4_q4km_llama3_8b",
+      "max_prompt": 128,
+      "max_output": 64,
+      "limiting_concurrency": 0,
+      "worst_p95_ms": 0.0
+    },
+    {
+      "node_class": "gtx1650ti_ngl20_p4_q4km_llama3_8b",
+      "max_prompt": 512,
+      "max_output": 64,
+      "limiting_concurrency": 0,
+      "worst_p95_ms": 0.0
+    }
+  ],
+  "model": "Meta-Llama-3-8B-Instruct",
+  "buckets": [
+    "p128_o64"
+  ],
+  "evidence": [
+    {
+      "node_class": "cpu_ngl0_p4_q4km_llama3_8b",
+      "max_prompt_measured": 64,
+      "max_output_measured": 48,
+      "n_ok": 628,
+      "n_failed": 0
+    },
+    {
+      "node_class": "gtx1650ti_ngl20_p4_q4km_llama3_8b",
+      "max_prompt_measured": 256,
+      "max_output_measured": 48,
+      "n_ok": 820,
+      "n_failed": 0
+    }
+  ],
+  "cliffs": [
+    {
+      "node_class": "cpu_ngl0_p4_q4km_llama3_8b",
+      "n_total": 628,
+      "n_failed": 0,
+      "failure_rate": 0.0,
+      "failures_by_status": {},
+      "first_failing_prompt": null,
+      "first_failing_output": null
+    },
+    {
+      "node_class": "gtx1650ti_ngl20_p4_q4km_llama3_8b",
+      "n_total": 820,
+      "n_failed": 0,
+      "failure_rate": 0.0,
+      "failures_by_status": {},
+      "first_failing_prompt": null,
+      "first_failing_output": null
+    }
+  ],
+  "unmeasured_ceiling": [
+    {
+      "node_class": "cpu_ngl0_p4_q4km_llama3_8b",
+      "claimed_prompt": 128,
+      "measured_prompt": 64
+    }
+  ]
+}

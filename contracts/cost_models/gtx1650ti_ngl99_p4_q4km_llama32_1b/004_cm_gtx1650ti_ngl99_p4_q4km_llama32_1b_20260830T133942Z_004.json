@@ -1,10 +1,10 @@
 {
   "cost_model_schema": 1,
-  "snapshot_id": "cm_gtx1650ti_ngl99_p4_q4km_llama32_1b_20260830T090559Z_006",
+  "snapshot_id": "cm_gtx1650ti_ngl99_p4_q4km_llama32_1b_20260830T133942Z_004",
   "node_class": "gtx1650ti_ngl99_p4_q4km_llama32_1b",
-  "measured_at_unix": 1788080759,
+  "measured_at_unix": 1788097182,
   "calibration_run_ids": [
-    "cal_gtx1650ti_ngl99_p4_q4km_llama32_1b_1788080339"
+    "cal_gtx1650ti_ngl99_p4_q4km_llama32_1b_1788096882"
   ],
   "form": "lookup_table",
   "entries": [
@@ -18,10 +18,10 @@
         64
       ],
       "concurrency": 1,
-      "service_ms_mean": 311.431,
-      "service_ms_p50": 311.347,
-      "service_ms_p95": 312.225,
-      "tokens_per_s": 151.0007,
+      "service_ms_mean": 310.973,
+      "service_ms_p50": 310.975,
+      "service_ms_p95": 311.373,
+      "tokens_per_s": 151.2323,
       "n_samples": 4
     },
     {
@@ -34,11 +34,11 @@
         64
       ],
       "concurrency": 4,
-      "service_ms_mean": 632.856,
-      "service_ms_p50": 633.339,
-      "service_ms_p95": 798.714,
-      "tokens_per_s": 94.7166,
-      "n_samples": 4
+      "service_ms_mean": 812.95,
+      "service_ms_p50": 812.486,
+      "service_ms_p95": 820.275,
+      "tokens_per_s": 71.5572,
+      "n_samples": 592
     },
     {
       "prompt_bucket": [
@@ -50,10 +50,10 @@
         128
       ],
       "concurrency": 1,
-      "service_ms_mean": 976.879,
-      "service_ms_p50": 978.017,
-      "service_ms_p95": 979.576,
-      "tokens_per_s": 145.8425,
+      "service_ms_mean": 971.643,
+      "service_ms_p50": 972.529,
+      "service_ms_p95": 973.766,
+      "tokens_per_s": 147.029,
       "n_samples": 4
     },
     {
@@ -66,10 +66,10 @@
         128
       ],
       "concurrency": 4,
-      "service_ms_mean": 1732.495,
-      "service_ms_p50": 1732.584,
-      "service_ms_p95": 2140.558,
-      "tokens_per_s": 92.2461,
+      "service_ms_mean": 1720.686,
+      "service_ms_p50": 1720.814,
+      "service_ms_p95": 2123.035,
+      "tokens_per_s": 92.8146,
       "n_samples": 4
     },
     {
@@ -82,10 +82,10 @@
         64
       ],
       "concurrency": 1,
-      "service_ms_mean": 567.451,
-      "service_ms_p50": 567.349,
-      "service_ms_p95": 568.091,
-      "tokens_per_s": 148.3371,
+      "service_ms_mean": 564.475,
+      "service_ms_p50": 563.597,
+      "service_ms_p95": 567.292,
+      "tokens_per_s": 149.0758,
       "n_samples": 4
     },
     {
@@ -98,11 +98,11 @@
         64
       ],
       "concurrency": 4,
-      "service_ms_mean": 1838.393,
-      "service_ms_p50": 1838.258,
-      "service_ms_p95": 1841.444,
-      "tokens_per_s": 70.1064,
-      "n_samples": 264
+      "service_ms_mean": 1387.52,
+      "service_ms_p50": 1387.835,
+      "service_ms_p95": 1798.549,
+      "tokens_per_s": 92.6884,
+      "n_samples": 4
     },
     {
       "prompt_bucket": [
@@ -114,10 +114,10 @@
         128
       ],
       "concurrency": 1,
-      "service_ms_mean": 1240.818,
-      "service_ms_p50": 1240.642,
-      "service_ms_p95": 1243.511,
-      "tokens_per_s": 144.3065,
+      "service_ms_mean": 1240.173,
+      "service_ms_p50": 1240.982,
+      "service_ms_p95": 1241.901,
+      "tokens_per_s": 144.3821,
       "n_samples": 4
     },
     {
@@ -130,17 +130,17 @@
         128
       ],
       "concurrency": 4,
-      "service_ms_mean": 2523.113,
-      "service_ms_p50": 2523.254,
-      "service_ms_p95": 3182.335,
-      "tokens_per_s": 89.7076,
+      "service_ms_mean": 2514.929,
+      "service_ms_p50": 2514.993,
+      "service_ms_p95": 3169.187,
+      "tokens_per_s": 90.0932,
       "n_samples": 4
     }
   ],
   "stochastic": {
     "model": "lognormal_multiplier",
-    "sigma": 0.03472,
-    "autocorr_time_s": 10.0,
+    "sigma": 0.02372,
+    "autocorr_time_s": 3.5,
     "fit_r2": 0.0
   },
   "admissibility": {
@@ -150,7 +150,7 @@
   },
   "provenance": {
     "engine": "llamacpp",
-    "engine_version": "b10569+cuda13.2",
+    "engine_version": "b10569+p1+cuda13.2",
     "quant": "Q4_K_M",
     "gpu": "NVIDIA GeForce GTX 1650 Ti",
     "driver": "580.173.02",

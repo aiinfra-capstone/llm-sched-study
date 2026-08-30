@@ -12,21 +12,30 @@ should require a copy of my machine:
   genuinely a history — which is why each file carries its own `measured_at_unix` and a
   sequenced `snapshot_id`, and why the whole series is committed rather than the last one.
 
-Each directory is one node class. Files sort in measurement order.
+Each directory is one node class; files sort in measurement order. All of it was measured on
+`llama.cpp b10569+p1` — the pinned build plus the `/completion` patch in
+[`patches/`](../../patches), without which about 1 request in 100 came back as an HTTP 500
+and never reached the table.
 
-| Node class | Snapshots | Model | Notes |
-|---|---:|---|---|
-| `gtx1650ti_ngl99_p4_q4km_llama32_1b` | 9 | `Llama-3.2-1B-Instruct` Q4_K_M | `-ngl 99`, `--threads 6`, `--parallel 4`. Grid cells carried forward from the calibration pass; the sustained cell re-fitted on a rolling 60 s window every 30 s. |
+| Node class | Model | `engine_config` | Snapshots | τ | *r²* |
+|---|---|---|---:|---:|---:|
+| `cpu_ngl0_p4_q4km_llama3_8b` | `Meta-Llama-3-8B-Instruct` Q4_K_M | `ngl 0`, `threads 6`, `parallel 4` | 23 | **69.5 s** | **0.989** |
+| `gtx1650ti_ngl20_p4_q4km_llama3_8b` | `Meta-Llama-3-8B-Instruct` Q4_K_M | `ngl 20`, `threads 6`, `parallel 4` | 18 | ≤ 32 s | 0.0 |
+| `gtx1650ti_ngl99_p4_q4km_llama32_1b` | `Llama-3.2-1B-Instruct` Q4_K_M | `ngl 99`, `threads 6`, `parallel 4` | 9 | ≤ 3.5 s | 0.0 |
 
-**The two `Meta-Llama-3-8B-Instruct` node classes are missing, and it is a measurement gap
-rather than an oversight.** C-3 requires `autocorr_time_s > 0`, and τ was not obtained at 8B:
-the node retires about 0.24 requests per second, so a window holding the five completions an
-autocorrelation estimate needs is ~21 s wide, and the Week-2 segments used 6 s and 30 s
-windows — one starved, the other too coarse to hold 30 of them. Writing a τ I did not measure
-is the one outcome worse than the gap, so the campaign wrote its observations, said why, and
-exited non-zero.
+**Read `stochastic.autocorr_time_s` with the `r²` beside it.** Only the CPU class carries a
+fitted τ. On the two GPU classes the ACF shows no decay at all, so the value is the window
+the series was measured with — an *upper bound*, not an estimate, and `fit_r2 = 0.0` is how
+you can tell from the file alone.
 
-The fix is a **shorter sustained cell**, not a longer run: both floors scale with completion
-rate, which is set by service time, so a cell of short requests at full concurrency lowers
-them together. See `docs/week1-freeze-checklist.md` for the arithmetic and the fallback if
-that still does not resolve τ.
+That difference is not an accident of effort. The instrument can only see a correlation time
+longer than five times one request's service time (`bursts_per_window == window_s /
+service_s`, floored at 5), so a node that takes seconds per request cannot resolve a drift of
+seconds. The CPU class takes 9.6 s per request and drifts on a 70 s timescale, which is
+comfortably visible; the 1B class takes 0.81 s and shows nothing above 3.5 s. **The pool's
+non-stationarity lives on the CPU node**, which is the class its heterogeneity is built from.
+
+Grid coverage differs per class and bounds what the admissible set can claim — the CPU class
+was calibrated on one `(prompt, output)` bucket, which is why the 8B pool intersects to
+`prompt ≤ 128, output ≤ 64`. See [`runs/admissible/`](../../runs/admissible) and
+`docs/week1-freeze-checklist.md`.

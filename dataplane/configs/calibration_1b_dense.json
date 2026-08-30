@@ -30,11 +30,11 @@
   "samples_per_cell": 4,
   "warmup_per_cell": 2,
   "sustained": {
-    "prompt_len": 256,
+    "prompt_len": 64,
     "output_len": 32,
     "concurrency": 4,
     "duration_s": 600,
-    "window_s": 10.0
+    "window_s": 3.5
   },
   "snapshot_every_s": 60.0,
   "snapshot_window_s": 120.0,

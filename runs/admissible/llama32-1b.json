@@ -23,14 +23,14 @@
       "node_class": "gtx1650ti_ngl99_p4_q4km_llama32_1b",
       "max_prompt_measured": 256,
       "max_output_measured": 128,
-      "n_ok": 1340,
+      "n_ok": 2996,
       "n_failed": 0
     }
   ],
   "cliffs": [
     {
       "node_class": "gtx1650ti_ngl99_p4_q4km_llama32_1b",
-      "n_total": 1340,
+      "n_total": 2996,
       "n_failed": 0,
       "failure_rate": 0.0,
       "failures_by_status": {},

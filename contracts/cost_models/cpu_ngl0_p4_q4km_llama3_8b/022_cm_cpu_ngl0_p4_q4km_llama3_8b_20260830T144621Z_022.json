@@ -1,0 +1,68 @@
+{
+  "cost_model_schema": 1,
+  "snapshot_id": "cm_cpu_ngl0_p4_q4km_llama3_8b_20260830T144621Z_022",
+  "node_class": "cpu_ngl0_p4_q4km_llama3_8b",
+  "measured_at_unix": 1788101181,
+  "calibration_run_ids": [
+    "cal_cpu_ngl0_p4_q4km_llama3_8b_1788099741"
+  ],
+  "form": "lookup_table",
+  "entries": [
+    {
+      "prompt_bucket": [
+        1,
+        128
+      ],
+      "output_bucket": [
+        1,
+        64
+      ],
+      "concurrency": 1,
+      "service_ms_mean": 7891.885,
+      "service_ms_p50": 7891.885,
+      "service_ms_p95": 7906.388,
+      "tokens_per_s": 7.3355,
+      "n_samples": 2
+    },
+    {
+      "prompt_bucket": [
+        1,
+        128
+      ],
+      "output_bucket": [
+        1,
+        64
+      ],
+      "concurrency": 4,
+      "service_ms_mean": 9881.179,
+      "service_ms_p50": 9886.941,
+      "service_ms_p95": 10211.063,
+      "tokens_per_s": 3.6008,
+      "n_samples": 72
+    }
+  ],
+  "stochastic": {
+    "model": "lognormal_multiplier",
+    "sigma": 0.03956,
+    "autocorr_time_s": 69.4927,
+    "fit_r2": 0.9885
+  },
+  "admissibility": {
+    "max_prompt": 2048,
+    "max_output": 256,
+    "timeout_ceiling_ms": 300000
+  },
+  "provenance": {
+    "engine": "llamacpp",
+    "engine_version": "b10569+p1+cuda13.2",
+    "quant": "Q4_K_M",
+    "gpu": "none",
+    "driver": "580.173.02",
+    "prefix_caching": false,
+    "engine_config": {
+      "ngl": 0,
+      "threads": 6,
+      "parallel": 4
+    }
+  }
+}

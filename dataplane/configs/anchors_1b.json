@@ -29,7 +29,7 @@
   "tag": "anchor1b",
   "out_root": "runs/anchors",
   "cost_model_snapshots": {
-    "gtx1650ti": "cm_gtx1650ti_ngl99_p4_q4km_llama32_1b_20260830T090759Z_008"
+    "gtx1650ti": "cm_gtx1650ti_ngl99_p4_q4km_llama32_1b_20260830T134342Z_008"
   },
   "points": [
     {

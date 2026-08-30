@@ -302,3 +302,42 @@ def test_cli_prints_failures_it_did_not_fit(tmp_path, monkeypatch, capsys) -> No
     monkeypatch.setattr(camp, "LlamaCppAdapter", lambda *a, **k: FakeEngine(fail_every=7))
     camp.main(["--config", str(_write_config(tmp_path)), "--out", str(tmp_path / "runs")])
     assert "failures (not fitted)" in capsys.readouterr().out
+
+
+def test_the_report_carries_the_config_it_ran_not_a_path_to_it(tmp_path, monkeypatch) -> None:
+    """F-20 says a run is reproducible from one config plus a seed. A report that names a
+    *file* leaves that promise resting on something anyone can edit afterwards — which is
+    exactly how a sustained-cell change went unnoticed mid-campaign. C-6 manifests embed the
+    config verbatim; this is the campaign report catching up."""
+    monkeypatch.setattr(camp, "LlamaCppAdapter", lambda *a, **k: FakeEngine())
+    config_path = _write_config(tmp_path)
+    camp.main(["--config", str(config_path), "--out", str(tmp_path / "runs")])
+
+    report = json.loads(next((tmp_path / "runs").rglob("campaign.json")).read_text())
+    on_disk = json.loads(config_path.read_text())
+    assert report["config"] == on_disk
+    assert report["config_hash"] == camp.manifest_mod.config_hash(on_disk)
+
+    # Editing the file afterwards must not change what the report says the run used.
+    on_disk["sustained"]["window_s"] = 999.0
+    config_path.write_text(json.dumps(on_disk))
+    again = json.loads(next((tmp_path / "runs").rglob("campaign.json")).read_text())
+    assert again["config"]["sustained"]["window_s"] != 999.0
+
+
+def test_a_config_built_in_code_still_reports_what_it_ran() -> None:
+    """`from_dict` keeps the file's bytes; a config assembled directly has none to keep, so
+    `as_dict` reconstructs it from the fields rather than reporting nothing."""
+    built = camp.CampaignConfig(
+        node_class="n", model="m", host="h", endpoint="http://x",
+        prompt_edges=[1, 128], output_edges=[1, 64], prompt_lens=[64], output_lens=[32],
+        concurrencies=[1], samples_per_cell=1, warmup_per_cell=0,
+        sustained={"prompt_len": 64, "output_len": 32, "concurrency": 1,
+                   "duration_s": 1.0, "window_s": 0.5},
+        provenance={}, admissibility={}, vocab_size=1000, seed=1,
+        snapshot_every_s=1.0, snapshot_window_s=1.0,
+    )
+    assert built.raw is None
+    d = built.as_dict()
+    assert "raw" not in d
+    assert d["node_class"] == "n" and d["sustained"]["window_s"] == 0.5

@@ -136,8 +136,8 @@ with no slack, not on merit.
       taste, and it is what the cross-environment determinism test would catch.
 - [x] **Synthesizable *R* range — MEASURED, and it is 1.00×.** Two
       `Meta-Llama-3-8B-Instruct` node classes on the one machine I have, both
-      `--parallel 4`, sustained at concurrency 4: `-ngl 20` gives 6.39 decode tok/s and
-      `-ngl 0` gives 3.85. **Configuration alone reaches 1.66×; deployable *R* is 1.00×**,
+      `--parallel 4`, sustained at concurrency 4 **on an identical cell**: `-ngl 20` gives 7.49 decode tok/s and
+      `-ngl 0` gives 3.74. **Configuration alone reaches 2.00×; deployable *R* is 1.00×**,
       because both classes sit on the same physical host and F-9a forbids co-locating
       logical nodes.
 
@@ -150,12 +150,12 @@ with no slack, not on merit.
       1. MPR-2 is the 2×2 decomposition *across the synthesized R range*. With one host
          there is no range, so Week 3's "multi-node pool" needs at least a second physical
          machine on the LAN or it cannot happen at all.
-      2. Even ignoring co-location, 1.66× is narrow — a GTX 1650 Ti holding 20 of 33
+      2. Even ignoring co-location, 2.00× is narrow — a GTX 1650 Ti holding 20 of 33
          layers is not far ahead of the same box's CPU. The 10–100× in the research
          question needs genuinely different machines, not a wider `-ngl` sweep on this one.
 
       The R-range tool refuses to compute a ratio across two *models* (F-9), so the
-      1B class's 70.3 tok/s does not enter this number.
+      1B class's 71.6 tok/s does not enter this number.
 - [ ] **F-9b engine-gap measurement — BLOCKED ON VRAM, needs a decision.**
       F-9b asks for vLLM (AWQ, same model class) on the strongest node against an
       identical replayed trace. The strongest node I have is a GTX 1650 Ti: **4096 MiB
@@ -262,8 +262,9 @@ with no slack, not on merit.
       mid-character, and this build runs `/completion` output through the chat content
       parser. **Rate: 2 in 200, reproduced three times.** Not avoidable from the request
       side — `--no-jinja`, `--reasoning-format none` and `--reasoning off` each leave it
-      unchanged, and Llama-3's BPE has no separate byte-fallback token set to suppress, so
-      any token can end mid-character.
+      unchanged. Llama-3's BPE *does* carry byte tokens — I wrote the opposite here first and
+      it was wrong — so a `logit_bias` could suppress them; it is still not a way out,
+      because truncation on a **lead** byte fails the same parse.
 
       This is the same signature as the periodic `engine_error`s the Week-2 CPU node
       produced, which were left unexplained at the time. They are a **response-serialization
@@ -272,68 +273,97 @@ with no slack, not on merit.
 
 ### Blocked, quantified
 
-- [ ] **τ is not estimable at 8B on this hardware, and a longer run will not fix it.**
-      Measured from the Week-2 sustained segments rather than argued:
+- [x] **τ measured — and the answer is that it lives on the CPU node.** Both corrections I
+      had to make to get here are worth keeping, because each one changed the conclusion.
 
-      | Node class | completions/s | window needed for 5 completions | segment needed for 30 such windows | one request |
-      |---|---:|---:|---:|---:|
-      | `gtx1650ti_ngl20_p4_q4km_llama3_8b` | 0.230 | 21.7 s | 651 s | 18.1 s |
-      | `cpu_ngl0_p4_q4km_llama3_8b` | 0.247 | 20.3 s | 608 s | 15.7 s |
+      **First, the Week-2 reading was junk.** I took the ngl20 node's error — *"the ACF drops
+      to zero within one lag, so tau is shorter than the window it was measured with (6 s)"* —
+      as evidence that τ < 6 s. It was not. That ACF ran on windows holding a third of one
+      burst; an ACF that collapses in one lag is what an empty series produces. Starved, not
+      fast.
 
-      **Correction to what I first wrote here.** I read the ngl20 node's error message — *"the
-      ACF drops to zero within one lag, so tau is shorter than the window it was measured
-      with (6 s)"* — as evidence that τ < 6 s. It is not. At 0.230 completions/s a 6-second
-      window holds **1.38 completions against a floor of 5**, so that ACF was computed on
-      windows that were mostly empty, and an ACF that collapses in one lag is exactly what an
-      empty series produces. The measurement was starved, not fast. `characterize` knows how
-      to say that — `cadence_limited` exists for it — but it raises before it builds the
-      report, so the diagnosis was thrown away and the misleading message is what I got.
+      **Second, I had the floor wrong by a factor of four**, and fixing it collapses the whole
+      thing to one line. `bursts_per_window` is `samples_per_window / batch_size`, and at
+      saturation `samples_per_window = (batch_size / service) × window`, so batch size
+      cancels:
 
-      So the honest statement is that **τ at 8B was not measured**, not that it is small. And
-      the floors scale with the completion rate, which is a function of **service time** — so
-      they move if the sustained cell is made of shorter requests, and the way to a real
-      number is a better-chosen cell rather than a longer run.
+      > **`bursts_per_window == window_s / service_s`** — the five-burst floor means
+      > **`window ≥ 5 × service`**, and τ is only visible if **τ > 5 × service**.
 
-      Consequence: **no C-3 snapshot exists for either 8B node class**, because C-3 requires
-      `autocorr_time_s > 0` and inventing one is the only genuinely unacceptable outcome.
-      That in turn blocks the 8B admissible set (there is nothing to intersect) and leaves
-      Week 4's DES with no 8B parameterization. Three ways forward, and the choice affects
-      Aditya's loader, so it is **not mine to make alone**:
-      1. **Emit a censored snapshot** — `autocorr_time_s` set to the resolution floor with an
-         explicit marker in `stochastic`, published as an *upper bound*. The C-3 schema
-         permits an extra key inside `stochastic` (only the root is
-         `additionalProperties: false`), so this needs no schema change — but it needs
-         `CostModelParser` to carry the marker through and the DES to treat it as a bound.
-      2. **Run the 8B pool at a much higher offered concurrency**, raising the completion
-         rate until the burst floor drops below τ. `--parallel 8` at 8B on a 4 GB card does
-         not fit; this needs the second machine.
-      3. **Report the 8B as characterized without τ**, and carry MPR-1 on the 1B alone.
+      Checked against the one node that produced a report: the 1B ran a 1.80 s cell in a 10 s
+      window and recorded `bursts_per_window: 5.542`; 10 / 1.80 = 5.54. The Week-2 cells put
+      the window *above* τ on every node, so they could not have worked however long they ran.
 
-      My recommendation is (1), because the bound is real information and losing the whole
-      snapshot to preserve one field is a bad trade.
+      **Re-run on the patched engine with cells sized from that rule:**
 
-### Needs sign-off — the one thing I changed and could not verify alone
+      | node class | cell | service | window | bursts | τ | *r²* |
+      |---|---|---:|---:|---:|---:|---:|
+      | `cpu_ngl0` (8B) | p64/o24 c4 | 9.6 s | 48 s | 5.03 ✓ | **69.5 s** | **0.989** |
+      | `gtx1650ti_ngl20` (8B) | p64/o24 c4 | 6.0 s | 32 s | 5.43 ✓ | ≤ 32 s | 0.0 |
+      | `gtx1650ti_ngl99` (1B) | p64/o32 c4 | 0.81 s | 3.5 s | 4.33 ✗ | ≤ 3.5 s | 0.0 |
 
-- [ ] **What `validity.dropped_requests` counts.** It counted every request whose final
-      status was not `ok`. I changed it to count only requests the client **never heard back
-      about** (`responding_node` empty: the Dispatch RPC failed, the scheduler refused it, or
-      no `ResponseDelivery` arrived inside the ceiling), because `Validity.reasons()` already
-      describes it that way — *"N request(s) never returned a response"* — and the
-      implementation disagreed with the message.
+      **MPR-1, with a number in it at last:** on `cpu_ngl0`, τ = 69.5 s (integrated 89.0 s,
+      1/e 72.1 s — three estimators that do not share a failure mode, on a 0.989 fit), and a
+      single calibrated tok/s figure there **understates its own standard error by 1.36×** —
+      16.7 independent windows in 31. The two GPU classes show no decay at any timescale their
+      service time lets them reach.
 
-      The reason it matters now: at 2 engine 500s per 200 requests, **roughly 87% of
-      200-request runs contain at least one**, so under the old rule almost no run is ever
-      valid and an F-23 anchor set cannot be assembled at all. A request the worker served
-      and reported as `timeout`, `oom` or `engine_error` **is a measurement** — it is the
-      cliff F-15 requires be characterized — and counting it as a load-generator fault
-      conflates the instrument with the result.
+      Three things to carry forward rather than bury:
+      1. `tau_resolved` is **false** even for the CPU class, because the bar is
+         τ ≥ 2 × `resolution_floor_s` and that floor is `max(median request, window)` = 48 s.
+         The bar is conservative by construction: the physical confound is one request
+         duration, 9.6 s, and τ is 7.3× that. Report the fit and the bar together.
+      2. The 1B point is `cadence_limited` (4.33 against 5) — real service came out at 0.81 s
+         where the cost table predicted 0.63 s. Its bound holds; its value should not be quoted.
+      3. **H3's staleness axis now has a home.** After Week 2 I wrote that a τ below ~10 s
+         would put "staleness approaching τ" inside any sane heartbeat interval and force the
+         axis to be re-grounded or declared simulator-only. At 70 s on the CPU node it is a
+         real regime on real hardware — and it is the class the pool's heterogeneity is built
+         from, which is the useful way round.
 
-      **This breaks one existing test**
-      (`tests/test_replay_failure_modes.py::test_a_worker_reported_failure_is_carried_verbatim`),
-      which asserts the old count. I have not touched it. Either the test moves with the
-      definition, or the definition goes back and Week 3's anchors stay blocked on the
-      upstream engine bug — that is a call to make deliberately, not by editing whichever
-      one is more convenient.
+- [x] **The 8B now has C-3 snapshots — 18 and 23 of them.** This was the Week-4 blocker: the
+      DES had nothing to parameterize the headline model from. The censored-snapshot proposal
+      is withdrawn for the CPU class, which has a real τ; the ngl20 class carries the window as
+      an upper bound with `fit_r2: 0.0` beside it, which is legible from the file alone and
+      needs no schema change.
+
+- [x] **R was biased low by 20%, and the cause was a cell mismatch.** Week 2 measured the fast
+      class (`ngl20`) at p256 and the slow one (`cpu`) at p64. Decode rate falls as the KV
+      context grows, so the fast node carried a handicap the slow one did not, and the ratio
+      came out **1.66×**. Both classes on one cell now: **2.00×** configured, 1.00× deployable.
+
+      The general lesson is worth stating because it will recur: **R and τ want different
+      cells.** R needs both classes on an identical operating point; τ needs the shortest cell
+      the node allows. Forcing one sustained segment to serve both is what produced a biased
+      ratio *and* a censored τ. If they conflict again, run two segments.
+
+### Resolved without a sign-off — because the cause turned out to be fixable
+
+- [x] **What `validity.dropped_requests` counts — unchanged, and that is the right answer.**
+      I had loosened it to "requests the client never heard back about", because at 2 engine
+      500s per 200 requests roughly 87% of runs contained one and under the strict rule no
+      anchor set could ever be assembled. That was treating the symptom, and it cost a test
+      that was correct.
+
+      The 500 was a bug in llama.cpp's `/completion` path, not a fact about the workload
+      ([`patches/`](../patches)). With it fixed the anchor campaign returns **200/200 ok at
+      every operating point**, and the strict rule is the one that belongs: a replay runs
+      *inside* the admissible set, where by construction nothing should fail, so a failure
+      means the run is not measuring what it claims. The F-15 cliff is characterized from
+      calibration observations, which deliberately probe *outside* that set, and does not
+      need replay runs to be allowed to fail.
+
+      Reverted. `tests/test_replay_failure_modes.py::test_a_worker_reported_failure_is_carried_verbatim`
+      is green untouched, and so is the rest of the suite. **The general lesson: when a
+      guard starts failing constantly, check whether the guard is wrong before you widen
+      it.** I nearly widened it.
+
+- [ ] **F-20 gap worth closing: `campaign.json` does not embed the config it ran.** C-6
+      manifests carry `config` verbatim precisely so a run can be reproduced from the record
+      rather than from a file someone may since have edited. The calibration report does not,
+      so reproducibility rides on a mutable path — and that is exactly how the sustained-cell
+      drift went unnoticed while a campaign was mid-flight. Small change; it should carry the
+      config and a hash of it, the way the manifest does.
 
 ---
 

@@ -352,32 +352,71 @@ Both floors are now enforced by the instrument rather than left to judgement.
 unless τ clears both. A run that cannot support a τ says so and keeps its samples instead
 of throwing an exception and losing ten minutes of GPU time.
 
-With those satisfied — 1308 samples, 22 completions and 5.5 slot turnovers per window —
-the answer for the one node class I have measured properly is a **negative result**:
+With those floors enforced, the answer is not one number. It is three readings that only
+mean anything together, because the limit is the **instrument's** and it lands in a
+different place on every node.
 
-| | `gtx1650ti_ngl99_p4_q4km_llama32_1b`, `--parallel 4`, saturated, 600 s |
+**The floor, stated once.** `bursts_per_window` is `samples_per_window / batch_size`, and at
+saturation `samples_per_window = (batch_size / service) × window`, so the batch size
+cancels:
+
+> `bursts_per_window == window_s / service_s` — the five-burst floor means
+> **`window ≥ 5 × service`**, and **τ is only visible if τ > 5 × service**. Concurrency does
+> not enter it.
+
+A node that takes seconds per request cannot see a correlation time of seconds. That is not
+a statement about this study's patience; it is arithmetic, and it is why the Week-2 cells —
+which put the window *above* τ on every node — could not have worked however long they ran.
+
+| node class | sustained cell | service | window | τ | *r²* | reading |
+|---|---|---:|---:|---:|---:|---|
+| `cpu_ngl0_p4_q4km_llama3_8b` | p64/o24 c4 | 9.6 s | 48 s | **69.5 s** | **0.989** | real drift, cleanly fitted |
+| `gtx1650ti_ngl20_p4_q4km_llama3_8b` | p64/o24 c4 | 6.0 s | 32 s | ≤ 32 s | 0.0 | no structure |
+| `gtx1650ti_ngl99_p4_q4km_llama32_1b` | p64/o32 c4 | 0.81 s | 3.5 s | ≤ 3.5 s | 0.0 | no structure* |
+
+**The CPU node is MPR-1.** It is the only class in the pool that drifts, and it drifts
+cleanly:
+
+| | `cpu_ngl0_p4_q4km_llama3_8b`, `--parallel 4`, saturated, 1500 s |
 |---|---|
-| τ | **not resolvable; ≤ 10 s** (`tau_censored`, ACF shows no decay, *r²* = 0) |
-| Variance envelope | p05–p95 = **64.0 – 76.8 tok/s**, band **1.20×**, CV **0.077** |
-| Standard-error inflation | **1.00×** — 59 independent windows in 59 |
-| Median decode throughput | 70.3 tok/s |
-| σ (lognormal multiplier, F-22) | 0.035 |
+| τ | **69.5 s** — integrated **89.0 s**, 1/e crossing **72.1 s**, *r²* = **0.989** |
+| Variance envelope | p05–p95 = **9.65 – 10.41 tok/s**, band **1.08×**, CV **0.027** |
+| Standard-error inflation | **1.36×** — only 16.7 independent windows in 31 |
+| Median decode throughput | 3.74 tok/s |
+| σ (lognormal multiplier, F-22) | 0.040 |
 
-This is not a quiet machine: over the campaign the GPU went from 48 °C to a peak of 79 °C
-and its SM clock ranged 300–1905 MHz, so it is thermally throttling exactly as the
-motivation predicts. The throughput variance is real — a 20 % band — but at every timescale
-this measurement can see it is **white**, not drifting. The claim MPR-1 was set up to make
-is that a single calibrated tok/s figure is a moving average over a non-stationary process;
-on this node class the honest report is that the naive standard error of that figure is not
-inflated at all.
+Three estimators that do not share a failure mode — the exponential fit, Sokal's integrated
+time, and the 1/e crossing — land within 30% of each other on a 0.99 fit. So the MPR-1
+sentence finally has a number in it:
 
-Two caveats that belong next to the number rather than in a footnote. This is **one node
-class on one machine over one ten-minute segment** — it is not a claim about consumer GPUs
-in general. And it has a direct consequence for H3: if τ on this hardware sits below ~10 s,
-then "estimate staleness approaching τ" is a regime any sane heartbeat interval is already
-inside, so H3's staleness axis has to be re-grounded on hardware that actually drifts, or
-stated as a simulator-only result. That is a Week-4/5 conversation and it is better to have
-it now than after the sweeps.
+> **A single calibrated tok/s figure on the CPU node understates its own standard error by
+> 1.36×.** Ten minutes of samples buy you sixteen independent observations, not thirty-one.
+
+And the two GPU classes say the opposite, at every timescale their own service time lets
+them look: *r²* = 0, τ pinned to the window, no decay. The pool is not uniformly
+non-stationary — **the drift lives on the CPU node**, which is exactly the class the pool's
+heterogeneity is built out of.
+
+Three caveats belong next to those numbers rather than in a footnote.
+
+**The CPU τ is fitted, not "resolved".** `tau_resolved` is false, because the bar is
+τ ≥ 2 × `resolution_floor_s` and that floor is `max(median request, window)` = 48 s, so it
+wants 96 s and got 69.5. That bar is deliberately conservative: the *physical* confound is
+one request duration, 9.6 s, and τ is **7.3×** that. The bar compares against the window,
+which is five times stricter than the effect it guards against. Both numbers are reported
+and neither should be quoted alone.
+
+**\*The 1B point is cadence-limited** (4.33 bursts per window against a floor of 5). Real
+service came out at 0.81 s where I had predicted 0.63 s from the cost table, so the window
+should have been 4.0 s and I ran 3.5. The bound holds; the exact figure should not be
+quoted.
+
+**H3 now has somewhere to live.** After Week 2 I wrote that if τ sits below ~10 s then
+"staleness approaching τ" is a regime any sane heartbeat interval is already inside, and
+H3's staleness axis would have to be re-grounded or declared simulator-only. That worry is
+answered: on the CPU node τ is 70 s, comfortably above any heartbeat interval, so the
+staleness sweep has a real target on real hardware. It is the GPU classes where the axis is
+degenerate.
 
 ### The synthesizable *R* range — and the machine I do not have
 
@@ -388,16 +427,16 @@ classes of `Meta-Llama-3-8B-Instruct`, both `--parallel 4`, sustained at concurr
 
 | Node class | `-ngl` | Decode tok/s |
 |---|---:|---:|
-| `gtx1650ti_ngl20_p4_q4km_llama3_8b` | 20 | 6.39 |
-| `cpu_ngl0_p4_q4km_llama3_8b` | 0 | 3.85 |
+| `gtx1650ti_ngl20_p4_q4km_llama3_8b` | 20 | 7.49 |
+| `cpu_ngl0_p4_q4km_llama3_8b` | 0 | 3.74 |
 
 ```
 R in [1.00, 1.00] deployable across 1 host(s) from 2 node class(es);
-configuration alone reaches 1.66 but F-9a forbids co-locating the extremes on one host
+configuration alone reaches 2.00 but F-9a forbids co-locating the extremes on one host
 ```
 
 Two numbers, and conflating them would overstate the result badly. **Configuration alone
-reaches 1.66×.** **Deployable *R* is 1.00×** — because both classes were measured on the
+reaches 2.00×.** **Deployable *R* is 1.00×** — because both classes were measured on the
 same physical machine, and F-9a forbids running two logical nodes on one host, since they
 would contend for PCIe, memory bandwidth and cache and reintroduce as contention the exact
 confound per-node throttling exists to remove.
@@ -407,13 +446,13 @@ heterogeneity at all**, and the fix is not code — it is a second machine. MPR-
 decomposition *across the synthesized R range*, so it stays out of reach until the pool has
 at least two hosts. That is worth knowing in Week 2 rather than Week 4.
 
-Also worth stating: 1.66× is a narrow span even ignoring co-location, because a GTX 1650 Ti
+Also worth stating: 2.00× is a narrow span even ignoring co-location, because a GTX 1650 Ti
 holding 20 of 33 layers is not far ahead of the same box's CPU. Reaching the 10–100× the
 research question is about will need genuinely different machines, not just a wider `-ngl`
 sweep on this one.
 
-The `Llama-3.2-1B-Instruct` class reaches 70.3 tok/s on the same card at `-ngl 99`, which
-is roughly 18× the CPU 8B — but that is **not an *R***, and the tool refuses to compute it
+The `Llama-3.2-1B-Instruct` class reaches 71.6 tok/s on the same card at `-ngl 99`, which
+is roughly 19× the CPU 8B — but that is **not an *R***, and the tool refuses to compute it
 as one:
 
 ```
@@ -492,13 +531,27 @@ study's range. `uv run admissible` computes it from the C-3 snapshots the calibr
 campaign already wrote, so the boundary is measured rather than assumed:
 
 ```
+$ uv run admissible runs/calibration/llama3-8b --out runs/admissible/llama3-8b.json
+model: Meta-Llama-3-8B-Instruct
+admissible set: prompt <= 128, output <= 64 at a 300000 ms ceiling
+                                            (limited by cpu_ngl0_p4_q4km_llama3_8b)
+trace buckets inside it: p128_o64
+  cpu_ngl0_p4_q4km_llama3_8b          prompt<=128  output<=64
+  gtx1650ti_ngl20_p4_q4km_llama3_8b   prompt<=512  output<=64
+  NOTE: cpu_ngl0_p4_q4km_llama3_8b admits prompts to 128 on samples that reach only 64 —
+        the bucket ceiling is claimed, not measured
+```
+
+Those two rows are F-13 doing the thing it exists for. The GPU class would serve prompts to
+512; the CPU class would not, and **the CPU class is what the pool's range becomes** —
+`limited by` names it so the shrunk range travels with the result instead of being applied
+silently. The 1B pool, having one class, intersects to that class:
+
+```
 $ uv run admissible runs/calibration/llama32-1b --out runs/admissible/llama32-1b.json
 model: Llama-3.2-1B-Instruct
 admissible set: prompt <= 512, output <= 128 at a 60000 ms ceiling
 trace buckets inside it: p128_o64, p256_o64, p512_o128
-  gtx1650ti_ngl99_p4_q4km_llama32_1b   prompt<=512  output<=128  worst p95 0 ms at concurrency 0
-  NOTE: gtx1650ti_ngl99_p4_q4km_llama32_1b admits prompts to 512 on samples that reach
-        only 256 — the bucket ceiling is claimed, not measured
 ```
 
 Three things in that output are deliberate.
@@ -548,10 +601,10 @@ the trace is also what makes `trace_sha256` identical across the set, which is t
 
 ```
 $ uv run anchors configs/anchors_1b.json
-     quiet  x0.80  lambda=0.72/s  198/200 ok  max send lag 6.6 ms  VALID
-     light  x1.15  lambda=1.03/s  198/200 ok  max send lag 3.7 ms  VALID
-       mid  x1.45  lambda=1.30/s  198/200 ok  max send lag 2.8 ms  VALID
-     heavy  x2.20  lambda=1.98/s  198/200 ok  max send lag 2.7 ms  VALID
+     quiet  x0.80  lambda=0.72/s  200/200 ok  max send lag 26.1 ms  VALID
+     light  x1.15  lambda=1.03/s  200/200 ok  max send lag 12.8 ms  VALID
+       mid  x1.45  lambda=1.30/s  200/200 ok  max send lag  9.3 ms  VALID
+     heavy  x2.20  lambda=1.98/s  200/200 ok  max send lag  5.7 ms  VALID
 
 4/4 anchors valid, written under runs/anchors
 ```
@@ -589,9 +642,10 @@ failure, not a capacity limit**, and it is the same signature as the periodic
 `engine_error`s the Week-2 CPU node produced and that I could not explain at the time.
 
 It is not avoidable from my side. `--no-jinja`, `--reasoning-format none` and
-`--reasoning off` each leave the rate unchanged at 2 in 200, and Llama-3's BPE has no
-separate byte-fallback token set to suppress with a `logit_bias` — any token can end
-mid-character. So it is reported: the count is in every anchor's summary line, the status is
+`--reasoning off` each leave the rate unchanged at 2 in 200, and Llama-3's BPE *does*
+carry byte tokens, so a `logit_bias` could suppress them — but that is not a way out
+either: truncation on a **lead** byte fails the same parse, and any token can end mid-
+character. So it is reported: the count is in every anchor's summary line, the status is
 in the C-4 log, and the rate is stated wherever an anchor is used.
 
 #### The load band
@@ -604,22 +658,28 @@ same runs:
 
 ```
 $ uv run load-band runs/anchors
-load band: 1.03–1.30 req/s (reference p50 1386 ms, p99 4120 ms); one-node pool, so this is
+load band: 1.03–1.30 req/s (reference p50 1367 ms, p99 4106 ms); one-node pool, so this is
 the band's physical bound only — policy separation is not demonstrated by these runs
-     quiet  lambda= 0.72/s  n=194  p50= 1385.6  p95= 3713.1  p99= 4120.3  drift=   -64.8 ms
-     light  lambda= 1.03/s  n=191  p50= 1981.8  p95= 4524.7  p99= 5478.4  drift=  -103.2 ms
-       mid  lambda= 1.30/s  n=188  p50= 2979.7  p95= 5939.4  p99= 7089.1  drift=  -209.9 ms
-     heavy  lambda= 1.98/s  n=178  p50=13793.6  p95=23601.3  p99=24674.0  drift=+12458.8 ms
-                                                          [retired only 1.57/s]
+     quiet  lambda= 0.72/s  n=196  p50= 1366.6  p95= 3739.0  p99= 4105.9  drift=  -115.8 ms
+     light  lambda= 1.03/s  n=193  p50= 1981.2  p95= 4534.4  p99= 5476.0  drift=  -128.0 ms
+       mid  lambda= 1.30/s  n=190  p50= 2980.2  p95= 5974.2  p99= 7115.0  drift=  -312.0 ms
+     heavy  lambda= 1.98/s  n=180  p50=14137.1  p95=23985.7  p99=25068.3  drift=+12829.6 ms
+                                                          [retired only 1.58/s]
 ```
 
 The band reads cleanly off those four rows. At 0.72 req/s the node is the reference — its
 tail is the length spread and nothing else. At 1.03 the tail is a third worse than the
 reference's with the *same* requests in it, which is queueing. At 1.30 it is still stable,
 its latency still flat across the run. At 1.98 both saturation readings fire at once: the
-fitted latency rise is +12.5 s against a p50 of 13.8 s, and the pool retired 1.57 req/s
+fitted latency rise is +12.8 s against a p50 of 14.1 s, and the pool retired 1.58 req/s
 against 1.98 offered. So the pool's ceiling is about 1.6 req/s and the band sits just under
 it.
+
+Worth noting what did **not** move. These are the numbers from the patched engine, and the
+band lands in the same place as the pre-patch sweep did — 1.03–1.30 either way. The patch
+recovered the ~1% of requests the engine had been dropping without changing the queueing
+physics, which is what a fix to a serialization bug should look like. What changed is the
+`ok` column: 198/200 on every point before, **200/200 on every point now**.
 
 Three rules, stated rather than tuned:
 

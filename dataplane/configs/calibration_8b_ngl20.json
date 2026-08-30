@@ -29,14 +29,14 @@
   "samples_per_cell": 4,
   "warmup_per_cell": 2,
   "sustained": {
-    "prompt_len": 256,
-    "output_len": 48,
+    "prompt_len": 64,
+    "output_len": 24,
     "concurrency": 4,
-    "duration_s": 720,
-    "window_s": 6.0
+    "duration_s": 1200,
+    "window_s": 32.0
   },
   "snapshot_every_s": 60.0,
-  "snapshot_window_s": 120.0,
+  "snapshot_window_s": 180.0,
   "vocab_size": 128000,
   "seed": 20260830,
   "provenance": {

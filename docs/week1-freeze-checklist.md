@@ -280,11 +280,19 @@ with no slack, not on merit.
       | `gtx1650ti_ngl20_p4_q4km_llama3_8b` | 0.230 | 21.7 s | 651 s | 18.1 s |
       | `cpu_ngl0_p4_q4km_llama3_8b` | 0.247 | 20.3 s | 608 s | 15.7 s |
 
-      The ngl20 node's ACF says **τ < 6 s**, while the smallest window that node can produce
-      is ~21.7 s and its resolution floor — one request duration — is 18.1 s. τ is smaller
-      than the smallest thing the instrument can see, by a factor of about three. Both floors
-      scale with the **completion rate**, not with segment length, so more minutes do not
-      help.
+      **Correction to what I first wrote here.** I read the ngl20 node's error message — *"the
+      ACF drops to zero within one lag, so tau is shorter than the window it was measured
+      with (6 s)"* — as evidence that τ < 6 s. It is not. At 0.230 completions/s a 6-second
+      window holds **1.38 completions against a floor of 5**, so that ACF was computed on
+      windows that were mostly empty, and an ACF that collapses in one lag is exactly what an
+      empty series produces. The measurement was starved, not fast. `characterize` knows how
+      to say that — `cadence_limited` exists for it — but it raises before it builds the
+      report, so the diagnosis was thrown away and the misleading message is what I got.
+
+      So the honest statement is that **τ at 8B was not measured**, not that it is small. And
+      the floors scale with the completion rate, which is a function of **service time** — so
+      they move if the sustained cell is made of shorter requests, and the way to a real
+      number is a better-chosen cell rather than a longer run.
 
       Consequence: **no C-3 snapshot exists for either 8B node class**, because C-3 requires
       `autocorr_time_s > 0` and inventing one is the only genuinely unacceptable outcome.

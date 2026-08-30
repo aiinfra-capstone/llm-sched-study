@@ -209,6 +209,11 @@ def generate(config: dict[str, Any], path: str | Path) -> str:
     weights = np.asarray(config["length_dist"]["weights"], dtype=float)
     lengths = [_parse_bucket(b) for b in buckets]
     for bucket_id, (p_len, o_len) in zip(buckets, lengths, strict=True):
+        if p_len < 1 or o_len < 1:
+            # C-2 puts a minimum of 1 on both, so a zero-length bucket writes a trace that
+            # hashes, replays, and then fails `contracts/check.py` — after the run. It is
+            # also meaningless: a zero-token request measures nothing but RPC overhead.
+            raise ValueError(f"bucket {bucket_id!r} has a zero length; both must be >= 1")
         if p_len > admissible["max_prompt"] or o_len > admissible["max_output"]:
             raise ValueError(f"bucket {bucket_id!r} exceeds the F-13 admissible envelope")
 

@@ -182,17 +182,21 @@ async def replay(
     # the most common cause of send-lag drift at high lambda.
     prompts = materialize_all(body, header["vocab_size"])
 
+    # Resolved before anything is bound: raising after `server.start()` would leave a
+    # started server with nothing to stop it, and the process hangs on exit instead of
+    # printing the reason it refused to run.
+    host = advertise_host or bind.rsplit(":", 1)[0]
+    if host in ("0.0.0.0", ""):
+        raise ValueError(
+            "cannot advertise 0.0.0.0 to a worker on another host; "
+            "pass --advertise <this host's LAN address>"
+        )
+
     sink = _DeliverySink()
     server = grpc.aio.server()
     sched_grpc.add_ClientServicer_to_server(sink, server)
     port = server.add_insecure_port(bind)
     await server.start()
-
-    host = advertise_host or bind.rsplit(":", 1)[0]
-    if host in ("0.0.0.0", ""):
-        raise ValueError(
-            "cannot advertise 0.0.0.0 to a worker on another host; pass --advertise <this host's LAN address>"
-        )
     client_endpoint = f"{host}:{port}"
 
     try:
@@ -274,6 +278,12 @@ def main() -> int:
     )
     args = ap.parse_args()
 
+    # Checked before the run, not after it: a C-6 manifest must carry the trace's
+    # sha256 (the schema pins it to 64 hex characters), and discovering that at the end
+    # of a ten-minute replay costs the run.
+    if args.nodes is not None and not args.sha256:
+        ap.error("--nodes writes a manifest, which must carry the trace hash; pass --sha256")
+
     result = asyncio.run(
         replay(
             trace_path=args.trace,
@@ -306,7 +316,7 @@ def main() -> int:
             run_id=args.run_id,
             config=config,
             trace_path=args.trace,
-            trace_sha256=args.sha256 or "",
+            trace_sha256=args.sha256,
             validity=result.validity,
             policy=args.policy,
             nodes=json.loads(args.nodes.read_text()),

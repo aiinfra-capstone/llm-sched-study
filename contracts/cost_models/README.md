@@ -21,7 +21,53 @@ and never reached the table.
 |---|---|---|---:|---:|---:|
 | `cpu_ngl0_p4_q4km_llama3_8b` | `Meta-Llama-3-8B-Instruct` Q4_K_M | `ngl 0`, `threads 6`, `parallel 4` | 23 | **69.5 s** | **0.989** |
 | `gtx1650ti_ngl20_p4_q4km_llama3_8b` | `Meta-Llama-3-8B-Instruct` Q4_K_M | `ngl 20`, `threads 6`, `parallel 4` | 18 | ≤ 32 s | 0.0 |
-| `gtx1650ti_ngl99_p4_q4km_llama32_1b` | `Llama-3.2-1B-Instruct` Q4_K_M | `ngl 99`, `threads 6`, `parallel 4` | 9 | ≤ 3.5 s | 0.0 |
+| `gtx1650ti_ngl99_p4_q4km_llama32_1b` | `Llama-3.2-1B-Instruct` Q4_K_M | `ngl 99`, `threads 6`, `parallel 4` | 9 + 9 | ≤ 5.0 s | 0.0 |
+
+
+### The 1B class carries two series, measured a day apart, and the second one supersedes the first
+
+`gtx1650ti_ngl99_p4_q4km_llama32_1b` holds **two campaigns**: nine snapshots from
+2026-08-30 and nine from 2026-08-31. Both are the same node class — hardware and
+`engine_config` are what define one (F-9a), and neither changed. What changed is the grid.
+
+The first campaign sampled prompt 64 and output 32 as its bucket representatives, and
+measured concurrency at 1 and 4 only. The traces this study replays use prompt 128, 256 and
+512 with output 64 and 128, and the anchors spend a quarter of their time at two and three
+slots. `uv run costcheck runs/anchors` priced the anchors against that first table and found
+it wrong by a request-weighted **127%** — enough that no simulator parameterised from it
+could pass F-23, for reasons that have nothing to do with the simulator.
+
+The second campaign uses the trace's own lengths as the representatives, adds a prompt-bucket
+edge at 256 so `[129, 512]` no longer averages a fourfold prefill range, and measures every
+concurrency the pool can reach. Scored on the same anchors it reads **20.8%**, inside the
+±25% tolerance, and **9.9%** on medians.
+
+**Both are kept, and the older one is not stale data.** The four anchor manifests name its
+snapshot ids, and rewriting what a run was deployed under would be worse than carrying two
+series. Anything resolving a snapshot by id gets the right one either way, and
+`load_series` orders by `measured_at_unix`, so the history stays a history.
+
+**The two series have different bucket geometry**, which matters in exactly one place: F-8
+serves the scheduler the snapshot from *s* seconds ago, and a lookup that straddled the
+campaign boundary would see the table shape change. It cannot in practice — the boundary is
+about 24 hours wide and the staleness axis is seconds — but read the series as two, not one.
+
+**Newly measured for this class: batching buys no throughput here.** The F-18 split across
+the anchors shows prefill flat in concurrency (about 174 ms at 128 prompt tokens, 343 at 256,
+698 at 512) and per-request decode falling as 1/c (143, 71, 58, 39 tok/s at one through four
+slots). Aggregate decode throughput is therefore constant: four concurrent requests take
+about as long as four sequential ones. On this card a slot is worth less than a slot usually
+is, and the concurrency effects the policies compete over are queueing effects rather than
+throughput effects.
+
+**One number moved in a direction worth noting.** The second campaign's sustained segment ran
+immediately after the first and shows a much wider throughput envelope — 114.6–162.1 tok/s
+against 153.6–162.4, CV 0.109 against 0.024 — so a single calibrated mean understates its own
+standard error by **2.35×** rather than 1.00×. `fit_r2` is still 0.0, so this is a variance
+observation and not a τ measurement: the ACF resolves no decay either time. The most likely
+cause is thermal, the card having been under load for a quarter of an hour already, and it is
+recorded here rather than smoothed away because a back-to-back campaign is exactly the
+condition a long sweep will run under.
 
 **Read `stochastic.autocorr_time_s` with the `r²` beside it.** Only the CPU class carries a
 fitted τ. On the two GPU classes the ACF shows no decay at all, so the value is the window

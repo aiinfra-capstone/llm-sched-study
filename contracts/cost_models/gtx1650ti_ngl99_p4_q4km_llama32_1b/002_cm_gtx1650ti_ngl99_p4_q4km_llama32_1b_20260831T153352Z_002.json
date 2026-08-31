@@ -1,0 +1,420 @@
+{
+  "cost_model_schema": 1,
+  "snapshot_id": "cm_gtx1650ti_ngl99_p4_q4km_llama32_1b_20260831T153352Z_002",
+  "node_class": "gtx1650ti_ngl99_p4_q4km_llama32_1b",
+  "measured_at_unix": 1788190432,
+  "calibration_run_ids": [
+    "cal_gtx1650ti_ngl99_p4_q4km_llama32_1b_1788190342"
+  ],
+  "form": "lookup_table",
+  "entries": [
+    {
+      "prompt_bucket": [
+        1,
+        128
+      ],
+      "output_bucket": [
+        1,
+        64
+      ],
+      "concurrency": 1,
+      "service_ms_mean": 615.671,
+      "service_ms_p50": 615.791,
+      "service_ms_p95": 617.145,
+      "tokens_per_s": 147.4986,
+      "n_samples": 8
+    },
+    {
+      "prompt_bucket": [
+        1,
+        128
+      ],
+      "output_bucket": [
+        1,
+        64
+      ],
+      "concurrency": 2,
+      "service_ms_mean": 923.491,
+      "service_ms_p50": 923.342,
+      "service_ms_p95": 924.793,
+      "tokens_per_s": 112.9706,
+      "n_samples": 8
+    },
+    {
+      "prompt_bucket": [
+        1,
+        128
+      ],
+      "output_bucket": [
+        1,
+        64
+      ],
+      "concurrency": 3,
+      "service_ms_mean": 1298.925,
+      "service_ms_p50": 1274.36,
+      "service_ms_p95": 1563.606,
+      "tokens_per_s": 87.0796,
+      "n_samples": 8
+    },
+    {
+      "prompt_bucket": [
+        1,
+        128
+      ],
+      "output_bucket": [
+        1,
+        64
+      ],
+      "concurrency": 4,
+      "service_ms_mean": 1807.092,
+      "service_ms_p50": 1629.388,
+      "service_ms_p95": 2029.85,
+      "tokens_per_s": 69.4875,
+      "n_samples": 132
+    },
+    {
+      "prompt_bucket": [
+        1,
+        128
+      ],
+      "output_bucket": [
+        65,
+        128
+      ],
+      "concurrency": 1,
+      "service_ms_mean": 1064.037,
+      "service_ms_p50": 1062.789,
+      "service_ms_p95": 1069.4,
+      "tokens_per_s": 145.5421,
+      "n_samples": 8
+    },
+    {
+      "prompt_bucket": [
+        1,
+        128
+      ],
+      "output_bucket": [
+        65,
+        128
+      ],
+      "concurrency": 2,
+      "service_ms_mean": 1508.496,
+      "service_ms_p50": 1508.045,
+      "service_ms_p95": 1512.433,
+      "tokens_per_s": 111.2296,
+      "n_samples": 8
+    },
+    {
+      "prompt_bucket": [
+        1,
+        128
+      ],
+      "output_bucket": [
+        65,
+        128
+      ],
+      "concurrency": 3,
+      "service_ms_mean": 2123.438,
+      "service_ms_p50": 2025.358,
+      "service_ms_p95": 2609.135,
+      "tokens_per_s": 86.0147,
+      "n_samples": 8
+    },
+    {
+      "prompt_bucket": [
+        1,
+        128
+      ],
+      "output_bucket": [
+        65,
+        128
+      ],
+      "concurrency": 4,
+      "service_ms_mean": 2271.934,
+      "service_ms_p50": 2517.776,
+      "service_ms_p95": 2527.228,
+      "tokens_per_s": 70.3304,
+      "n_samples": 8
+    },
+    {
+      "prompt_bucket": [
+        129,
+        256
+      ],
+      "output_bucket": [
+        1,
+        64
+      ],
+      "concurrency": 1,
+      "service_ms_mean": 794.481,
+      "service_ms_p50": 794.287,
+      "service_ms_p95": 796.085,
+      "tokens_per_s": 144.632,
+      "n_samples": 8
+    },
+    {
+      "prompt_bucket": [
+        129,
+        256
+      ],
+      "output_bucket": [
+        1,
+        64
+      ],
+      "concurrency": 2,
+      "service_ms_mean": 1288.679,
+      "service_ms_p50": 1289.764,
+      "service_ms_p95": 1290.404,
+      "tokens_per_s": 108.6285,
+      "n_samples": 8
+    },
+    {
+      "prompt_bucket": [
+        129,
+        256
+      ],
+      "output_bucket": [
+        1,
+        64
+      ],
+      "concurrency": 3,
+      "service_ms_mean": 1806.92,
+      "service_ms_p50": 1839.093,
+      "service_ms_p95": 2097.262,
+      "tokens_per_s": 85.0986,
+      "n_samples": 8
+    },
+    {
+      "prompt_bucket": [
+        129,
+        256
+      ],
+      "output_bucket": [
+        1,
+        64
+      ],
+      "concurrency": 4,
+      "service_ms_mean": 2052.216,
+      "service_ms_p50": 2304.839,
+      "service_ms_p95": 2307.64,
+      "tokens_per_s": 69.0579,
+      "n_samples": 8
+    },
+    {
+      "prompt_bucket": [
+        129,
+        256
+      ],
+      "output_bucket": [
+        65,
+        128
+      ],
+      "concurrency": 1,
+      "service_ms_mean": 1248.103,
+      "service_ms_p50": 1246.316,
+      "service_ms_p95": 1260.642,
+      "tokens_per_s": 142.8217,
+      "n_samples": 8
+    },
+    {
+      "prompt_bucket": [
+        129,
+        256
+      ],
+      "output_bucket": [
+        65,
+        128
+      ],
+      "concurrency": 2,
+      "service_ms_mean": 1885.122,
+      "service_ms_p50": 1883.411,
+      "service_ms_p95": 1891.751,
+      "tokens_per_s": 107.6,
+      "n_samples": 8
+    },
+    {
+      "prompt_bucket": [
+        129,
+        256
+      ],
+      "output_bucket": [
+        65,
+        128
+      ],
+      "concurrency": 3,
+      "service_ms_mean": 2642.356,
+      "service_ms_p50": 2596.679,
+      "service_ms_p95": 3164.617,
+      "tokens_per_s": 84.2814,
+      "n_samples": 8
+    },
+    {
+      "prompt_bucket": [
+        129,
+        256
+      ],
+      "output_bucket": [
+        65,
+        128
+      ],
+      "concurrency": 4,
+      "service_ms_mean": 2904.946,
+      "service_ms_p50": 3241.209,
+      "service_ms_p95": 3253.638,
+      "tokens_per_s": 68.4612,
+      "n_samples": 8
+    },
+    {
+      "prompt_bucket": [
+        257,
+        512
+      ],
+      "output_bucket": [
+        1,
+        64
+      ],
+      "concurrency": 1,
+      "service_ms_mean": 1160.294,
+      "service_ms_p50": 1160.722,
+      "service_ms_p95": 1162.355,
+      "tokens_per_s": 141.7978,
+      "n_samples": 8
+    },
+    {
+      "prompt_bucket": [
+        257,
+        512
+      ],
+      "output_bucket": [
+        1,
+        64
+      ],
+      "concurrency": 2,
+      "service_ms_mean": 1982.036,
+      "service_ms_p50": 1982.09,
+      "service_ms_p95": 1984.162,
+      "tokens_per_s": 107.4383,
+      "n_samples": 8
+    },
+    {
+      "prompt_bucket": [
+        257,
+        512
+      ],
+      "output_bucket": [
+        1,
+        64
+      ],
+      "concurrency": 3,
+      "service_ms_mean": 2760.921,
+      "service_ms_p50": 2865.22,
+      "service_ms_p95": 3153.524,
+      "tokens_per_s": 82.8922,
+      "n_samples": 8
+    },
+    {
+      "prompt_bucket": [
+        257,
+        512
+      ],
+      "output_bucket": [
+        1,
+        64
+      ],
+      "concurrency": 4,
+      "service_ms_mean": 3297.308,
+      "service_ms_p50": 3725.206,
+      "service_ms_p95": 3732.792,
+      "tokens_per_s": 67.4305,
+      "n_samples": 8
+    },
+    {
+      "prompt_bucket": [
+        257,
+        512
+      ],
+      "output_bucket": [
+        65,
+        128
+      ],
+      "concurrency": 1,
+      "service_ms_mean": 1626.866,
+      "service_ms_p50": 1622.779,
+      "service_ms_p95": 1642.034,
+      "tokens_per_s": 140.4344,
+      "n_samples": 8
+    },
+    {
+      "prompt_bucket": [
+        257,
+        512
+      ],
+      "output_bucket": [
+        65,
+        128
+      ],
+      "concurrency": 2,
+      "service_ms_mean": 2592.712,
+      "service_ms_p50": 2591.869,
+      "service_ms_p95": 2598.342,
+      "tokens_per_s": 106.6359,
+      "n_samples": 8
+    },
+    {
+      "prompt_bucket": [
+        257,
+        512
+      ],
+      "output_bucket": [
+        65,
+        128
+      ],
+      "concurrency": 3,
+      "service_ms_mean": 3632.376,
+      "service_ms_p50": 3671.759,
+      "service_ms_p95": 4252.411,
+      "tokens_per_s": 82.0832,
+      "n_samples": 8
+    },
+    {
+      "prompt_bucket": [
+        257,
+        512
+      ],
+      "output_bucket": [
+        65,
+        128
+      ],
+      "concurrency": 4,
+      "service_ms_mean": 4184.64,
+      "service_ms_p50": 4699.456,
+      "service_ms_p95": 4706.512,
+      "tokens_per_s": 66.9039,
+      "n_samples": 8
+    }
+  ],
+  "stochastic": {
+    "model": "lognormal_multiplier",
+    "sigma": 0.12253,
+    "autocorr_time_s": 5.0,
+    "fit_r2": 0.0
+  },
+  "admissibility": {
+    "max_prompt": 2048,
+    "max_output": 256,
+    "timeout_ceiling_ms": 60000
+  },
+  "provenance": {
+    "engine": "llamacpp",
+    "engine_version": "b10569+p1+cuda13.2",
+    "quant": "Q4_K_M",
+    "gpu": "NVIDIA GeForce GTX 1650 Ti",
+    "driver": "580.173.02",
+    "prefix_caching": false,
+    "engine_config": {
+      "ngl": 99,
+      "threads": 6,
+      "parallel": 4
+    }
+  }
+}

@@ -193,7 +193,7 @@ def synthesizable(snapshots: list[dict[str, Any]]) -> tuple[float, float]:
     estimators of the same ratio: `synthesizable_range` divides `headline_tokens_per_s`,
     the median *per-request decode* rate over the sustained segment, while this divides the
     fitted table's `tokens_per_s` at a shared cell. On the committed 8B snapshots they read
-    2.07 and 2.00. Quote one or the other and say which; averaging them would be inventing
+    2.00 and 2.07, in that order. Quote one or the other and say which; averaging them would be inventing
     a third number that neither measurement supports. `1.0` is the low end by construction — any pool can be made homogeneous by
     running one class everywhere — and stating it is what makes the result an interval
     rather than a figure.

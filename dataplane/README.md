@@ -63,6 +63,16 @@ only the one the scheduler chose, so per-node utilization is empty for runs driv
 fixture scheduler. Adding `served_by` would fix it and is a joint decision, because the six
 contract artifacts froze at the end of Week 1.
 
+Then the seam opened. The control plane's C-3 parser was fixed on 2026-08-31, the 50
+committed snapshots became readable, and the first thing we did with that was point
+`costcheck` at the four anchors — which found that **the cost model those anchors were
+served by missed its own hardware by a request-weighted 127%**. No simulator parameterised
+from that table could have passed F-23, and the failure would have looked like the
+simulator's. The 1B node class has been recalibrated on a grid that lands on the trace's own
+lengths at every concurrency the pool can reach, and now reads **20.8%** — inside the F-23
+tolerance. The story, including what it says about batching on this card, is under
+[`costcheck.py`](#costcheckpy--does-the-cost-model-predict-its-own-hardware-f-7).
+
 ## The engine is pinned *and patched*
 
 `engine_version` is `b10569+p1+cuda13.2`. The `+p1` is
@@ -482,6 +492,61 @@ uv run runset runs/anchors --out runs/anchors/runset.parquet
 # 4 run(s), 800 rows / vehicle(s): hardware / R: 1.00x
 # and it says so: every run is R = 1.00x, so this set cannot speak to H2
 ```
+
+### `costcheck.py` — does the cost model predict its own hardware? (F-7)
+
+F-23 asks whether the simulator reproduces hardware within a stated tolerance. When that
+comparison fails there are two suspects and they sit on opposite sides of the seam: the
+simulator's queueing and policy logic, or the C-3 table it was parameterised from. Nothing
+in the F-23 figure separates them, so a failure there starts an argument rather than a
+diagnosis.
+
+This settles the upstream half without a simulator. It takes a run that already happened,
+takes the snapshot the manifest says each node was deployed under, and asks what
+`predict_service_ms` would have said about every request that ran. If the cost model does
+not predict the hardware it was measured on, no DES parameterised from it can pass F-23, and
+the DES is not where to look.
+
+The first thing it was pointed at was the four committed anchors, and the answer was a
+request-weighted **127% error**, eleven of twelve cells outside tolerance, worst 353%. Two
+causes, neither of them a bug:
+
+**The grid was calibrated at lengths the study does not run.** The Week-2 config sampled
+prompt 64 and output 32; the anchor trace runs 128–512 and 64–128. Both fall inside the same
+buckets, so nothing was out of range and nothing raised — but decode time is linear in output
+tokens, so a cell measured at 32 tokens under-predicts a request of 64 by roughly half.
+`campaign.py`'s own docstring warns about this in as many words.
+
+**The concurrency axis had holes where the anchors live.** The grid measured 1 and 4 slots.
+The anchors spend 28% of the quiet point and 18% of the light point at 2 slots, and
+nearest-measured-concurrency then prices a two-slot request at the one-slot rate, because 2
+is nearer to 1 than to 4.
+
+Recalibrating on a grid whose representative lengths are the trace's own, at every
+concurrency the pool can reach, is what closed it: **127% → 27.5% → 20.8%**, the last step
+coming from a prompt-bucket edge added at 256 so one bucket no longer averaged a fourfold
+prefill range. On medians the error is 9.9%, and the four-slot cells — most of the requests,
+and where the anchors sit under load — land within 2%. That is a limitation as well as a fix:
+the model is calibrated for the traces this study replays, and a length between two bucket
+representatives would be priced at its bucket's, not its own.
+
+**It reports the mean and the median side by side, and the gap is information.** The
+prediction is a mean measured with concurrency *held fixed*; a live cell is a mean over
+requests labelled by concurrency *at admission*, and a request admitted alone onto a busy
+node does not stay alone. Those keep the low-concurrency label and carry a high-concurrency
+service time, landing entirely in the upper tail — one cell's median sits 12% above
+prediction while its mean sits 70% above. The mean stays the verdict, because a mean is what
+the model predicts; the median is printed beside it so the difference between "the model is
+wrong" and "the label is a proxy" is visible rather than arguable.
+
+```
+uv run costcheck runs/anchors
+uv run costcheck runs/anchors --snapshot <a candidate C-3 file>   # would recalibrating help?
+```
+
+`--snapshot` scores one candidate table against runs that predate it. The runs cannot be
+replayed, so pricing the old run's requests with the new model is the only honest way to ask
+whether a recalibration was worth it.
 
 ## `figures/` — F-19's last stage, F-24's enforcement point
 

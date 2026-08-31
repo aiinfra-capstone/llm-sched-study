@@ -34,6 +34,7 @@ load-band  = "dataplane.pipeline.loadband:main"       # Week 3: the controlled l
 preflight  = "dataplane.harness.preflight:main"       # before a multi-host pool: prove the LAN
 runset     = "dataplane.pipeline.runset:main"        # Week 4: many joined runs -> one frame
 figures    = "dataplane.figures.plots:main"         # Week 4: the figures, vehicle-stamped (F-24)
+costcheck  = "dataplane.pipeline.costcheck:main"     # Week 4: does the cost model predict its own hardware? (F-7)
 
 [dependency-groups]
 dev = [

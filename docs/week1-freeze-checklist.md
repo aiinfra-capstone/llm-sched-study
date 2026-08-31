@@ -110,18 +110,27 @@ decision that must be closed *before* the freeze, not after.
 
 ## Aditya Gupta (B)
 
-- [ ] `scheduling.proto` reviewed and agreed with Divyansh (C-1)
-- [ ] `SimNode.batch_capacity` reads `manifest.nodes[].engine_config.parallel` — under
+- [x] `scheduling.proto` reviewed and agreed with Divyansh (C-1) — signed off on
+      2026-08-31 in issue #6: *"I have reviewed the wire schema. The invariants hold
+      perfectly in the code, and separating `Completion` from `Heartbeat` is exactly what
+      we need to prevent uncontrolled staleness in the simulation. Signed off."*
+      **C-1 is closed on both sides**, and `contract-v1` is authorized.
+- [x] `SimNode.batch_capacity` reads `manifest.nodes[].engine_config.parallel` — under
       F-9 llama.cpp's slot count *is* the node model, exactly, so no
       approximation is needed or wanted
-- [ ] Scheduler skeleton runs against a **fake worker** that heartbeats scripted state
-- [ ] `Clock` and `StateStore` interfaces defined — policies never call the system clock
-- [ ] RoundRobin only, behind the same `choose()` signature the other four will use
-- [ ] C-4 scheduler log schema + fixture file committed, including the full
+      — `Manifest.java` / `ManifestParser.java`, `SimNode.batchCapacity()`.
+- [x] Scheduler skeleton runs against a **fake worker** that heartbeats scripted state
+      — `live/FakeWorker.java`, `live/SchedulerGrpcService.java`.
+- [x] `Clock` and `StateStore` interfaces defined — policies never call the system clock
+      — `core/interfaces/`, with `sim/SimClock.java` as the DES implementation.
+- [x] RoundRobin only, behind the same `choose()` signature the other four will use
+      — and all five are now there: `core/policies/`.
+- [x] C-4 scheduler log schema + fixture file committed, including the full
       `candidates` array (F-3) with `estimate_age_ms` per candidate
-- [ ] **Language chosen and committed** for `controlplane/` — one language for
+- [x] **Language chosen and committed** for `controlplane/` — one language for
       scheduler + policies + DES (F-21), and `.github/workflows/ci.yml` updated with
-      its build/test invocation
+      its build/test invocation — Java 17 + Maven, and CI runs `mvn clean compile`
+      against a Temurin JDK rather than printing a placeholder.
 
 ## Joint gate
 
@@ -251,6 +260,17 @@ with no slack, not on merit.
       unilaterally** — F-9b is the evidence that the single-engine decision was accounted
       for rather than hidden, so which version of it we run is a decision both of us
       should sign off on.
+
+      **DECIDED 2026-08-31 — option (1), and it is now a scoping decision on the record.**
+      Aditya, in issue #6: *"Let's go with your suggested Option (a). We will run it at 3B
+      (Llama-3.2-3B AWQ) so it fits the 4GB VRAM and explicitly caption the model
+      substitution in the final report."* So F-9b is measured at
+      `Llama-3.2-3B-Instruct` AWQ rather than at the 8B primary condition, and every place
+      the number appears has to say so. The probe node already has somewhere to live: C-6
+      types `role: "engine_gap_probe"`, and `pipeline/join.py` drops its rows before the
+      join rather than after, so a probe can never be averaged into a policy comparison by
+      accident. What remains is the run itself, which needs the vLLM install and a slice of
+      GPU time that currently competes with the pool.
 
 ---
 
@@ -595,6 +615,168 @@ validation.
 
 Landing `figures.render` also un-skipped `test_forward_w5_figures.py`, which had been
 skipping since Week 1. It is now green: **572 tests, 100% coverage, no skips.**
+
+---
+
+## Week-4 close — the seam opened, and the first thing through it was bad news
+
+Issue #6 came back resolved on 2026-08-31. All four items on Aditya's list landed in one
+commit: `Provenance.engine_config` on the C-3 parser, `Manifest.java` /
+`ManifestParser.java` for C-6, `mvn clean compile` wired into CI, and the C-1 sign-off.
+`ServiceSampler` also gained nearest-concurrency snapping, which is worth noting because it
+means the two sides now interpolate the same way — `predict_service_ms` has always snapped
+to the nearest measured concurrency, so this converged on the reference rather than away
+from it.
+
+That unblocked the question the whole week is about, and the answer was not the one we
+expected.
+
+### The cost model did not predict its own hardware
+
+`uv run costcheck runs/anchors` prices every request the four anchors served against the
+C-3 snapshot the manifest says that node was deployed under. It needs no simulator, and
+that is the point: an F-23 failure has two suspects on opposite sides of the seam, and this
+is the one that can be settled alone.
+
+Scored against the snapshot the anchors actually ran under, the model was wrong by a
+**request-weighted 127%**, with eleven of twelve exercised cells outside the ±25% tolerance
+and the worst at 353%. No discrete-event simulator parameterised from that table could have
+passed F-23, and any argument about the DES would have been an argument about the wrong
+half of the system.
+
+Two causes, and neither is a bug in anyone's code.
+
+**The grid was calibrated at lengths the study does not run.** `calibration_1b_dense.json`
+sampled prompt 64 and output 32. The anchor trace runs `p128_o64`, `p256_o64` and
+`p512_o128`. Both prompt lengths fall inside the same `[1, 128]` bucket and both output
+lengths inside `[1, 64]`, so nothing was out of range and nothing raised — but decode time
+is linear in output tokens, so a cell measured at 32 tokens under-predicts a request of 64
+by about half. `campaign.py`'s own docstring warns about exactly this: *"one measured length
+per bucket, chosen by whoever writes the config, because a bucket sampled only at its lower
+edge would advertise a speed the bucket's longer requests never see."* The warning was
+written and then not followed.
+
+**The concurrency axis had holes where the anchors live.** The grid measured 1 and 4 slots.
+Reconstructing in-engine concurrency from the client log alone — a request occupies the node
+from send to completion, and the wrapper admits at most `--parallel` of them — the anchors
+spend a great deal of their time at 2 and 3:
+
+| anchor | λ (req/s) | mean concurrency | c=1 | c=2 | c=3 | c=4 |
+|---|---:|---:|---:|---:|---:|---:|
+| quiet | 0.72 | 1.92 | 45.9% | 27.6% | 14.8% | 11.7% |
+| light | 1.03 | 2.66 | 26.9% | 17.6% | 17.8% | 37.8% |
+| mid | 1.30 | 3.28 | 13.0% | 9.8% | 13.1% | 64.0% |
+| heavy | 1.98 | 3.98 | 0.3% | 0.2% | 0.4% | 99.1% |
+
+Nearest-concurrency snapping then does something quietly awful: `c=2` is closer to 1 than to
+4, so a request served by two slots is priced at the one-slot rate. At the quiet anchor that
+is 28% of requests under-predicted by more than half.
+
+### What the anchors say about batching, which is a result in its own right
+
+The worker log carries the F-18 split, so the two effects can be separated. Prefill is a
+function of prompt length and is flat in concurrency (~174 ms at 128 tokens, ~343 at 256,
+~698 at 512, moving less than 10% from one slot to four). Decode is where all of the
+concurrency dependence lives, and per-request decode throughput falls almost exactly as
+`1/c`: 143, 71, 58, 39 tok/s at one through four slots.
+
+**Aggregate decode throughput is therefore flat.** On this node, batching buys nothing —
+four concurrent requests finish in about the time four sequential ones would. That is the
+signature of a memory-bandwidth-bound decode on a small card, and it is worth stating
+plainly because it bounds what any routing policy can achieve here: with no batching gain,
+a slot is a slot, and the concurrency knee F-4 is about is a queueing effect rather than a
+throughput effect on this hardware. On a node where batching does pay, the same policies
+would be choosing between different things.
+
+### Recalibration, and what it bought
+
+Two campaigns, both with the anchors' own lengths as the grid's representative points and
+concurrency measured at every level the pool can reach:
+
+  * `calibration_1b_anchorgrid.json`, first pass — prompt {128, 256, 512} × output {64, 128}
+    × concurrency {1, 2, 3, 4}, keeping the original bucket edges. Weighted error fell from
+    **127% to 27.5%**, and the extrapolation warning disappeared entirely: every cell the
+    anchors visit is now a cell that was measured.
+  * The same grid with a prompt edge added at 256, so that `[129, 512]` — inside which
+    prefill varies fourfold — becomes `[129, 256]` and `[257, 512]`. The anchors'
+    `p512_o128` requests had been priced by a cell that averaged prompt 256 and prompt 512
+    together. Weighted error **20.8%**, inside the ±25% tolerance, and **9.9% on medians**.
+    The `c=4` cells, which carry the most requests and are where the anchors live under
+    load, land within 2%.
+
+**127% → 27.5% → 20.8%.** The five cells still outside are all at one and two slots, and all
+of them are the mean-versus-median artefact described below rather than a model that is
+wrong there: their median errors are 12.9%, 38.3%, 23.8%, 18.7% and 30.2%. This is the first
+version of the cost model that a discrete-event simulator could be parameterised from and
+still have a chance at F-23.
+
+Both series are committed. The first is not stale data — the four anchor manifests name its
+snapshot ids, and rewriting what a run was deployed under would be worse than carrying two
+series — so `costcheck runs/anchors` with no `--snapshot` still reports 127%, because that is
+genuinely what those runs were served by.
+
+**A caveat that belongs next to the result.** Choosing bucket representatives that match the
+trace's lengths is what `campaign.py` asks for, and the buckets are *named* after those
+lengths (`p128_o64`), so this is aligning the instrument with the workload rather than
+fitting it to the answer. But the agreement it produces is conditional on that workload: a
+future trace that emitted a 300-token prompt would land in `[257, 512]`, be priced at the
+512 rate, and be over-predicted. The cost model is calibrated for the traces this study
+replays, and that is a limitation to carry into §threats rather than a property to claim in
+general.
+
+### The mean and the median disagree, and the reason is measurable
+
+`costcheck` reports both, and the gap is informative rather than cosmetic. The prediction is
+a mean measured with concurrency **held fixed**. A live run's cell is a mean over requests
+labelled by their concurrency **at admission** — and a request admitted alone onto a busy
+node does not stay alone. Those requests keep the low-concurrency label and carry a
+high-concurrency service time, which lands entirely in the upper tail: at the `[1, 128]`,
+`[1, 64]`, `c=1` cell the observed median sits 11.7% above prediction while the mean sits
+69.6% above it.
+
+The mean stays the verdict, because a mean is what the model predicts. The median is
+reported beside it so that the difference between "the cost model is wrong" and "the
+admission-time label is a proxy" can be seen rather than argued about.
+
+### Two guards added to `contracts/check.py`
+
+Both are §12 failure modes turned into tests, and both were prompted by things that arrived
+in this commit rather than by hypotheticals.
+
+**C-1 now exists twice on disk.** The control plane's Maven build compiles its own copy of
+`scheduling.proto`, and `contract-v1` pins only the one under `contracts/` by content hash.
+The check compiles both to descriptor sets and compares messages, field numbers, types,
+labels and RPC signatures, ignoring comments, formatting and the `java_package` options that
+differ legitimately. They agree today. The point is that they will keep agreeing.
+
+**The far side's JSON bindings are checked against our schemas by name.** A C-3 field added
+here is a field Jackson throws on there, which is precisely how 50 committed snapshots
+became unreadable for three weeks. A property a *strict* record fails to declare is now a
+contract failure. The reverse — a name bound there that no schema defines — prints as a NOTE
+rather than failing, because that is a bug in the reader rather than a non-conforming
+artifact.
+
+The NOTE currently fires twice, and both are worth acting on:
+
+  * `Manifest.java` binds `manifest_schema`. C-6 has no version field. C-3 has
+    `cost_model_schema` and it is required, so expecting the same of C-6 is reasonable —
+    but adding it is a post-freeze change to a frozen artifact and therefore a joint call.
+  * `Manifest.java` binds `node_class`. C-6's node block does not carry one, deliberately:
+    the mapping lives in `cost_model_snapshots`, which is `node_id -> snapshot_id`, and the
+    node class is inside the snapshot the id names. **That map is the piece the DES actually
+    needs and the reader does not yet read.** Resolving a node to its cost model is
+    `manifest.cost_model_snapshots[node_id]` -> load that C-3 file -> `node_class` and
+    `entries`. No contract change required.
+
+### Where Week 4 stands
+
+Our column of the handoff table — pipeline hardened, figure scripts — was already done. What
+this week added was the diagnostic that sits upstream of the joint gate, and the answer it
+gave, which is that the gate could not have been passed with the cost model we had. It can
+be attempted with the one we have now.
+
+`validation` still refuses to draw, and still should: F-23 compares two vehicles and only one
+of them exists in the committed run set.
 
 ---
 

@@ -827,6 +827,73 @@ differ inside it. `policy_separable` is `false` in the output until the pool has
 and it stays in the JSON so a figure drawn from this sweep cannot quietly claim more than the
 runs support. It is the same second machine that MPR-2 is waiting on.
 
+### Does the cost model predict its own hardware?
+
+The whole Week-4 gate is "the simulator agrees with hardware within a stated tolerance". When
+that comparison fails there are two suspects and they live on opposite sides of the seam —
+the simulator's queueing and policy logic, or the cost model it was parameterised from — and
+the F-23 figure separates them not at all.
+
+So we settle the upstream half first, and it needs no simulator. `uv run costcheck
+runs/anchors` takes each of the four anchor runs, takes the C-3 snapshot the manifest says
+each node was deployed under, and asks what the reference lookup would have predicted for
+every request that actually ran. It is the reference lookup deliberately — nearest measured
+concurrency, bucketed lengths, no interpolation — because what matters is the error the
+scheduler and the simulator really carry, not the error a cleverer estimator could have
+achieved from the same samples.
+
+The answer, the first time we asked, was a request-weighted **127%**, with eleven of twelve
+exercised cells outside the ±25% tolerance and the worst at 353%. Two causes, and neither is
+a defect in anyone's code.
+
+**The grid was calibrated at lengths the study does not run.** Week 2's config sampled prompt
+64 and output 32. The anchor trace runs `p128_o64`, `p256_o64` and `p512_o128`. Every one of
+those falls inside the same buckets the calibration used, so nothing was out of range and
+nothing raised — but decode time is linear in output tokens, so a cell measured at 32 tokens
+under-predicts a request of 64 by about half. The campaign driver's own docstring warns about
+precisely this: a bucket sampled only at its lower edge advertises a speed its longer
+requests never see. The warning was written and then not followed.
+
+**The concurrency axis had holes where the anchors live.** The grid measured 1 and 4 slots.
+Reconstructing occupancy from the client log alone — a request holds the node from send to
+completion, and the wrapper admits at most `--parallel` of them at once — the quiet anchor
+spends 28% of its time at two slots and the light anchor 18%. Nearest-measured-concurrency
+then prices a two-slot request at the one-slot rate, because 2 is nearer to 1 than to 4.
+
+**What the anchors say about batching is a result in its own right.** The worker log carries
+the F-18 split, so the two effects separate cleanly. Prefill is a function of prompt length
+and is flat in concurrency: about 174 ms at 128 tokens, 343 at 256, 698 at 512, moving less
+than 10% from one slot to four. All of the concurrency dependence is in decode, and
+per-request decode throughput falls almost exactly as 1/c — 143, 71, 58, 39 tok/s at one
+through four slots. **Aggregate decode throughput is therefore flat: on this card, batching
+buys nothing.** Four concurrent requests finish in roughly the time four sequential ones
+would. That is what a memory-bandwidth-bound decode looks like on a small GPU, and it bounds
+what any routing policy can do here — with no batching gain a slot is just a slot, so the
+concurrency effects these policies compete over are queueing effects rather than throughput
+effects. On hardware where batching does pay, the same policies would be choosing between
+different things, and that belongs in the threats section rather than in a footnote.
+
+Recalibrating on a grid whose representative lengths are the trace's own, at every
+concurrency the pool can reach, is what closed the gap — **127% → 27.5% → 20.8%**, the last
+step coming from an added prompt-bucket edge at 256 so that a single bucket no longer averaged
+a fourfold range of prefill. On medians the error is 9.9%, and the four-slot cells, which
+carry most of the requests and are where the anchors sit under load, land within 2%.
+
+It is also a limitation worth stating in the same breath: the model is now calibrated for the
+traces this study replays, and a prompt length sitting between two bucket representatives
+would be priced at its bucket's rate rather than its own.
+
+**The mean and the median disagree, and the disagreement is measurable rather than
+mysterious.** The prediction is a mean measured with concurrency held *fixed*. A live run's
+cell is a mean over requests labelled by their concurrency *at admission*, and a request
+admitted alone onto a busy node does not stay alone — occupancy climbs while it is being
+served. Those requests keep the low-concurrency label and carry a high-concurrency service
+time, which lands entirely in the upper tail: one cell's median sits 13% above prediction
+while its mean sits 71% above. `costcheck` prints both. The mean stays the verdict, because a
+mean is what the model predicts; the median is there so that "the model is wrong" and "the
+label is a proxy" can be told apart rather than argued about.
+
+
 ## What it produces even if things go wrong
 
 The window has no slack, so the result ladder is defined in advance and strictly ordered:
@@ -932,8 +999,9 @@ the runs left behind — which is what lets the control plane hand over a direct
 *simulator* logs and have the same code process them:
 
 ```bash
-uv run runset  runs/anchors --out runs/anchors/runset.parquet   # F-19 — many runs, one frame
-uv run figures runs/anchors/runset.parquet --out figures/       # F-24 — stamped from the manifest
+uv run runset    runs/anchors --out runs/anchors/runset.parquet # F-19 — many runs, one frame
+uv run figures   runs/anchors/runset.parquet --out figures/     # F-24 — stamped from the manifest
+uv run costcheck runs/anchors                                   # F-7 — before blaming the simulator
 ```
 
 `runset` derives *R* from each run's own C-3 snapshots rather than accepting it as a flag.
@@ -989,9 +1057,9 @@ of Week 1.
 | Week | Focus |
 |---|---|
 | 1 | Worker wrapper, heartbeat, thin client, measurement harness. One query routed and measured end to end. |
-| 2 | Calibration campaign; τ and the variance envelope; synthesizable *R* range. **MPR-1.** — ✅ *τ = 69.5 s on the CPU class (r² = 0.989, SE inflation 1.36×), no measurable drift on either GPU class, with the instrument limit that explains the difference. R = 2.00× configured, 1.00× deployable. F-9b still blocked on VRAM.* |
+| 2 | Calibration campaign; τ and the variance envelope; synthesizable *R* range. **MPR-1.** — ✅ *τ = 69.5 s on the CPU class (r² = 0.989, SE inflation 1.36×), no measurable drift on either GPU class, with the instrument limit that explains the difference. R = 2.00× configured, 1.00× deployable. The 1B class was recalibrated in Week 4 on a grid that lands on the trace's own lengths — see below. F-9b is scoped (3B AWQ, captioned) and waiting on the vLLM install.* |
 | 3 | Multi-node pool; all five policies behind one config value; load band identified. **Feature freeze.** — *node serving; admissible set determined on two node classes; 4 valid anchors at 200/200; load band 1.03–1.30 req/s; LAN preflight built. Still one host, so policy separation is not demonstrated and the pool is not yet multi-node.* |
-| 4 | Discrete-event simulator sharing policy code; validated against hardware. — *the data-plane half is complete and did not need the LAN: the pipeline assembles run **sets**, derives R from each run's own C-3 snapshots rather than a typed flag, and renders §5.5 and all four of §5.4's dependent variables with F-24's stamp read from the manifest. F-23's validation figure reports p50 and p95 against a stated ±25% tolerance and refuses until the simulator's half of the set exists.* |
+| 4 | Discrete-event simulator sharing policy code; validated against hardware. — *the data-plane half is complete and did not need the LAN: the pipeline assembles run **sets**, derives R from each run's own C-3 snapshots rather than a typed flag, and renders §5.5 and all four of §5.4's dependent variables with F-24's stamp read from the manifest. F-23's validation figure reports p50 and p95 against a stated ±25% tolerance and refuses until the simulator's half of the set exists. The seam then opened, and `costcheck` found that the deployed cost model missed its own hardware by 127%. Recalibrated since; the story is under "Does the cost model predict its own hardware?"* |
 | 5 | Sweeps: *R* × load × staleness × policy. Hypotheses tested. |
 | 6 | Analysis, threats to validity, literature positioning, writeup. |
 

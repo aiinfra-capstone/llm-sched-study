@@ -220,18 +220,27 @@ simulation. Measured: `-ngl 20` gives 7.49 decode tok/s and `-ngl 0` gives 3.74 
 > `0`. **Deployable *R* is therefore 1.00×** on one host: that is not a configuration
 > problem, it is a second machine.
 
-### The engine-gap measurement — F-9b — blocked
+### The engine-gap measurement — F-9b — scoped, and scheduled into Week 6
 
 Run once, on the strongest node, at one operating point, against an identical replayed
 trace: vLLM (AWQ, same model class) against llama.cpp on that same machine, reported as a
 stated bound on external validity (threat R9). Marked `role: "engine_gap_probe"` in the
-manifest, and the pipeline keeps it out of every policy comparison.
+manifest, and the pipeline keeps it out of every policy comparison — `join.py` drops probe
+rows *before* the join rather than filtering them in each figure, so it can never be averaged
+into a policy comparison by accident.
 
-**It has not run.** `Meta-Llama-3-8B-Instruct` in 4-bit AWQ is roughly 5.7 GB of weights
-before any KV cache, and the strongest node here is a GTX 1650 Ti with 4096 MiB. Turing is
-supported; the memory is not there. Three ways out — run it at 3B and name the model in the
-caption, run it on a machine with more VRAM, or report it as not measured — and it is a
-scoping call for both of us rather than an engineering one.
+**The model question is settled.** `Meta-Llama-3-8B-Instruct` in 4-bit AWQ is roughly 5.7 GB
+of weights before any KV cache and the strongest node here is a GTX 1650 Ti with 4096 MiB.
+Turing is supported; the memory is not. We run it at `Llama-3.2-3B-Instruct` AWQ instead,
+about 2.2 GB, with the model substitution captioned everywhere the number appears.
+
+**It runs in Week 6, and the deferral is a decision rather than a slip.** F-9b bounds a
+threat; it feeds no hypothesis, no figure waits on it, and nothing downstream changes shape
+depending on what it says. Weeks 4 and 5 are the ones with a dependency chain — parameterise
+the simulator, run the sweeps — and both want the same single GPU that F-9b would occupy. So
+it sits next to the threats-to-validity section that consumes it. The cost of being wrong
+about that is Week 6 having the least slack of any week; the fallback is reporting R9 as an
+argument rather than a number, which is worse and is the thing to avoid.
 
 ### Prefill/decode split (F-18) — resolved, `full` on both backends
 

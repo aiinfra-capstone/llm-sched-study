@@ -668,11 +668,18 @@ band *is*.
 
 **The last line is the honesty check, and the one we expect to be argued with.** A
 bucket is named by its **ceiling** and sampled in its **interior**. The `(129, 512)` bucket
-was admitted on samples that reach 256 tokens, so "prompt ≤ 512" is a claim about 512 that
-nothing in the campaign tested. The envelope still reports the ceiling — that is what C-2's
-header and the trace generator consume — but `evidence` in the JSON reports what was
-actually measured, and the difference is printed rather than left for someone to notice in
-Week 6.
+was admitted on samples that reached only 256 tokens, so "prompt ≤ 512" was a claim about
+512 that nothing in the campaign had tested. The envelope still reports the ceiling — that
+is what C-2's header and the trace generator consume — but `evidence` in the JSON reports
+what was actually measured, and the difference is printed rather than left for someone to
+notice in Week 6.
+
+**That gap is now closed.** The Week-4 recalibration measures prompt 512 directly, and
+re-deriving the set from it gives the same answer — `prompt ≤ 512, output ≤ 128` — with
+`unmeasured_ceiling` empty and `max_prompt_measured: 512`. The determination did not change;
+what changed is that it is now supported at the ceiling it claims. This is the whole reason
+the field exists: it turned an unexamined claim into a to-do that could be closed rather than
+into a footnote nobody read.
 
 The cliff (F-15) is computed from the campaign's **discarded** samples, because a fitted
 cost table excludes failures by construction and therefore cannot say where the cliff is.
@@ -1057,11 +1064,11 @@ of Week 1.
 | Week | Focus |
 |---|---|
 | 1 | Worker wrapper, heartbeat, thin client, measurement harness. One query routed and measured end to end. |
-| 2 | Calibration campaign; τ and the variance envelope; synthesizable *R* range. **MPR-1.** — ✅ *τ = 69.5 s on the CPU class (r² = 0.989, SE inflation 1.36×), no measurable drift on either GPU class, with the instrument limit that explains the difference. R = 2.00× configured, 1.00× deployable. The 1B class was recalibrated in Week 4 on a grid that lands on the trace's own lengths — see below. F-9b is scoped (3B AWQ, captioned) and waiting on the vLLM install.* |
+| 2 | Calibration campaign; τ and the variance envelope; synthesizable *R* range. **MPR-1.** — ✅ *τ = 69.5 s on the CPU class (r² = 0.989, SE inflation 1.36×), no measurable drift on either GPU class, with the instrument limit that explains the difference. R = 2.00× configured, 1.00× deployable. The 1B class was recalibrated in Week 4 on a grid that lands on the trace's own lengths — see below. F-9b is scoped (3B AWQ, captioned) and deliberately moved to Week 6, where the threats section that consumes it is written.* |
 | 3 | Multi-node pool; all five policies behind one config value; load band identified. **Feature freeze.** — *node serving; admissible set determined on two node classes; 4 valid anchors at 200/200; load band 1.03–1.30 req/s; LAN preflight built. Still one host, so policy separation is not demonstrated and the pool is not yet multi-node.* |
 | 4 | Discrete-event simulator sharing policy code; validated against hardware. — *the data-plane half is complete and did not need the LAN: the pipeline assembles run **sets**, derives R from each run's own C-3 snapshots rather than a typed flag, and renders §5.5 and all four of §5.4's dependent variables with F-24's stamp read from the manifest. F-23's validation figure reports p50 and p95 against a stated ±25% tolerance and refuses until the simulator's half of the set exists. The seam then opened, and `costcheck` found that the deployed cost model missed its own hardware by 127%. Recalibrated since; the story is under "Does the cost model predict its own hardware?"* |
 | 5 | Sweeps: *R* × load × staleness × policy. Hypotheses tested. |
-| 6 | Analysis, threats to validity, literature positioning, writeup. |
+| 6 | Analysis, threats to validity, literature positioning, writeup. **F-9b engine-gap measurement**, moved here from Week 2: it bounds threat R9, nothing else reads it, and it wants the same GPU that Weeks 4–5 have a dependency chain running through. |
 
 ## Team
 

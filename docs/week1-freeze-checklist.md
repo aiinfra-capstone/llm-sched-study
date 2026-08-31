@@ -234,7 +234,7 @@ with no slack, not on merit.
 
       The R-range tool refuses to compute a ratio across two *models* (F-9), so the
       1B class's 71.6 tok/s does not enter this number.
-- [ ] **F-9b engine-gap measurement — BLOCKED ON VRAM, needs a decision.**
+- [ ] **F-9b engine-gap measurement — scoped, and deliberately scheduled into Week 6.**
       F-9b asks for vLLM (AWQ, same model class) on the strongest node against an
       identical replayed trace. The strongest node I have is a GTX 1650 Ti: **4096 MiB
       total, compute capability 7.5**. Turing is supported by vLLM, so that is not the
@@ -271,6 +271,21 @@ with no slack, not on merit.
       join rather than after, so a probe can never be averaged into a policy comparison by
       accident. What remains is the run itself, which needs the vLLM install and a slice of
       GPU time that currently competes with the pool.
+
+      **DEFERRED TO WEEK 6, on purpose rather than by drift.** F-9b is a *bound on a threat*,
+      not an input to anything: no hypothesis reads it, no figure waits on it, and nothing
+      downstream changes shape depending on what it says. Weeks 4 and 5 are the ones with a
+      dependency chain running through them — the simulator has to be parameterised, the
+      sweeps have to run, and both compete for the same single GPU that F-9b would occupy.
+      Spending an afternoon on the vLLM install and a multi-gigabyte AWQ download now would
+      buy a number we cannot use until the threats section is being written anyway.
+
+      So it moves to Week 6 and sits next to the threats-to-validity work it belongs to. The
+      risk of deferring is the ordinary one — Week 6 has the least slack of any week — and
+      the mitigation is that option (3), reporting it unmeasured, remains available and
+      degrades R9 from a number to an argument rather than removing it. That is a worse
+      outcome, and it is the one to avoid, which is why this is written down as a scheduled
+      item rather than left as an open box that quietly ages.
 
 ---
 
@@ -776,6 +791,16 @@ The NOTE currently fires twice, and both are worth acting on:
     `manifest.cost_model_snapshots[node_id]` -> load that C-3 file -> `node_class` and
     `entries`. No contract change required.
 
+### One Week-3 gap closed as a side effect
+
+The admissible set was determined in Week 3 as `prompt ≤ 512, output ≤ 128`, and the JSON
+said out loud that the ceiling was not evidence: `max_prompt_measured` was **256**, and
+`unmeasured_ceiling` carried an entry saying the 512 claim rested on samples that reached
+half of it. The new grid measures prompt 512 directly, so re-deriving from it gives the same
+envelope with `unmeasured_ceiling` **empty** and `max_prompt_measured: 512`. Nothing about
+the determination moved; what moved is that it is now supported at the number it claims.
+`runs/admissible/llama32-1b.json` is rewritten from the new campaign for that reason.
+
 ### Where Week 4 stands
 
 Our column of the handoff table — pipeline hardened, figure scripts — was already done. What
@@ -820,8 +845,8 @@ These are not one-time checks. They are the things that will go wrong quietly.
 | Week | A delivers | B delivers | Joint gate |
 |---|---|---|---|
 | 1 | `scheduling.proto` frozen; **one** worker wrapper (llama.cpp); trace generator with byte-identical determinism test; replay client against a **fake scheduler**; log schemas + fixture files | Scheduler skeleton against a **fake worker** that heartbeats scripted state; `Clock` and `StateStore` interfaces; RoundRobin only | End-to-end single request, real worker, real scheduler. Harness replays a seeded trace and emits joined records. |
-| 2 | Calibration campaign incl. `-ngl`/thread/slot sweep for the synthesizable *R* range (F-9a); **F-9b engine-gap measurement**; **time-ordered C-3 snapshots**; τ and variance envelope | Remaining four policies against fixture cost models; StalenessVeil | **MPR-1 achieved.** C-3 frozen. |
+| 2 | Calibration campaign incl. `-ngl`/thread/slot sweep for the synthesizable *R* range (F-9a); **time-ordered C-3 snapshots**; τ and variance envelope | Remaining four policies against fixture cost models; StalenessVeil | **MPR-1 achieved.** C-3 frozen. |
 | 3 | Admissible-set determination; validation-anchor runs at 3+ operating points | All five policies live from one config value; admission filter | Load band identified. **Feature freeze.** |
 | 4 | Pipeline hardened; figure scripts | DES parameterised from Week-2 snapshots; F-23 validation | Simulator agrees within stated tolerance. |
 | 5 | Figures for H1/H2/H3 | R × load × staleness × policy sweeps | Hypotheses tested. |
-| 6 | Threats to validity, limitations | Literature check (R-1), positioning | Report. |
+| 6 | Threats to validity, limitations; **F-9b engine-gap measurement** (moved from Week 2 — it bounds threat R9 and nothing else reads it, so it belongs beside the section that uses it) | Literature check (R-1), positioning | Report. |

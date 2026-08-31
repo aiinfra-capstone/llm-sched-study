@@ -18,7 +18,7 @@ import pytest
 
 from dataplane.calibration import campaign as camp
 from dataplane.calibration import cost_model as cm
-from dataplane.calibration import rrange
+from dataplane.calibration import r_range
 from dataplane.worker.adapter import LiveState, ServiceResult
 
 
@@ -47,7 +47,7 @@ def _campaign_tree(root: Path) -> Path:
 
 
 def test_r_range_cli_reports_a_range_and_the_classes_behind_it(tmp_path, capsys) -> None:
-    assert rrange.main([str(_campaign_tree(tmp_path))]) == 0
+    assert r_range.main([str(_campaign_tree(tmp_path))]) == 0
 
     out = capsys.readouterr().out
     assert "R in [1.00, 41.46]" in out
@@ -57,7 +57,7 @@ def test_r_range_cli_reports_a_range_and_the_classes_behind_it(tmp_path, capsys)
 
 def test_r_range_cli_can_write_the_range_as_json(tmp_path) -> None:
     out_file = tmp_path / "out" / "r_range.json"
-    rrange.main([str(_campaign_tree(tmp_path / "runs")), "--out", str(out_file)])
+    r_range.main([str(_campaign_tree(tmp_path / "runs")), "--out", str(out_file)])
 
     written = json.loads(out_file.read_text())
     assert written["r_min"] == 1.0
@@ -67,11 +67,11 @@ def test_r_range_cli_can_write_the_range_as_json(tmp_path) -> None:
 
 def test_r_range_cli_refuses_to_invent_a_pool(tmp_path) -> None:
     with pytest.raises(SystemExit, match="run the calibration campaign first"):
-        rrange.main([str(tmp_path)])
+        r_range.main([str(tmp_path)])
 
 
 @pytest.mark.parametrize(
-    "module", ["dataplane.calibration.campaign", "dataplane.calibration.rrange"]
+    "module", ["dataplane.calibration.campaign", "dataplane.calibration.r_range"]
 )
 def test_entry_points_are_runnable_as_modules(module: str, monkeypatch) -> None:
     monkeypatch.setattr("sys.argv", [module, "--help"])

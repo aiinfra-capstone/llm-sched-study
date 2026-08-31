@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from dataplane.calibration.rrange import (
+from dataplane.calibration.r_range import (
     NodeClassThroughput,
     from_reports,
     synthesizable_range,

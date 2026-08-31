@@ -359,9 +359,9 @@ with no slack, not on merit.
       `rrange`, and it wants `synthesizable(snapshots) -> (lo, hi)` off C-3 snapshots where I
       had `synthesizable_range(classes) -> RRange` off campaign reports.
 
-      The module is renamed to the name the contract gave it, with `rrange` left as a
-      redirect so the old import path keeps resolving; it should be deleted once nothing uses
-      it. `synthesizable` is a second entry point rather than a replacement, and it is the
+      The module is renamed to the name the contract gave it. The `rrange` redirect that
+      carried the old import path for one commit is gone, and the two test files that used it
+      now import `r_range` directly — an import path and an identifier, no assertion touched. `synthesizable` is a second entry point rather than a replacement, and it is the
       one that matters across the seam — the snapshots are committed, so R is recomputable
       from `contracts/cost_models/` without a copy of my run directories.
 

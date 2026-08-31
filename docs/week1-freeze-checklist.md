@@ -473,6 +473,70 @@ with no slack, not on merit.
 
 ---
 
+## Week-4 record — my half of it, done ahead of the LAN
+
+Week 4's table says *A: pipeline hardened; figure scripts*. Both are pure functions of the
+files a run leaves behind, so neither waits on the second machine, and I built them while
+the LAN is still to be cabled.
+
+### What the LAN actually gates, now that I have checked
+
+Less than I assumed. The Week-4 **joint gate** is F-23 — the simulator agreeing with the
+machine within a stated tolerance — and F-23 asks for 3+ operating points replaying an
+*identical* trace. I have four, on one node, all sharing `trace_sha256 bea05462…`. A
+single-node validation is a real validation; the LAN widens it to a *heterogeneous* pool,
+which is MPR-2, and MPR-2 was already blocked on the second machine.
+
+So the LAN gates MPR-2's 2×2 and `policy_separable`, and nothing in Week 4. What gates
+Week 4 is **issue #6**: Aditya's C-3 parser still rejects `Provenance.engine_config`, so 0
+of my 50 committed snapshots load into his side and his DES cannot be parameterised from
+Week-2 data. That is the item to chase, ahead of cabling.
+
+### Two things the hardening actually fixed
+
+**`--r` was a typed-in flag.** `pipeline --r 2.0` is defensible for one run and is a loaded
+gun across a twenty-run sweep: *R* is H2's independent variable, and a wrong value does not
+fail, it relabels a point on the x-axis. `runset.deployed_r` derives it from the run's own
+`cost_model_snapshots` instead, delegating the division to `r_range.synthesizable` so the
+common-cell refusal is not reimplemented. A single-class pool reads exactly **1.0** — the
+honest number for one host, and the reason deployable *R* is 1.00× against a synthesizable
+2.00×. On the four anchor runs it derives 1.00× unprompted.
+
+**F-24 had nowhere to read `vehicle` from.** The stamp was always meant to come from
+`manifest.vehicle`, and a figure drawn from a *set* has no single manifest. The label now
+rides in the rows, attached at assembly rather than in `join.py` — C-5's column list is
+frozen and the simulator emits against it, so `vehicle` is a property of how a set was
+assembled, not a field of a joined record.
+
+### Two corrections to my own earlier work
+
+I wrote the stamping rule backwards. My first version stamped every figure, reasoning that
+a missing stamp would then be visibly a bug rather than a claim of hardware provenance. My
+own Week-1 forward test says the opposite — *"the label has to mean something, so it cannot
+be on everything"* — and it is right. The frozen test won; the code stamps simulated
+figures only, refuses a manifest with no `vehicle`, and stamps mixed provenance as
+simulated.
+
+And `figures.percentile` took a percent while `loadband._percentile` takes a fraction. Two
+same-named functions disagreeing about their unit fail silently toward returning the
+minimum. The test pinning the two estimators equal caught it on its first run, which is the
+entire reason that test exists: the figure annotates the §5.5 band, so it must use the
+band's own estimator. They now agree **exactly** at all four anchor points.
+
+### Where it stands
+
+`runset` and `figures` run on the committed anchor set today. `latency_vs_load` and
+`throughput_vs_load` draw, and the throughput curve leaves *y = x* at ≈1.3 req/s —
+independently reproducing the load band's upper edge, which was placed by the latency-drift
+test rather than by the shortfall test. `validation` is written and refuses until the
+simulator's half of the set exists, rather than drawing one vehicle and calling it a
+validation.
+
+Landing `figures.render` also un-skipped `test_forward_w5_figures.py`, which had been
+skipping since Week 1. It is now green: **572 tests, 100% coverage, no skips.**
+
+---
+
 ## Failure modes at the seam — the standing watch list
 
 These are not one-time checks. They are the things that will go wrong quietly.

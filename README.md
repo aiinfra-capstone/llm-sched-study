@@ -865,6 +865,22 @@ uv run anchors    configs/anchors_1b.json                        # F-23 — 4 op
 uv run load-band  runs/anchors --out runs/anchors/load_band.json  # §5.5
 ```
 
+Analysis is two more, and neither needs a node up — they are pure functions of the files
+the runs left behind, which is what lets Aditya hand me a directory of *simulator* logs and
+have the same code process it:
+
+```bash
+uv run runset  runs/anchors --out runs/anchors/runset.parquet   # F-19 — many runs, one frame
+uv run figures runs/anchors/runset.parquet --out figures/       # F-24 — stamped from the manifest
+```
+
+`runset` derives *R* from each run's own C-3 snapshots rather than accepting it as a flag.
+Across a twenty-run sweep a mistyped `--r` does not fail — it silently relabels a point on
+H2's x-axis — so the number is recomputed from what the run was actually served under. It
+also excludes an invalid run **with its reason printed** instead of either poisoning the
+set or stopping it, and says out loud when a set cannot answer the question being asked of
+it (every anchor run is R = 1.00×, so that set cannot speak to H2 at all).
+
 Before the pool spans more than one machine, `preflight` checks the network the run will
 actually use — and in particular the direction nothing else exercises:
 
@@ -913,7 +929,7 @@ of Week 1.
 | 1 | Worker wrapper, heartbeat, thin client, measurement harness. One query routed and measured end to end. |
 | 2 | Calibration campaign; τ and the variance envelope; synthesizable *R* range. **MPR-1.** — ✅ *τ = 69.5 s on the CPU class (r² = 0.989, SE inflation 1.36×), no measurable drift on either GPU class, with the instrument limit that explains the difference. R = 2.00× configured, 1.00× deployable. F-9b still blocked on VRAM.* |
 | 3 | Multi-node pool; all five policies behind one config value; load band identified. **Feature freeze.** — *node serving; admissible set determined on two node classes; 4 valid anchors at 200/200; load band 1.03–1.30 req/s; LAN preflight built. Still one host, so policy separation is not demonstrated and the pool is not yet multi-node.* |
-| 4 | Discrete-event simulator sharing policy code; validated against hardware. |
+| 4 | Discrete-event simulator sharing policy code; validated against hardware. — *my half done ahead of the LAN: the pipeline now assembles run **sets**, derives R from each run's own C-3 snapshots rather than a typed flag, and renders §5.5 with F-24's stamp read from the manifest. The F-23 validation figure is written and refuses until the simulator's half of the set exists.* |
 | 5 | Sweeps: *R* × load × staleness × policy. Hypotheses tested. |
 | 6 | Analysis, threats to validity, literature positioning, writeup. |
 

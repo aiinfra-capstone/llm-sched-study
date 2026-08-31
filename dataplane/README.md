@@ -27,6 +27,12 @@ study leans on:
 
 Plus four F-23 validation anchors on one trace, and a load band of **1.03–1.30 req/s**.
 
+The analysis layer behind those numbers is built too: `runset` assembles many joined runs
+into the one frame the figures read, deriving *R* from each run's own cost-model snapshots
+instead of taking it from the command line, and `figures` renders §5.5 with F-24's stamp
+applied from the manifest. Both run on the committed anchor set today. The one figure that
+cannot yet draw is `validation` — F-23 needs the simulator's half.
+
 ## The engine is pinned *and patched*
 
 `engine_version` is `b10569+p1+cuda13.2`. The `+p1` is
@@ -402,12 +408,89 @@ test alone called a point stable that was visibly retiring 1.63 req/s against 1.
 there is no placement to get wrong, so these runs bound the band from physics but cannot
 demonstrate the thing the band is *defined* by.
 
-## `figures/`
+### `runset.py` — the analysis unit is a set, not a run
 
-Consume Parquet only, never raw logs. Weeks 5–6, and the one part of my half not yet built.
+`join.py` turns one run directory into one C-5 record set. Nothing I am testing is answered
+by a single run — H1 compares four policies, H2 sweeps *R*, H3 sweeps staleness — so what a
+figure opens is a concatenation of joined runs. Three things only become visible at that
+level, and all three are why this file exists rather than a shell loop over `pipeline`:
 
-**F-24: the figure scripts read `manifest.vehicle` and stamp simulated plots
-automatically.** Labelling by hand fails exactly once, in the final report.
+**I was typing *R* in by hand.** `pipeline --r 2.0` is defensible for one run and is a
+loaded gun across a twenty-run sweep: *R* is H2's independent variable, and a mistyped
+value does not fail, it relabels a point on the x-axis. `deployed_r()` derives it from the
+run's own manifest instead — `cost_model_snapshots` already names which C-3 snapshot each
+node was serving under, so the ratio is recomputed from those snapshots. The division is
+delegated to `r_range.synthesizable`, which refuses to compare throughputs measured at
+different cells; a second implementation of that division would be a second chance to make
+the p256-against-p64 mistake that cost me 20% of the ratio once already.
+
+A pool of one node class reads **exactly 1.0** — not unknown, not NaN. That is the honest
+number for a single-host pool and it is why the deployable *R* here is 1.00x while the
+synthesizable range tops out at 2.00x. On the four committed anchor runs it derives 1.00x
+without being told.
+
+**`vehicle` never reached the frame.** F-24 is enforced by the figure reading the
+manifest, and a figure that reads a *set* has no single manifest left to read. So the
+label rides in the rows. It is attached here rather than in `join.py` because C-5's column
+list is frozen and Aditya's simulator emits against it — `vehicle` is a property of how a
+set was assembled, not a field of a joined record.
+
+**One bad run must not cost the other nineteen.** `join` refuses an invalid run loudly,
+which is right when someone asked for that one run. Assembling a directory, the same
+strictness stops the whole analysis over one drifted run. So a refusal becomes an
+*exclusion carrying its reason*, printed before anything is plotted. Only the deliberate
+refusals are caught — an invalid manifest, a missing or mismatched trace, an uncommitted
+cost model. Anything else propagates, because a set that silently drops a run on a
+`KeyError` silently drops a run on my bug.
+
+```
+uv run runset runs/anchors --out runs/anchors/runset.parquet
+# 4 run(s), 800 rows / vehicle(s): hardware / R: 1.00x
+# and it says so: every run is R = 1.00x, so this set cannot speak to H2
+```
+
+## `figures/` — F-19's last stage, F-24's enforcement point
+
+Consume Parquet only, never raw logs. Not tidiness: every exclusion the analysis rests on
+— warmup discarded from the trace offset rather than wall-clock, failures kept as rows but
+out of the latency statistics, the engine-gap probe dropped as a non-member — is applied
+once, in the pipeline. A figure script reaching back to the logs would be a second place
+those rules live, which over six weeks means a second place they diverge.
+
+**Only simulated figures carry the stamp.** I wrote it the other way first — stamp
+everything, so a missing stamp is visibly a bug rather than a claim of hardware
+provenance. My own Week-1 forward test says otherwise and it is right: a label on every
+figure is a label nobody reads, and F-24 asks for a mark that means something. So the
+stamp goes on when a simulator was involved, stays off when one was not, mixed provenance
+stamps as simulated, and a manifest with no `vehicle` is **refused** rather than defaulted
+— defaulting to `hardware` is the one failure that puts a simulated number into the report
+wearing a measurement's clothes.
+
+The hypothesis estimators live here as arithmetic, testable without a plot attached,
+because in each case the sign convention or the axis choice *is* the claim:
+
+| | what it computes | the trap it exists to avoid |
+|---|---|---|
+| `h1_interaction` | `(WJSQ − JSQ) − (StaticWeighted − RoundRobin)` | both brackets are negative when calibration helps, so reversing the subtraction gives the same magnitude and the opposite headline. A missing cell is refused — three policies are a ranking, not a 2×2. |
+| `h2_advantage_curve` | best hardware-aware against best hardware-blind, per *R* | a sweep at one *R* is refused: one point cannot be non-monotonic, and reporting it is how MPR-2's *range* becomes a figure. An *R* with only one side of the 2×2 is undefined, not zero. |
+| `h3_axis` | `staleness_s / τ`, as a named Series | raw seconds would make the result a property of the heartbeat interval I picked rather than of the process. Returning only the axis stops a caller plotting `staleness_s` by habit and believing they divided. |
+
+Three figures draw today. `latency_vs_load` and `throughput_vs_load` read §5.5 off a run
+set, and their percentiles agree with `load_band.json` **exactly** at all four anchor
+points — pinned by a test, because two definitions of p95 in one repository disagree by a
+few milliseconds everywhere and the disagreement is invisible and permanent. (That test
+earned its keep immediately: I had written `percentile` taking a percent while `loadband`
+takes a fraction, which fails silently toward returning the minimum.)
+
+`validation` is the **Week-4 joint gate** — hardware against simulator on an identical
+trace, F-23. It refuses rather than drawing half of itself: one vehicle validates nothing,
+and two vehicles on different traces produce a gap that is part simulator error and part
+workload difference with no way to separate them. It is skipped by the default render on a
+hardware-only set, so the normal case does not fail while the DES is still to come.
+
+```
+uv run figures runs/anchors/runset.parquet --out figures/
+```
 
 ## Why I own the harness and the figures too
 

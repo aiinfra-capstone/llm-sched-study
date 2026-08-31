@@ -704,16 +704,24 @@ concurrency measured at every level the pool can reach:
     The `c=4` cells, which carry the most requests and are where the anchors live under
     load, land within 2%.
 
-**127% → 27.5% → 20.8%.** The five cells still outside are all at one and two slots, and all
-of them are the mean-versus-median artefact described below rather than a model that is
-wrong there: their median errors are 12.9%, 38.3%, 23.8%, 18.7% and 30.2%. This is the first
-version of the cost model that a discrete-event simulator could be parameterised from and
-still have a chance at F-23.
+**127% → 27.5% → 20.8%.** This is the first version of the cost model a discrete-event
+simulator could be parameterised from and still have a chance at F-23.
 
-Both series are committed. The first is not stale data — the four anchor manifests name its
-snapshot ids, and rewriting what a run was deployed under would be worse than carrying two
-series — so `costcheck runs/anchors` with no `--snapshot` still reports 127%, because that is
-genuinely what those runs were served by.
+Five cells are still outside on the mean, all of them at one or two slots, and they do not
+all have the same explanation. Three come inside on medians — 12.9%, 23.8% and 18.7% — and
+those are the mean-versus-median artefact described below. **Two do not: both `c=2` cells
+sit at 38.3% and 30.2% on medians as well**, so the two-slot row is genuinely the weakest
+part of the table and not a labelling artefact. Two slots is also the row with the fewest
+calibration samples relative to how much of the quiet and light anchors live there, which is
+the first thing to deepen if this needs to get tighter.
+
+The **second** campaign's nine snapshots are what got committed, alongside the original
+Week-2 series which stays where it is. The Week-2 series is not stale data — the four anchor
+manifests name its snapshot ids, and rewriting what a run was deployed under would be worse
+than carrying two — so `costcheck runs/anchors` with no `--snapshot` still reports 127%,
+because that is genuinely what those runs were served by. The first recalibration pass was a
+step on the way and is not committed; its numbers are here because the 27.5% is what
+identified bucket width as the remaining term.
 
 **A caveat that belongs next to the result.** Choosing bucket representatives that match the
 trace's lengths is what `campaign.py` asks for, and the buckets are *named* after those

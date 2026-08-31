@@ -67,7 +67,35 @@ def trace_configs(draw: Any) -> dict[str, Any]:
         **json.loads(json.dumps(BASE_TRACE_CONFIG)),
         "gen_seed": draw(st.integers(min_value=0, max_value=2**31 - 1)),
         "n_requests": draw(st.integers(min_value=1, max_value=30)),
-        "duration_s": draw(st.integers(min_value=5, max_value=120)),
+        # The floor is load-bearing, so do not lower it for faster tests.
+        #
+        # A Poisson process over a finite window can produce nothing, and `generate`
+        # refuses that config. The chance of it is exp(-lambda * duration_s) — it does not
+        # depend on `n_requests` at all, since only the first interarrival draw has to
+        # clear the window. Hypothesis shrinks toward boundaries, so the number that
+        # matters is the worst corner this strategy can reach, `lambda_base` at 1.0 and
+        # `duration_s` at its floor:
+        #
+        #     floor  5 -> 0.674%   (1 in 148)      <- was here; hit in Week 4
+        #     floor  6 -> 0.248%   (1 in 403)
+        #     floor  7 -> 0.091%   (1 in 1,097)    <- here now
+        #     floor 10 -> 0.0045%  (1 in 22,026)
+        #
+        # 7 rather than 5 because the floor is free to raise: a trace holds
+        # min(n_requests, arrivals) records and `n_requests` caps at 30, so once
+        # lambda * duration clears 30 the window stops affecting how much work `generate`
+        # does. Measured `generate` time is flat across floors of 5, 6, 7 and 10. 7 rather
+        # than 10 because a ten-second minimum window is a number that would need its own
+        # justification, and 7 leaves room for `lambda_base`'s floor to drop to ~0.5 later
+        # without the rate becoming interesting again.
+        #
+        # `_generate` discards the residual case with `assume`, and this floor is what
+        # keeps that honest. The two are one decision: the floor holds the rejection rate
+        # near 1e-5 — some 50,000x below `filter_too_dense` — so the `assume` never
+        # distorts the distribution being sampled and never costs measurable time, while
+        # the `assume` covers the tail the floor only makes rare rather than impossible.
+        # Lower this floor and the `assume` quietly starts doing real work instead.
+        "duration_s": draw(st.integers(min_value=7, max_value=120)),
         "arrival": {
             "process": "poisson",
             "lambda_base": draw(st.floats(min_value=1.0, max_value=20.0)),
@@ -102,10 +130,35 @@ def _shuffled(value: Any, rotate: int) -> Any:
     return value
 
 
+def _generate(config: dict[str, Any], path: Path) -> str:
+    """`gen_trace.generate`, with the one refusal that is out of scope here discarded.
+
+    A Poisson process over a finite window can legitimately produce nothing, and
+    `generate` refuses that config rather than writing an empty trace — correctly, since a
+    zero-request trace is not a workload. None of the properties below are about arrivals,
+    and every one of them needs a trace to exist before it can say anything, so that case
+    is discarded instead of failed.
+
+    **Only that one.** `generate` raises `ValueError` from eleven places — a malformed
+    `bucket_id`, a zero-length bucket, a bucket outside the F-13 admissible envelope, an
+    unknown model, an unknown arrival process. Catching `ValueError` wholesale would turn
+    every one of those into a silently discarded example, and the rejection rate would stay
+    far too low for Hypothesis to warn about it. Today the envelope check happens to be
+    unreachable from `trace_configs` — `bucket_ids` draws `p` in [1, 2048] and `o` in
+    [1, 256], which are exactly the `admissible` bounds inherited from `BASE_TRACE_CONFIG`
+    — and that coincidence is not something to build on. So everything else re-raises.
+    """
+    try:
+        return gen_trace.generate(config, path)
+    except ValueError as exc:
+        assume("produced no requests" not in str(exc))
+        raise
+
+
 def _write(config: dict[str, Any], name: str = "t.jsonl") -> tuple[str, list[dict[str, Any]]]:
     with tempfile.TemporaryDirectory() as d:
         path = Path(d) / name
-        sha = gen_trace.generate(config, path)
+        sha = _generate(config, path)
         return sha, read_jsonl(path)
 
 
@@ -351,7 +404,7 @@ def test_a_generated_trace_round_trips_through_its_own_loader(config: dict) -> N
     """`load` verifies the hash it is given; the hash `generate` returns must be that one."""
     with tempfile.TemporaryDirectory() as d:
         path = Path(d) / "t.jsonl"
-        sha = gen_trace.generate(config, path)
+        sha = _generate(config, path)
 
         header, body = gen_trace.load(path, expect_sha256=sha)
 

@@ -157,10 +157,12 @@ def test_tau_is_estimated_from_a_series_not_from_one_run() -> None:
 def test_the_synthesizable_r_range_is_a_range_not_a_figure() -> None:
     """§7 / MPR-2 asks for it as a range. It is what buys the reduction in threat R2, and
     a single number would be a claim about one configuration rather than about the pool."""
-    r_range = pytest.importorskip(
-        "dataplane.calibration.r_range", reason="Week 2: R sweep not implemented yet"
-    )
-    lo, hi = r_range.synthesizable(cost_model.load_series(cost_model.example_campaign_dir()))
+    from dataplane.calibration import r_range
+
+    # `example_pool_dir`, not `example_campaign_dir`. A ratio between node classes cannot be
+    # taken from a fixture that holds one: the series fixture is one node measured
+    # repeatedly, which is the shape F-8 ages through, and R needs the other shape.
+    lo, hi = r_range.synthesizable(cost_model.load_series(cost_model.example_pool_dir()))
     assert 1.0 <= lo < hi
 
 

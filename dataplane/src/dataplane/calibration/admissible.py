@@ -348,7 +348,7 @@ def pool_envelope(run_dirs: list[Path], *, timeout_ceiling_ms: int | None = None
     drift (F-8) and averaging them would produce an envelope no snapshot ever claimed —
     the point of the series is that the node is not the same node at t=0 and t=300.
 
-    Refuses to intersect across models for the same reason `rrange` refuses to divide
+    Refuses to intersect across models for the same reason `r_range` refuses to divide
     across them (F-9): the pool holds engine, quantization and model constant, so an
     envelope spanning two models describes no pool that this study can run.
     """

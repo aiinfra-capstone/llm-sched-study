@@ -48,7 +48,7 @@ import json
 import tempfile
 import time
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from itertools import pairwise
 from pathlib import Path
 from typing import Any
@@ -65,6 +65,7 @@ __all__ = [
     "build_snapshot",
     "example_campaign_dir",
     "example_inputs",
+    "example_pool_dir",
     "example_throughput_series",
     "load",
     "load_series",
@@ -372,6 +373,54 @@ def example_campaign_dir(root: str | Path | None = None) -> Path:
         (directory / f"{i:03d}_{snapshot['snapshot_id']}.json").write_text(
             json.dumps(snapshot, indent=2) + "\n"
         )
+    return directory
+
+
+def example_pool_dir(root: str | Path | None = None) -> Path:
+    """A snapshot series for a **pool** — two node classes — rather than for one node.
+
+    Separate from `example_campaign_dir` on purpose. That one is a *series*: one node class
+    measured repeatedly, which is the shape F-8's staleness lookup ages through, and things
+    downstream depend on it being exactly that. This one is the other shape the same
+    artifact has to support, and R needs it: a ratio between node classes cannot be taken
+    from a fixture that only contains one.
+
+    The two classes are the same card running CUDA and running Vulkan — the same engine
+    commit, the same model, the same quantization, and not the same throughput. That is the
+    honest minimum for a pool under F-9, and it means the ratio between them is a backend
+    effect with nothing else folded in. Both are measured at **identical cells**, so a
+    ratio taken at any shared cell is comparing like with like; measuring them at different
+    prompt lengths is exactly the mistake that once made R read 20% low.
+    """
+    directory = Path(root) if root is not None else Path(tempfile.mkdtemp(prefix="cal_pool_"))
+    directory.mkdir(parents=True, exist_ok=True)
+    base = example_inputs()
+    base_unix = base["measured_at_unix"]
+    slower = {
+        **base,
+        "node_class": "gtx1650ti_vulkan_ngl20_p4_q4km_llama3_8b",
+        "provenance": {**base["provenance"], "engine_version": "b10569+vulkan"},
+        "observations": [
+            replace(
+                o,
+                service_ns=int(o.service_ns * 1.6),
+                prefill_ns=int(o.prefill_ns * 1.6) if o.prefill_ns else o.prefill_ns,
+                decode_ns=int(o.decode_ns * 1.6) if o.decode_ns else o.decode_ns,
+            )
+            for o in base["observations"]
+        ],
+    }
+
+    written = 0
+    for inputs in (base, slower):
+        for i in range(2):
+            measured_at = base_unix + i * 30
+            snapshot = build_snapshot(**{**inputs, "measured_at_unix": measured_at})
+            snapshot["snapshot_id"] = snapshot_id(inputs["node_class"], measured_at, seq=i + 1)
+            (directory / f"{written:03d}_{snapshot['snapshot_id']}.json").write_text(
+                json.dumps(snapshot, indent=2) + "\n"
+            )
+            written += 1
     return directory
 
 

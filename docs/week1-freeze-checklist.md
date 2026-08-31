@@ -353,6 +353,32 @@ with no slack, not on merit.
       the node allows. Forcing one sustained segment to serve both is what produced a biased
       ratio *and* a censored τ. If they conflict again, run two segments.
 
+- [x] **The last skipped forward test now runs.**
+      `test_the_synthesizable_r_range_is_a_range_not_a_figure` had been skipping since Week 1
+      for two reasons: it names the module `dataplane.calibration.r_range` and I built
+      `rrange`, and it wants `synthesizable(snapshots) -> (lo, hi)` off C-3 snapshots where I
+      had `synthesizable_range(classes) -> RRange` off campaign reports.
+
+      The module is renamed to the name the contract gave it, with `rrange` left as a
+      redirect so the old import path keeps resolving; it should be deleted once nothing uses
+      it. `synthesizable` is a second entry point rather than a replacement, and it is the
+      one that matters across the seam — the snapshots are committed, so R is recomputable
+      from `contracts/cost_models/` without a copy of my run directories.
+
+      It **only takes the ratio at a cell every node class shares**, which is the Week-3
+      lesson made mechanical: comparing a class measured at p256 against one at p64 folds a
+      workload difference into R, and that is precisely what read 1.66× instead of 2.00×. No
+      common cell now raises rather than quietly producing a number.
+
+      The test needed a two-class fixture, which `example_campaign_dir` is not and must not
+      become — it is a *series*, one node measured repeatedly, which is the shape F-8's
+      staleness lookup ages through. So `example_pool_dir` sits beside it for the other shape
+      the artifact has to support.
+
+      Note for whoever quotes R: the two estimators read **2.07** (fitted table at a shared
+      cell) and **2.00** (median per-request decode over the sustained segment) on the same
+      snapshots. Both are documented; pick one and say which.
+
 ### Resolved without a sign-off — because the cause turned out to be fixable
 
 - [x] **What `validity.dropped_requests` counts — unchanged, and that is the right answer.**

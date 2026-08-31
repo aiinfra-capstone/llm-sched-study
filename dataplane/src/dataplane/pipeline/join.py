@@ -359,7 +359,7 @@ def main(argv: list[str] | None = None) -> int:
         "--r",
         type=float,
         help="heterogeneity ratio for this run; the manifest does not carry one, so it is "
-        "passed explicitly rather than guessed (see calibration/rrange.py)",
+        "passed explicitly rather than guessed (see calibration/r_range.py)",
     )
     args = ap.parse_args(argv)
 

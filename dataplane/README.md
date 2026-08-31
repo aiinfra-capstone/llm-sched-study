@@ -1,8 +1,10 @@
 # Data Plane & Measurement — Divyansh Shukla (A)
 
-The worker wrapper (llama.cpp), capability throttling, the calibration campaign, the
-non-stationarity measurement, the trace generator and replay client, the admissible-set and
-load-band determinations, the log join pipeline, and the figures.
+This half of the repository holds the worker wrapper (llama.cpp), capability throttling, the
+calibration campaign, the non-stationarity measurement, the trace generator and replay
+client, the admissible-set and load-band determinations, the log join pipeline, and the
+figures. It is the measurement instrument; the control plane holds the scheduler, the
+policies and the simulator that we measure *with* it.
 
 **Requirements owned:** F-9, F-9a, F-9b, F-10, F-11 (worker side), F-13, F-15 – F-20, F-23
 (the hardware half).
@@ -14,10 +16,27 @@ uv sync --all-groups
 uv run pytest
 ```
 
+The [root README](../README.md#terms-used-throughout) defines the serving and queueing
+vocabulary the whole study uses — tokens, prefill and decode, KV cache, `-ngl`, slots,
+percentiles, τ, and the heterogeneity ratio *R*. A handful of terms are specific to this
+half and are worth having up front:
+
+| Term | What it means here |
+|---|---|
+| **Run** | One replay of one trace against one pool, producing a manifest and three log files. The unit of measurement. |
+| **Run set** | Many joined runs concatenated into one table. The unit of *analysis*: every hypothesis compares across runs, so no figure is drawn from a single one. |
+| **Vehicle** | Whether a run came from real hardware or from the simulator. F-24 requires simulated figures to say so, and this field is what says it. |
+| **C-3 snapshot** | One calibration measurement of one node class at one moment: a table of service times and throughputs. A *series* of them is what lets the control plane age an estimate realistically. |
+| **Anchor** | A hardware run kept specifically so the simulator can be checked against it (F-23), at a known offered rate on a known trace. |
+| **Admissible set** | The `(prompt, output)` length range every node in the pool can serve inside a stated timeout. Requests outside it fail categorically rather than slowly, so the study is defined over the range where latency is still a meaningful measurement. |
+| **The cliff** | What happens outside that range — timeouts and out-of-memory rather than a long tail. Characterized separately (F-15) instead of being averaged into the tail statistics. |
+| **Send lag** | How late the load generator was in firing a request relative to the trace's schedule. The check that the load offered was the load intended. |
+| **Warmup** | The opening span of a run, discarded before analysis. Computed from the trace's intended offsets rather than wall-clock, so hardware and simulator discard exactly the same requests. |
+
 ## Where things stand
 
-Everything below is built and has been run on hardware. The three results the rest of the
-study leans on:
+Everything below is built and has been run on hardware. These are the three results the rest
+of the study leans on:
 
 | | |
 |---|---|
@@ -27,11 +46,22 @@ study leans on:
 
 Plus four F-23 validation anchors on one trace, and a load band of **1.03–1.30 req/s**.
 
-The analysis layer behind those numbers is built too: `runset` assembles many joined runs
+The analysis layer behind those numbers is built too. `runset` assembles many joined runs
 into the one frame the figures read, deriving *R* from each run's own cost-model snapshots
 instead of taking it from the command line, and `figures` renders §5.5 with F-24's stamp
 applied from the manifest. Both run on the committed anchor set today. The one figure that
-cannot yet draw is `validation` — F-23 needs the simulator's half.
+cannot yet draw is `validation`, because F-23 needs the simulator's half.
+
+We audited this half against the frozen specification rather than against the previous
+week's notes, requirement by requirement. Four things had drifted and are now closed:
+F-23's criterion is p50 **and** p95 against a **stated ±25% tolerance** derived from the
+anchors' own resolution; §5.4's queue-wait, per-node-utilization and routing-error-rate
+variables are computed rather than only carried in the schema; and MPR-2 has an estimator
+that reports H1's 2×2 as a range across *R*, which is the form §7 asks for. One item is
+raised rather than closed: C-5 carries no identity for the node that *served* a request,
+only the one the scheduler chose, so per-node utilization is empty for runs driven by the
+fixture scheduler. Adding `served_by` would fix it and is a joint decision, because the six
+contract artifacts froze at the end of Week 1.
 
 ## The engine is pinned *and patched*
 
@@ -52,9 +82,9 @@ the manifest.
 ## Tests
 
 `uv run pytest` is what CI runs, and it enforces **100% statement and branch coverage** of
-`src/dataplane`. That is not a vanity number. This half of the repo is an instrument, and a
-line of the harness no test executes is a line whose behaviour I would be assuming when I
-report a measurement taken through it. If a new line is unreachable from a test, the honest
+`src/dataplane`. We do not treat that as a vanity number. This half of the repo is an instrument, and a
+line of the harness that no test executes is a line whose behaviour would be an assumption
+underneath a reported measurement. If a new line is unreachable from a test, the honest
 options are to test it or to delete it.
 
 The generated protobuf stubs are excluded — they are protoc output, regenerated on import
@@ -62,7 +92,7 @@ and gitignored (§12.2). What they must actually *do* is asserted in `test_proto
 
 | | |
 |---|---|
-| `test_forward_w[1-5]_*.py` | Written against work scheduled for a later week. They **skip** until it lands, and `-rs` prints every skip reason — so the skip list in a CI log is the remaining backlog of my half. Only the Week 5–6 figure scripts still skip. |
+| `test_forward_w[1-5]_*.py` | Written in Week 1 against work scheduled for later weeks, and skipped until that work lands; `-rs` prints every skip reason, so the skip list in a CI log is the remaining backlog of this half. **That list is now empty** — the Week-5 figure suite was the last to un-skip. These files are the specification of each week's deliverable, which is why they are written before the code and not changed to accommodate it. |
 | `-m perf` | `test_replay_load.py` measures send-lag under sustained load. That is a property of the machine rather than of the code, so a shared runner cannot assert a threshold on it without either flaking or being set so loose it proves nothing. Run it on the load host: `uv run pytest -m perf -s`. |
 | `-m integration` | Runs by default, but launches real subprocesses and binds real sockets, so it is slower than the rest. |
 
@@ -72,9 +102,9 @@ Because the coverage gate is on by default, running a subset needs `--no-cov`:
 uv run pytest tests/test_manifest.py --no-cov
 ```
 
-**Do not run the suite on the load host while a campaign is measuring.** I did, and it cost
-me a four-point anchor set: 99 timeouts and a 3.7-second client send lag at an offered rate
-well under capacity. The `perf` marker exists for that reason, but the rule covers the whole
+**The suite must not run on the load host while a campaign is measuring.** Doing so once
+cost a four-point anchor set: 99 timeouts and a 3.7-second client send lag at an offered
+rate well under capacity. The `perf` marker exists for that reason, but the rule covers the whole
 suite during a run, not only the tests labelled as load measurements.
 
 `test_golden_trace.py` is the one test that can notice the generator itself changing.
@@ -82,9 +112,9 @@ Everything else about determinism compares this build against itself — generat
 the same bytes — which stays true even if the output is wrong, because both sides move
 together. A reference computed once and written down is the only check on a claim about
 *later*, and "the trace regenerates byte-for-byte from (config, seed)" is entirely a claim
-about later. I found the gap by mutation testing: swapping `rng_length` and `rng_content` in
-`generate` changed every byte of every trace the harness produces, and the whole suite still
-passed.
+about later. The gap surfaced under mutation testing: swapping `rng_length` and
+`rng_content` in `generate` changed every byte of every trace the harness produces, and the
+whole suite still passed.
 
 `test_properties.py` is Hypothesis, for the invariants stated as universals in the source —
 most importantly the three RNG streams: changing the length mix must not move the arrivals
@@ -118,7 +148,7 @@ heartbeat loop (independent) → Heartbeat stream to scheduler         (F-10)
 plumbing.
 
 **The wrapper owns admission, not the engine.** llama.cpp will accept more requests than it
-has slots and queue them internally, and if I let it, that wait lands inside `service_ns`
+has slots and queue them internally, and left alone that wait lands inside `service_ns`
 where nothing can separate it from compute. The semaphore is what makes C-4's two duration
 columns mean two different things — and it is why the simulator can model a node as a
 fixed-capacity server without approximating anything: the slot count *is*
@@ -227,7 +257,7 @@ saturates, and that knee — which is what F-4 is about — is exactly what a si
 cannot hold.
 
 Failures are counted, never fitted. A timeout is a censored observation, and a cell mean
-that averaged in the 60 s ceiling would report my own `--timeout` setting as the node's
+that averaged in the 60 s ceiling would report the harness's own `--timeout` setting as the node's
 speed. Those counts are what F-15's cliff is computed from, because a fitted table excludes
 failures by construction and therefore cannot say where the cliff is.
 
@@ -257,7 +287,7 @@ rather than throwing and losing ten minutes of GPU time.
 decode rate over the sustained segment — and drives `uv run r-range`.
 `synthesizable(snapshots)` divides the fitted table's `tokens_per_s` at a cell every class
 shares, and works from `contracts/cost_models/` so R is recomputable across the seam without
-a copy of my run directories. On the committed 8B snapshots they read **2.00** and **2.07**.
+a copy of the run directories. On the committed 8B snapshots they read **2.00** and **2.07**.
 Quote one, say which, and do not average them into a third number nothing measured.
 
 `synthesizable` refuses when the classes share no calibrated cell, and that check is a
@@ -363,9 +393,9 @@ uv run worker --node-id gtx1650ti --engine http://127.0.0.1:18080 \
   --bind 0.0.0.0:50061 --scheduler <scheduler>:50051 --slots 4 \
   --engine-version b10569+p1+cuda13.2 --log-dir runs/worker
 
-# The fake scheduler, from the repo root. Aditya's LiveSchedulerApp replaces it; --loopback
-# answers from an analytic service-time model and is NOT a worker — its timings mean
-# nothing and no calibration may be run against it.
+# The fixture scheduler, from the repo root. The control plane's LiveSchedulerApp replaces
+# it; --loopback answers from an analytic service-time model and is NOT a worker — its
+# timings mean nothing and no calibration may be run against it.
 uv run --project dataplane python fixtures/fake_scheduler/serve.py --worker 127.0.0.1:50061
 
 # F-17 — open-loop replay. Exits non-zero and says why when the run is invalid.
@@ -380,6 +410,10 @@ uv run admissible runs/calibration/llama3-8b --out runs/admissible/llama3-8b.jso
 uv run anchors    configs/anchors_1b.json
 uv run load-band  runs/anchors --out runs/anchors/load_band.json
 uv run preflight  configs/preflight_lan.json --out runs/preflight.json
+
+# Analysis. Neither needs a node up: both are pure functions of the files a run left behind.
+uv run runset     runs/anchors --out runs/anchors/runset.parquet
+uv run figures    runs/anchors/runset.parquet --out figures/
 ```
 
 `--nodes` is the launcher's C-6 node block. Without it the client writes `validity.json`
@@ -393,7 +427,7 @@ artifact, and a committed copy is a second thing that can disagree with it.
 ## `pipeline/` — F-19, §5.5
 
 A **pure function** of `(manifest, three log files)` → one Parquet file. No network, no
-engine, runnable on a laptop. That is what lets Aditya hand me a directory of *simulator*
+engine, runnable on a laptop. That is what lets the control plane hand over a directory of *simulator*
 logs and have the pipeline process them unchanged, so no engine import, gRPC stub or
 hostname may leak in here.
 
@@ -410,19 +444,19 @@ demonstrate the thing the band is *defined* by.
 
 ### `runset.py` — the analysis unit is a set, not a run
 
-`join.py` turns one run directory into one C-5 record set. Nothing I am testing is answered
+`join.py` turns one run directory into one C-5 record set. Nothing this study asks is answered
 by a single run — H1 compares four policies, H2 sweeps *R*, H3 sweeps staleness — so what a
 figure opens is a concatenation of joined runs. Three things only become visible at that
 level, and all three are why this file exists rather than a shell loop over `pipeline`:
 
-**I was typing *R* in by hand.** `pipeline --r 2.0` is defensible for one run and is a
+***R* was being typed in by hand.** `pipeline --r 2.0` is defensible for one run and is a
 loaded gun across a twenty-run sweep: *R* is H2's independent variable, and a mistyped
 value does not fail, it relabels a point on the x-axis. `deployed_r()` derives it from the
 run's own manifest instead — `cost_model_snapshots` already names which C-3 snapshot each
 node was serving under, so the ratio is recomputed from those snapshots. The division is
 delegated to `r_range.synthesizable`, which refuses to compare throughputs measured at
 different cells; a second implementation of that division would be a second chance to make
-the p256-against-p64 mistake that cost me 20% of the ratio once already.
+the p256-against-p64 mistake that cost this study 20% of its ratio once already.
 
 A pool of one node class reads **exactly 1.0** — not unknown, not NaN. That is the honest
 number for a single-host pool and it is why the deployable *R* here is 1.00x while the
@@ -441,7 +475,7 @@ strictness stops the whole analysis over one drifted run. So a refusal becomes a
 *exclusion carrying its reason*, printed before anything is plotted. Only the deliberate
 refusals are caught — an invalid manifest, a missing or mismatched trace, an uncommitted
 cost model. Anything else propagates, because a set that silently drops a run on a
-`KeyError` silently drops a run on my bug.
+`KeyError` silently drops a run on a bug in this code.
 
 ```
 uv run runset runs/anchors --out runs/anchors/runset.parquet
@@ -457,9 +491,9 @@ out of the latency statistics, the engine-gap probe dropped as a non-member — 
 once, in the pipeline. A figure script reaching back to the logs would be a second place
 those rules live, which over six weeks means a second place they diverge.
 
-**Only simulated figures carry the stamp.** I wrote it the other way first — stamp
-everything, so a missing stamp is visibly a bug rather than a claim of hardware
-provenance. My own Week-1 forward test says otherwise and it is right: a label on every
+**Only simulated figures carry the stamp.** This was written the other way first — stamp
+everything, so that a missing stamp reads as a bug rather than as a claim of hardware
+provenance. The Week-1 forward test says otherwise, and it is right: a label on every
 figure is a label nobody reads, and F-24 asks for a mark that means something. So the
 stamp goes on when a simulator was involved, stays off when one was not, mixed provenance
 stamps as simulated, and a manifest with no `vehicle` is **refused** rather than defaulted
@@ -473,32 +507,69 @@ because in each case the sign convention or the axis choice *is* the claim:
 |---|---|---|
 | `h1_interaction` | `(WJSQ − JSQ) − (StaticWeighted − RoundRobin)` | both brackets are negative when calibration helps, so reversing the subtraction gives the same magnitude and the opposite headline. A missing cell is refused — three policies are a ranking, not a 2×2. |
 | `h2_advantage_curve` | best hardware-aware against best hardware-blind, per *R* | a sweep at one *R* is refused: one point cannot be non-monotonic, and reporting it is how MPR-2's *range* becomes a figure. An *R* with only one side of the 2×2 is undefined, not zero. |
-| `h3_axis` | `staleness_s / τ`, as a named Series | raw seconds would make the result a property of the heartbeat interval I picked rather than of the process. Returning only the axis stops a caller plotting `staleness_s` by habit and believing they divided. |
+| `h3_axis` | `staleness_s / τ`, as a named Series | raw seconds would make the result a property of the heartbeat interval that happened to be configured rather than of the process. Returning only the axis stops a caller plotting `staleness_s` by habit and believing they divided. |
+| `mpr2_interaction_range` | H1's 2×2 evaluated at every *R*, returned as an interval | §7 words MPR-2 as the decomposition "across the synthesized heterogeneity range … reported as a range rather than a single figure". A single interaction term is the ingredient, not the deliverable. `sign_consistent` names the case where the interval straddles zero, which is a publishable negative result rather than a mean that happens to sit near zero. |
 
-Three figures draw today. `latency_vs_load` and `throughput_vs_load` read §5.5 off a run
-set, and their percentiles agree with `load_band.json` **exactly** at all four anchor
-points — pinned by a test, because two definitions of p95 in one repository disagree by a
-few milliseconds everywhere and the disagreement is invisible and permanent. (That test
-earned its keep immediately: I had written `percentile` taking a percent while `loadband`
-takes a fraction, which fails silently toward returning the minimum.)
+§5.4 names four dependent variables, not one, and until the audit only the first was
+computed here. `by_offered_load` now returns end-to-end p50/p95/p99, queue-wait p50/p95 and
+the routing-error rate per run, and `per_node_utilization` is a separate function.
+
+Two details in those are load-bearing. The routing-error rate returns `None` rather than
+`0.0` when no request in a set carries a scheduler decision: a fixture-driven run observed
+nothing about routing, and reporting zero would claim routing was perfect — the opposite
+claim, so the two must not share a value. And **"materially sooner"** needs a threshold or
+every floating-point difference counts as an error; a dispatch is counted when the best
+admissible alternative was estimated to save at least 10% of the request's actual service
+time, relative rather than absolute because 200 ms decides a 1 s request and is noise in a
+20 s one.
+
+Queue wait turned out to locate the queueing onset more sharply than the tail test does.
+Median queue wait is **0.01 ms** at the quiet and light anchors, **731 ms** at mid and
+**11.8 s** at heavy, and the load band's upper edge sits exactly at that transition — a
+third independent confirmation alongside the latency-drift and throughput-shortfall tests.
+
+`latency_vs_load` and `throughput_vs_load` read §5.5 off a run set, and their percentiles
+agree with `load_band.json` **exactly** at all four anchor points. A test pins the two
+estimators equal, because two definitions of p95 in one repository disagree by a few
+milliseconds everywhere and the disagreement is invisible and permanent. That test earned
+its keep immediately: `percentile` had been written taking a percent while `loadband` takes
+a fraction, which fails silently toward returning the minimum.
 
 `validation` is the **Week-4 joint gate** — hardware against simulator on an identical
-trace, F-23. It refuses rather than drawing half of itself: one vehicle validates nothing,
-and two vehicles on different traces produce a gap that is part simulator error and part
-workload difference with no way to separate them. It is skipped by the default render on a
-hardware-only set, so the normal case does not fail while the DES is still to come.
+trace, F-23. The requirement is more specific than a plot: agreement in p50 **and** p95,
+within a *stated* tolerance, across at least three operating points, with the tolerance and
+the observed error both reported. `validation_error` returns all of that per matched point
+and the figure writes the verdict into its own title, so a reader does not have to consult
+a separate table to see whether the gate passed.
+
+**The tolerance is ±25%, set by the anchors rather than chosen.** Bootstrapping each
+committed anchor run — resampling its own requests 4,000 times to see how far its
+percentiles move under a different draw — gives 95% intervals on its own p50 and p95 of
+**±25.9%** and **±24.7%**, at 180–196 measured requests. That is the resolution of the
+instrument the simulator is being compared against, so anything tighter would not be a
+stricter test but an unfalsifiable one. Improving it is a matter of run length rather than
+analysis: halving the interval takes roughly four times the requests per anchor. Each
+reported error carries its anchor's interval beside it, so the limiting side of the
+comparison stays visible.
+
+The figure refuses rather than drawing half of itself. One vehicle validates nothing; two
+vehicles on different traces produce a gap that is part simulator error and part workload
+difference with no way to separate them; and fewer than three matched operating points can
+be fitted exactly by a simulator with two free parameters, which is the failure F-23 exists
+to prevent. It is skipped by the default render on a hardware-only set, so the normal case
+does not fail while the simulator's half is still to come.
 
 ```
 uv run figures runs/anchors/runset.parquet --out figures/
 ```
 
-## Why I own the harness and the figures too
+## Why the harness and the figures sit on this side of the seam
 
 The trace generator, the prompt materializer and the replay client all have to agree exactly
 on how a `content_seed` becomes a token sequence. Splitting the generator from the replayer
-across two people creates a second drift surface for no benefit, and I already own the
+across two people creates a second drift surface for no benefit, and this half already owns the
 tokenizer and vocabulary through the worker work.
 
-Figures, because by Week 5 my engine work is frozen — feature freeze is end of Week 3 —
-while Aditya is running sweeps, so analysis load naturally moves to me. The
+Figures, because by Week 5 the engine work is frozen — feature freeze is end of Week 3 —
+while the control plane is running sweeps, so analysis load naturally moves here. The
 hypothesis-specific figures in Weeks 5–6 are joint.

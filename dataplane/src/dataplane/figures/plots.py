@@ -42,6 +42,7 @@ from pathlib import Path
 from typing import Any
 
 import matplotlib
+import numpy as np
 
 matplotlib.use("Agg")  # headless: figures are produced by a script, never by a window
 
@@ -50,10 +51,16 @@ import pandas as pd
 
 __all__ = [
     "CELLS",
+    "F23_TOLERANCE",
     "FIGURES",
+    "HARDWARE_AWARE",
+    "HARDWARE_BLIND",
+    "MIN_VALIDATION_POINTS",
+    "ROUTING_ERROR_MATERIALITY",
     "achieved_rps",
     "analysable",
     "annotations",
+    "bootstrap_halfwidth",
     "by_offered_load",
     "caption",
     "eligible",
@@ -62,12 +69,16 @@ __all__ = [
     "h1_interaction",
     "h2_advantage_curve",
     "h3_axis",
+    "mpr2_interaction_range",
+    "per_node_utilization",
     "percentile",
     "render",
     "render_many",
     "render_set",
+    "routing_error_rate",
     "stamp",
     "stamp_text",
+    "validation_error",
     "vehicle_of",
 ]
 
@@ -79,6 +90,40 @@ VEHICLES = ("hardware", "simulator")
 # about these four cells and nothing else, and a fifth policy appearing in a sweep must
 # not quietly become part of the decomposition.
 CELLS = ("round_robin", "static_weighted", "jsq", "wjsq")
+
+HARDWARE_AWARE = ("static_weighted", "wjsq")
+HARDWARE_BLIND = ("round_robin", "jsq")
+
+# F-23 requires a *stated* tolerance and the observed error against it. This is that
+# number, and it is set by the anchors rather than chosen for roundness.
+#
+# Bootstrapping the four committed anchor runs (4000 resamples each) gives 95% intervals
+# on their own percentiles of +-25.9% for p50 and +-24.7% for p95, at n = 180-196 measured
+# requests per run. That is the resolution of the instrument the simulator is being
+# compared against. A tolerance tighter than it would not be a stricter test, it would be
+# an unfalsifiable one: the hardware side of the comparison does not pin its own p50 to
+# better than a quarter of its value, so a simulator landing inside that interval cannot
+# be distinguished from one landing exactly on it.
+#
+# Raising the precision is a matter of run length, not of analysis -- halving the interval
+# takes roughly four times the requests per anchor. Until those runs exist, 25% is the
+# honest floor, and `validation_error` reports each anchor's own interval alongside the
+# error so a reader can see which side of the comparison is the limiting one.
+F23_TOLERANCE = 0.25
+
+# "Materially sooner" (§5.4) needs a threshold, or every floating-point difference counts
+# as a routing error. A dispatch is counted as an error when the best admissible
+# alternative was estimated to save at least this fraction of the request's actual service
+# time -- relative rather than absolute, because 200 ms is decisive for a 1 s request and
+# noise for a 20 s one.
+ROUTING_ERROR_MATERIALITY = 0.10
+
+# Fixed so a reported interval is reproducible from the same Parquet (F-20).
+BOOTSTRAP_DRAWS = 4000
+BOOTSTRAP_SEED = 20260831
+
+# F-23 says "at least 3 operating points", and says it for a reason worth keeping visible.
+MIN_VALIDATION_POINTS = 3
 
 
 def percentile(values: list[float], q: float) -> float:
@@ -154,6 +199,7 @@ def by_offered_load(frame: pd.DataFrame) -> pd.DataFrame:
     out = []
     for run_id, rows in analysable(frame).groupby("run_id", sort=False):
         e2e = rows["e2e_ms"].astype(float).tolist()
+        queue = rows["queue_wait_ms"].astype(float).tolist()
         out.append(
             {
                 "run_id": run_id,
@@ -166,9 +212,80 @@ def by_offered_load(frame: pd.DataFrame) -> pd.DataFrame:
                 "p50_ms": percentile(e2e, 0.50),
                 "p95_ms": percentile(e2e, 0.95),
                 "p99_ms": percentile(e2e, 0.99),
+                "queue_wait_p50_ms": percentile(queue, 0.50),
+                "queue_wait_p95_ms": percentile(queue, 0.95),
+                "routing_error_rate": routing_error_rate(rows),
             }
         )
     return pd.DataFrame(out).sort_values("offered_rps", ignore_index=True)
+
+
+def routing_error_rate(rows: pd.DataFrame) -> float | None:
+    """§5.4 — the fraction of dispatches an alternative node would have finished sooner.
+
+    `None`, not `0.0`, when no request in the set carries a scheduler decision. A run
+    driven by the fixture scheduler writes no decision record, and reporting zero there
+    would state that routing was perfect when in fact nothing about routing was observed.
+    The two are opposite claims and they must not share a value.
+    """
+    decided = rows[rows["routing_error_ms"].notna()]
+    if decided.empty:
+        return None
+    material = decided["routing_error_ms"].astype(float) >= (
+        ROUTING_ERROR_MATERIALITY * decided["service_ms"].astype(float)
+    )
+    return float(material.sum()) / len(decided)
+
+
+def per_node_utilization(frame: pd.DataFrame, *, slots_per_node: int | None = None) -> pd.DataFrame:
+    """§5.4 — how busy each node was, from worker-local service time only.
+
+    `busy_ratio` is the node's total service time divided by the wall span it served
+    across: the mean number of requests **in service concurrently**. On a node running
+    `--parallel 4` it can legitimately reach 4.0, so it is not a fraction and is not named
+    like one. Passing `slots_per_node` divides by the slot count and yields the fraction
+    of engine capacity used, which is the number §5.4 means by utilization; without it the
+    ratio is reported honestly as a ratio rather than silently rescaled by a slot count
+    guessed from the frame.
+
+    Every term is worker-local, so nothing here subtracts one host's clock from another's.
+
+    **It groups on `chosen_node`, which is the only node identity C-5 carries**, and that
+    column is null for a run driven by the fixture scheduler. So this returns an empty
+    table for the four committed anchor runs, and will populate the moment a real
+    scheduler writes decision records. That is a property of the frozen contract rather
+    than of this function: the client log knows the responding node and the worker log
+    knows its own, but C-5 keeps neither, so a run with no scheduler log cannot say which
+    node did the work. Adding `served_by` to C-5 would close it and is raised as a
+    proposed amendment rather than made here, because the six artifacts froze at the end
+    of Week 1 and changing one is a joint decision.
+    """
+    rows = analysable(frame)
+    out = []
+    for node_id, at_node in rows.groupby("chosen_node", sort=True):
+        start = float(at_node["intended_offset_s"].min())
+        end = float((at_node["intended_offset_s"] + at_node["e2e_ms"] / 1e3).max())
+        span_s = end - start
+        service_s = float(at_node["service_ms"].sum()) / 1e3
+        busy_ratio = service_s / span_s if span_s > 0 else 0.0
+        record = {
+            "node_id": node_id,
+            "n": len(at_node),
+            "service_s": service_s,
+            "span_s": span_s,
+            "busy_ratio": busy_ratio,
+        }
+        if slots_per_node:
+            record["utilization"] = busy_ratio / slots_per_node
+        out.append(record)
+
+    # Named columns even when nothing survived the exclusions. An empty frame with no
+    # columns raises `KeyError` on the first thing a caller asks it for, which reads as a
+    # bug in the caller rather than as "this run retired nothing".
+    columns = ["node_id", "n", "service_s", "span_s", "busy_ratio"]
+    if slots_per_node:
+        columns.append("utilization")
+    return pd.DataFrame(out, columns=columns)
 
 
 def vehicle_of(manifest: dict[str, Any]) -> str:
@@ -281,7 +398,92 @@ def throughput_vs_load(frame: pd.DataFrame, out_dir: Path) -> Path:
     return _finish(fig, frame, out_dir, "throughput_vs_load")
 
 
-def validation(frame: pd.DataFrame, out_dir: Path) -> Path:
+def bootstrap_halfwidth(
+    values: list[float], q: float, *, draws: int = BOOTSTRAP_DRAWS, seed: int = BOOTSTRAP_SEED
+) -> float:
+    """The 95% interval on a percentile of these samples, as a fraction of the percentile.
+
+    How well a run of a few hundred requests pins its own p50 and p95. It is reported
+    beside every validation error because the comparison has two uncertain sides, and
+    quoting the simulator's deviation without the anchor's own resolution invites reading
+    a difference the hardware run cannot itself resolve as a simulator defect.
+    """
+    if len(values) < 2:
+        raise ValueError("a bootstrap interval needs at least two samples")
+    rng = np.random.default_rng(seed)
+    sample = np.asarray(values, dtype=float)
+    draws_matrix = rng.choice(sample, size=(draws, len(sample)), replace=True)
+    point = percentile(values, q)
+    low, high = np.percentile(np.percentile(draws_matrix, q * 100, axis=1), [2.5, 97.5])
+    return float(max(high - point, point - low) / point)
+
+
+def _matched_points(frame: pd.DataFrame) -> list[tuple[float, pd.DataFrame, pd.DataFrame]]:
+    """Operating points where both vehicles ran, paired by offered rate.
+
+    Paired on offered load rather than on run id, because the two vehicles name their runs
+    independently. A point present on only one side is dropped and counted by the caller:
+    F-23 compares like with like, and a simulator point with no hardware twin is not a
+    validation point.
+    """
+    rows = analysable(frame)
+    hardware = rows[rows["vehicle"] == "hardware"]
+    simulator = rows[rows["vehicle"] == "simulator"]
+    paired = []
+    for offered in sorted({float(v) for v in hardware["lambda"]}):
+        left = hardware[hardware["lambda"] == offered]
+        right = simulator[simulator["lambda"] == offered]
+        if not right.empty:
+            paired.append((offered, left, right))
+    return paired
+
+
+def validation_error(
+    frame: pd.DataFrame, *, tolerance: float = F23_TOLERANCE
+) -> list[dict[str, Any]]:
+    """F-23's actual criterion: p50 **and** p95 agreement, per operating point.
+
+    The requirement is specific and easy to under-implement. It asks for agreement in p50
+    *and* p95 end-to-end latency, within a stated tolerance, across at least three
+    operating points, and it requires the tolerance and the observed error to be reported.
+    A figure showing two curves satisfies none of that on its own, so the numbers are
+    computed here and the figure annotates them.
+
+    Fewer than three matched points is refused rather than reported. Three is not a
+    stylistic minimum: with two points a simulator can be tuned to pass by construction,
+    which is what the requirement is guarding against.
+    """
+    paired = _matched_points(frame)
+    if len(paired) < MIN_VALIDATION_POINTS:
+        raise ValueError(
+            f"F-23 needs at least {MIN_VALIDATION_POINTS} operating points where both "
+            f"vehicles ran; this set matches {len(paired)}. Fewer than three can be fitted "
+            "exactly by a simulator with two free parameters, which is the failure the "
+            "requirement exists to prevent"
+        )
+
+    out = []
+    for offered, hardware, simulator in paired:
+        record: dict[str, Any] = {"offered_rps": offered, "n_hardware": len(hardware)}
+        worst = 0.0
+        for q, name in ((0.50, "p50"), (0.95, "p95")):
+            hw = percentile(hardware["e2e_ms"].astype(float).tolist(), q)
+            sim = percentile(simulator["e2e_ms"].astype(float).tolist(), q)
+            error = abs(sim - hw) / hw
+            worst = max(worst, error)
+            record[f"hardware_{name}_ms"] = hw
+            record[f"simulator_{name}_ms"] = sim
+            record[f"{name}_rel_error"] = error
+            record[f"{name}_anchor_halfwidth"] = bootstrap_halfwidth(
+                hardware["e2e_ms"].astype(float).tolist(), q
+            )
+        record["worst_rel_error"] = worst
+        record["within_tolerance"] = worst <= tolerance
+        out.append(record)
+    return out
+
+
+def validation(frame: pd.DataFrame, out_dir: Path, *, tolerance: float = F23_TOLERANCE) -> Path:
     """F-23 — the simulator against the machine, at matched operating points.
 
     The Week-4 joint gate. Both vehicles must be present and must have replayed the same
@@ -289,6 +491,11 @@ def validation(frame: pd.DataFrame, out_dir: Path) -> Path:
     simulator validated against a different workload has been validated against nothing.
     Rather than draw the hardware half alone while the DES output is outstanding, this
     refuses and says which half is missing.
+
+    Both percentiles the requirement names are drawn, the tolerance is shown as a band
+    around the hardware curve rather than left in the caption, and the worst observed
+    error is written onto the figure. A reader should not have to consult a separate table
+    to see whether the gate passed.
     """
     vehicles = set(frame["vehicle"])
     if vehicles != {"hardware", "simulator"}:
@@ -305,16 +512,35 @@ def validation(frame: pd.DataFrame, out_dir: Path) -> Path:
             "simulator error and part workload difference"
         )
 
-    points = by_offered_load(frame)
-    fig, ax = plt.subplots(figsize=(6.5, 4.0))
-    for vehicle, marker in (("hardware", "o"), ("simulator", "^")):
-        side = points[points["vehicle"] == vehicle]
-        ax.plot(side["offered_rps"], side["p95_ms"], marker=marker, label=vehicle)
-    ax.set_xlabel("offered rate λ (req/s)")
-    ax.set_ylabel("p95 end-to-end latency (ms)")
-    ax.set_title("F-23 — simulator against hardware, identical trace")
-    ax.legend()
-    ax.grid(alpha=0.3)
+    errors = validation_error(frame, tolerance=tolerance)
+    offered = [record["offered_rps"] for record in errors]
+
+    fig, axes = plt.subplots(1, 2, figsize=(10.0, 4.2), sharex=True)
+    for ax, name in zip(axes, ("p50", "p95"), strict=True):
+        hardware = [record[f"hardware_{name}_ms"] for record in errors]
+        simulator = [record[f"simulator_{name}_ms"] for record in errors]
+        ax.fill_between(
+            offered,
+            [value * (1 - tolerance) for value in hardware],
+            [value * (1 + tolerance) for value in hardware],
+            color="#cccccc",
+            alpha=0.5,
+            label=f"±{tolerance:.0%} tolerance",
+        )
+        ax.plot(offered, hardware, marker="o", label="hardware")
+        ax.plot(offered, simulator, marker="^", label="simulator")
+        ax.set_xlabel("offered rate λ (req/s)")
+        ax.set_ylabel(f"{name} end-to-end latency (ms)")
+        ax.set_title(name)
+        ax.legend(fontsize=8)
+        ax.grid(alpha=0.3)
+
+    worst = max(record["worst_rel_error"] for record in errors)
+    verdict = "within tolerance" if all(r["within_tolerance"] for r in errors) else "OUTSIDE"
+    fig.suptitle(
+        f"F-23 — simulator against hardware, identical trace: "
+        f"worst error {worst:.1%} against ±{tolerance:.0%} ({verdict})"
+    )
     return _finish(fig, frame, out_dir, "validation")
 
 
@@ -377,8 +603,8 @@ def h2_advantage_curve(sweep: pd.DataFrame) -> list[dict[str, float]]:
     rows = []
     for r_value in r_values:
         at_r = sweep[sweep["R"] == r_value]
-        aware = at_r[at_r["policy"].isin(["static_weighted", "wjsq"])]["mean_latency_ms"]
-        blind = at_r[at_r["policy"].isin(["round_robin", "jsq"])]["mean_latency_ms"]
+        aware = at_r[at_r["policy"].isin(HARDWARE_AWARE)]["mean_latency_ms"]
+        blind = at_r[at_r["policy"].isin(HARDWARE_BLIND)]["mean_latency_ms"]
         if aware.empty or blind.empty:
             raise ValueError(
                 f"R = {r_value} has no hardware-aware or no hardware-blind policy, so the "
@@ -391,6 +617,48 @@ def h2_advantage_curve(sweep: pd.DataFrame) -> list[dict[str, float]]:
     # A list of points rather than a frame: the curve is short, it is read point by point
     # when the shape is argued about, and it goes into the report as a table of numbers.
     return rows
+
+
+def mpr2_interaction_range(sweep: pd.DataFrame) -> dict[str, Any]:
+    """MPR-2, stated in the form MPR-2 is defined in: H1's 2x2 **across** the *R* range.
+
+    §7 is precise about the shape of this result — "the 2x2 decomposition (H1) across the
+    synthesized heterogeneity range of F-9a, reported as a range rather than a single
+    figure". `h1_interaction` answers the 2x2 at one operating point, which is the
+    ingredient rather than the deliverable. This evaluates it at every *R* the sweep holds
+    and reports the interval, so what reaches the report is a range with the *R* values
+    that produced its ends attached.
+
+    The interval matters more than its midpoint. An interval that straddles zero says the
+    redundancy H1 claims is not established across the range — a publishable negative
+    result, and a different statement from a mean interaction that happens to sit near
+    zero. `sign_consistent` names that case rather than leaving a reader to infer it from
+    two numbers of opposite sign.
+    """
+    for column in ("R", "policy", "mean_latency_ms"):
+        if column not in sweep.columns:
+            raise ValueError(f"MPR-2 needs a {column!r} column; got {list(sweep.columns)}")
+
+    by_r: dict[float, float] = {}
+    for r_value in sorted({float(v) for v in sweep["R"]}):
+        at_r = sweep[sweep["R"] == r_value]
+        cells = {
+            policy: float(at_r[at_r["policy"] == policy]["mean_latency_ms"].mean())
+            for policy in CELLS
+            if not at_r[at_r["policy"] == policy].empty
+        }
+        by_r[r_value] = h1_interaction(cells)
+
+    low_r = min(by_r, key=lambda r: by_r[r])
+    high_r = max(by_r, key=lambda r: by_r[r])
+    return {
+        "interaction_by_r": by_r,
+        "low": by_r[low_r],
+        "high": by_r[high_r],
+        "low_at_r": low_r,
+        "high_at_r": high_r,
+        "sign_consistent": (by_r[low_r] < 0) == (by_r[high_r] < 0),
+    }
 
 
 def h3_axis(sweep: pd.DataFrame, *, autocorr_time_s: float) -> pd.Series:

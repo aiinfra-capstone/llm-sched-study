@@ -523,6 +523,67 @@ minimum. The test pinning the two estimators equal caught it on its first run, w
 entire reason that test exists: the figure annotates the §5.5 band, so it must use the
 band's own estimator. They now agree **exactly** at all four anchor points.
 
+### Retrospective audit against the frozen spec
+
+Walked every requirement on our half — F-6 through F-24, C-2 through C-6, MPR-1 and MPR-2,
+§5.4 and §5.5 — against the code rather than against the previous week's notes. Most of it
+held. Four things did not, and all four are now closed except where closing them would
+mean changing a frozen artifact alone.
+
+**F-23 was under-implemented.** The requirement is specific: *"agreement in p50 **and** p95
+end-to-end latency within a stated tolerance across at least 3 operating points. The
+tolerance and the observed error MUST be reported."* The validation figure plotted p95
+only, no tolerance appeared anywhere in the repository as a number, and no error was
+computed. `validation_error` now returns both percentiles, the relative error at each
+matched operating point, and a pass/fail against a stated tolerance; the figure draws both
+panels with the tolerance as a band and writes the verdict into its own title.
+
+**The tolerance is set by the anchors, not chosen for roundness.** Bootstrapping the four
+committed anchor runs at 4000 resamples gives 95% intervals on their *own* percentiles of
+**±25.9% for p50 and ±24.7% for p95**, at n = 180–196 measured requests per run. That is the
+resolution of the instrument the simulator is being compared against, so `F23_TOLERANCE`
+is **0.25**. A tighter tolerance would not be a stricter test but an unfalsifiable one.
+Raising the precision is a matter of run length rather than analysis — halving the
+interval takes roughly four times the requests per anchor — and until those runs exist,
+25% is the honest floor. Every reported error now carries the anchor's own interval beside
+it so the limiting side of the comparison stays visible.
+
+**§5.4 named four dependent variables and the analysis layer computed one.** End-to-end
+p50/p95/p99 was there; queue wait, per-node utilization, and routing-error rate were not.
+Queue wait and the routing-error rate now come out of `by_offered_load`, and
+`per_node_utilization` is a new function. Queue wait turned out to locate the queueing
+onset far more sharply than the p99 test does: p50 queue wait is **0.01 ms** at both the
+quiet and light anchors, **731 ms** at mid, and **11.8 s** at heavy. The band's upper edge
+sits exactly where that transition happens, which is a third independent confirmation
+alongside the latency-drift and throughput-shortfall tests.
+
+The routing-error rate reports `None` rather than `0.0` when no request carries a
+scheduler decision. A fixture-driven run observed nothing about routing, and reporting
+zero would claim routing was perfect — the opposite claim, and it must not share a value.
+
+**MPR-2 had no estimator.** §7 words it as *"the 2×2 decomposition (H1) across the
+synthesized heterogeneity range of F-9a, reported as a range rather than a single
+figure"*. We had `h1_interaction` at one operating point, which is the ingredient rather
+than the deliverable. `mpr2_interaction_range` evaluates the 2×2 at every *R* in a sweep
+and returns the interval with the *R* values that produced its ends, plus a
+`sign_consistent` flag — because an interval straddling zero is a publishable negative
+result and a different statement from a mean interaction that happens to sit near zero.
+
+### One proposed amendment, raised rather than made
+
+**C-5 cannot express per-node utilization.** Its only node identity is `chosen_node`,
+which comes from the scheduler's decision record. The client log knows the responding node
+and the worker log knows its own, and C-5 keeps neither — so a run without a scheduler log
+cannot say which node did the work, and `per_node_utilization` returns an empty table for
+the four committed anchors. It will populate as soon as a real scheduler writes decision
+records, so this blocks nothing today.
+
+Adding `served_by` to C-5 would close it properly. The six artifacts froze at the end of
+Week 1 and changing one is a joint decision, so this is raised here rather than made
+unilaterally. Our view: worth doing, low risk — C-5 is produced and consumed entirely
+within the data plane, the simulator emits C-4 rather than C-5, and no schema currently
+sets `additionalProperties: false`.
+
 ### Where it stands
 
 `runset` and `figures` run on the committed anchor set today. `latency_vs_load` and

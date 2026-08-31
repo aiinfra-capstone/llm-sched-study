@@ -313,3 +313,189 @@ def test_caption_ignores_the_other_text_on_the_figure() -> None:
     assert figures.caption(fig) == ""
     assert "SIMULATED" in figures.annotations(fig)
     plt.close(fig)
+
+
+# --------------------------------------------------------------------------------------
+# §5.4's other dependent variables
+# --------------------------------------------------------------------------------------
+
+
+def test_a_run_with_no_scheduler_decisions_reports_no_routing_error_rate() -> None:
+    """`None`, never `0.0`. A run driven by the fixture scheduler observed nothing about
+    routing; reporting zero would claim routing was perfect. Opposite claims, so they must
+    not share a value."""
+    assert plots.routing_error_rate(plots.analysable(_set())) is None
+
+
+def test_the_routing_error_rate_counts_only_material_ones() -> None:
+    """ "Materially sooner" needs a threshold or every floating-point difference counts.
+    A saving worth 10% of the request's own service time is the line."""
+    rows = plots.analysable(_set()).copy()
+    service = rows["service_ms"].astype(float)
+    # One clearly material, one clearly not, the rest unobserved.
+    rows["routing_error_ms"] = None
+    rows.iloc[0, rows.columns.get_loc("routing_error_ms")] = service.iloc[0] * 0.5
+    rows.iloc[1, rows.columns.get_loc("routing_error_ms")] = service.iloc[1] * 0.01
+    assert plots.routing_error_rate(rows) == pytest.approx(0.5)
+
+
+def test_the_load_axis_carries_queue_wait_and_the_routing_error_rate() -> None:
+    """§5.4 names four dependent variables, not one. Latency percentiles alone leave the
+    queue-wait and routing-quality halves of the question unanswered."""
+    points = plots.by_offered_load(_set())
+    assert {"queue_wait_p50_ms", "queue_wait_p95_ms", "routing_error_rate"} <= set(points.columns)
+    assert (points["queue_wait_p95_ms"] >= points["queue_wait_p50_ms"]).all()
+
+
+def test_per_node_utilization_reports_a_ratio_not_a_fraction() -> None:
+    """A node running four slots can legitimately serve four requests at once, so the raw
+    number is a mean concurrency and can exceed 1. Naming it a fraction would invite
+    reading a healthy node as an impossible one."""
+    table = plots.per_node_utilization(_set())
+    assert list(table["node_id"]) == ["n1"]
+    assert table["busy_ratio"].iloc[0] > 0
+    assert "utilization" not in table.columns
+
+
+def test_a_slot_count_turns_the_ratio_into_the_fraction_5_4_asks_for() -> None:
+    table = plots.per_node_utilization(_set(), slots_per_node=4)
+    assert table["utilization"].iloc[0] == pytest.approx(table["busy_ratio"].iloc[0] / 4)
+
+
+def test_a_node_whose_requests_span_no_time_reports_no_utilization() -> None:
+    """Degenerate but reachable: a client that recorded no elapsed time against a worker
+    that recorded service. Guarded rather than left to divide by zero."""
+    rows = _run("n", offered=1.0, latencies=[100.0, 100.0]).assign(
+        intended_offset_s=0.0, e2e_ms=0.0
+    )
+    assert plots.per_node_utilization(rows)["busy_ratio"].iloc[0] == 0.0
+
+
+def test_a_run_that_retired_nothing_still_has_the_columns() -> None:
+    """An empty frame with no columns raises on the first thing a caller asks for, which
+    reads as a bug in the caller rather than as "this run retired nothing"."""
+    table = plots.per_node_utilization(_set().assign(status="timeout"))
+    assert table.empty
+    assert "busy_ratio" in table.columns
+
+
+# --------------------------------------------------------------------------------------
+# F-23, as the requirement actually words it
+# --------------------------------------------------------------------------------------
+
+
+def test_the_bootstrap_interval_is_reproducible_from_the_same_samples() -> None:
+    """F-20: a reported interval has to be recoverable from the same Parquet, so the
+    resampling is seeded rather than left to the global RNG."""
+    values = [float(v) for v in range(1, 60)]
+    assert plots.bootstrap_halfwidth(values, 0.95) == plots.bootstrap_halfwidth(values, 0.95)
+    assert plots.bootstrap_halfwidth(values, 0.95) > 0
+
+
+def test_a_bootstrap_needs_more_than_one_sample() -> None:
+    with pytest.raises(ValueError, match="at least two samples"):
+        plots.bootstrap_halfwidth([1.0], 0.95)
+
+
+def test_validation_reports_p50_and_p95_error_against_a_stated_tolerance() -> None:
+    """F-23's criterion is agreement in p50 *and* p95 within a stated tolerance, with the
+    tolerance and the observed error both reported. Two curves on a plot satisfy none of
+    that on their own."""
+    both = pd.concat([_set("hardware"), _set("simulator")], ignore_index=True)
+    records = figures.validation_error(both)
+    assert len(records) == 3
+    for record in records:
+        assert {"p50_rel_error", "p95_rel_error", "within_tolerance"} <= set(record)
+        # Identical inputs on both sides: the error is zero and the gate passes.
+        assert record["p50_rel_error"] == pytest.approx(0.0)
+        assert record["within_tolerance"]
+
+
+def test_the_anchors_own_resolution_is_reported_beside_the_error() -> None:
+    """The comparison has two uncertain sides. Quoting the simulator's deviation without
+    the hardware run's own interval invites reading a difference the anchor cannot itself
+    resolve as a simulator defect."""
+    both = pd.concat([_set("hardware"), _set("simulator")], ignore_index=True)
+    record = figures.validation_error(both)[0]
+    assert record["p50_anchor_halfwidth"] > 0
+    assert record["p95_anchor_halfwidth"] > 0
+
+
+def test_a_simulator_outside_the_tolerance_is_marked_outside() -> None:
+    simulator = _set("simulator")
+    simulator["e2e_ms"] = simulator["e2e_ms"] * 2.0
+    both = pd.concat([_set("hardware"), simulator], ignore_index=True)
+    records = figures.validation_error(both)
+    assert not any(record["within_tolerance"] for record in records)
+    assert max(record["worst_rel_error"] for record in records) > figures.F23_TOLERANCE
+
+
+def test_fewer_than_three_matched_points_is_refused() -> None:
+    """Three is not a stylistic minimum: two points can be fitted exactly by a simulator
+    with two free parameters, which is the failure F-23 exists to prevent."""
+    hardware = _set("hardware")
+    simulator = _set("simulator")
+    simulator = simulator[simulator["lambda"] != 2.0]
+    with pytest.raises(ValueError, match="at least 3 operating points"):
+        figures.validation_error(pd.concat([hardware, simulator], ignore_index=True))
+
+
+def test_an_unmatched_operating_point_is_not_a_validation_point() -> None:
+    """The two vehicles name their runs independently, so points are paired on offered
+    load. A simulator point with no hardware twin compares against nothing."""
+    hardware = _set("hardware")
+    simulator = _set("simulator")
+    simulator.loc[simulator["lambda"] == 2.0, "lambda"] = 7.0
+    with pytest.raises(ValueError, match="at least 3 operating points"):
+        figures.validation_error(pd.concat([hardware, simulator], ignore_index=True))
+
+
+def test_the_validation_figure_writes_the_verdict_onto_itself(tmp_path) -> None:
+    """A reader should not have to consult a separate table to see whether the gate
+    passed."""
+    both = pd.concat([_set("hardware"), _set("simulator")], ignore_index=True)
+    figures.render_set(both, tmp_path, ["validation"])
+    assert (tmp_path / "validation.png").stat().st_size > 0
+
+
+# --------------------------------------------------------------------------------------
+# MPR-2
+# --------------------------------------------------------------------------------------
+
+
+def test_mpr2_is_a_range_over_r_not_a_single_interaction() -> None:
+    """§7 words MPR-2 as the 2x2 "across the synthesized heterogeneity range ... reported
+    as a range rather than a single figure". One interaction term is the ingredient."""
+    result = figures.mpr2_interaction_range(figures.example_sweep())
+    assert result["low"] <= result["high"]
+    assert set(result["interaction_by_r"]) == {1.0, 2.0, 8.0}
+    assert result["low_at_r"] in result["interaction_by_r"]
+
+
+def test_mpr2_names_the_case_where_the_interval_straddles_zero() -> None:
+    """An interval crossing zero says the redundancy H1 claims is not established across
+    the range — a publishable negative, and a different statement from a mean near zero."""
+    sweep = figures.example_sweep().copy()
+    at_high_r = (sweep["R"] == 8.0) & (sweep["policy"] == "wjsq")
+    sweep.loc[at_high_r, "mean_latency_ms"] = 1.0
+    result = figures.mpr2_interaction_range(sweep)
+    assert result["sign_consistent"] is False
+
+
+def test_mpr2_needs_the_columns_it_decomposes() -> None:
+    with pytest.raises(ValueError, match="MPR-2 needs a"):
+        figures.mpr2_interaction_range(pd.DataFrame({"R": [1.0]}))
+
+
+def test_mpr2_refuses_an_r_missing_a_cell_of_the_2x2() -> None:
+    """Inherited from `h1_interaction`, and worth pinning: a ladder must not become a
+    factorial by silently dropping the cell that was not run."""
+    sweep = figures.example_sweep()
+    with pytest.raises(KeyError, match="2x2"):
+        figures.mpr2_interaction_range(sweep[sweep["policy"] != "static_weighted"])
+
+
+def test_utilization_is_empty_when_no_decision_record_names_a_node() -> None:
+    """C-5's only node identity is `chosen_node`, which the fixture scheduler never
+    writes. Empty is the honest answer — the alternative would be inventing a node."""
+    assert plots.per_node_utilization(_set().assign(chosen_node=None)).empty

@@ -1,17 +1,17 @@
 # Scheduling LLM Inference Under Uncalibrated Heterogeneity
 
-A six-week **measurement study** of how to route LLM inference requests across a pool of
-mismatched consumer machines. The scheduler in this repository is an *instrument*, not a
-product: it exists to produce measurements, and it is built to the minimum fidelity that
-supports the hypotheses below.
+A six-week **measurement study** of how to route large language model inference requests
+across a pool of mismatched consumer machines. The scheduler in this repository is an
+*instrument*, not a product: we built it to produce measurements, at the minimum fidelity
+that supports the hypotheses below.
 
 ---
 
 ## The problem
 
-Suppose you have four machines you already own — a desktop with a discrete GPU, a laptop
-with a weaker one, an older GPU box, and a CPU-only machine — and you want them to serve
-one LLM together. A request arrives. Where should it go?
+Consider four machines of the kind a small lab already owns — a desktop with a discrete
+GPU, a laptop with a weaker one, an older GPU box, and a CPU-only machine — all serving one
+large language model together. A request arrives. Where should it go?
 
 Two things make this harder than ordinary load balancing:
 
@@ -20,13 +20,14 @@ roughly 2–5×. Consumer machines differ by **10–100×**. A request that take
 the fast node may take 3 minutes on the slow one — or exceed any reasonable timeout
 entirely, which is a *categorical* failure rather than a latency tail.
 
-**You do not reliably know how fast each machine is.** You can measure it, but the
-measurement decays: LLM serving throughput is non-stationary under sustained load, drifting
-with thermal state, memory pressure, and batch composition. So the scheduler is always
-routing on an estimate that is somewhat out of date.
+**Per-node speed is not reliably known.** It can be measured, but the measurement decays.
+Serving throughput is *non-stationary* under sustained load — meaning its statistical
+properties change over time rather than settling to a constant — drifting with thermal
+state, memory pressure, and the mix of requests being processed together. The scheduler is
+therefore always routing on an estimate that is somewhat out of date.
 
-The obvious fix is calibration — measure each node's tokens/second and weight your routing
-by it. This study asks whether that is actually worth doing:
+The obvious fix is calibration: measure each node's tokens per second and weight routing by
+it. This study asks whether that is actually worth doing:
 
 > **Research question.** In a pool of consumer machines whose per-node throughput is
 > heterogeneous, non-stationary, and known only through stale estimates, does explicit
@@ -35,7 +36,31 @@ by it. This study asks whether that is actually worth doing:
 
 The reason to doubt it: **queue depth is already a partial proxy for speed.** Slow nodes
 accumulate queue, so a scheduler that simply joins the shortest queue is *implicitly*
-hardware-aware. Calibration may be measuring something the queue already tells you for free.
+hardware-aware. Calibration may be measuring something the queue already reports for free.
+
+## Terms used throughout
+
+The study sits between two vocabularies — LLM serving and queueing measurement — and this
+section defines the terms from both that the rest of the document relies on.
+
+| Term | What it means here |
+|---|---|
+| **Token** | The unit a language model reads and writes: roughly a short word or word-fragment. A model's **vocabulary** is the fixed set of tokens it knows, typically 32,000–262,000 of them. |
+| **Prefill / decode** | The two phases of serving one request. *Prefill* processes the whole prompt at once and is compute-bound; *decode* then emits output tokens one at a time and is memory-bandwidth-bound. They scale differently, so F-18 requires them to be measured separately. |
+| **KV cache** | Per-request memory holding the model's intermediate state for every token seen so far, so each new token does not re-read the whole prompt. It grows linearly with context length, and it is what limits how many requests a node can serve at once. |
+| **Quantization / GGUF / `Q4_K_M`** | Storing model weights at reduced numerical precision to cut memory and increase speed. GGUF is llama.cpp's model file format; `Q4_K_M` is a roughly 4-bit scheme. Both are held constant across every node so that speed differences are hardware differences. |
+| **`-ngl`** | *Number of GPU layers*: how many of the model's layers are placed on the GPU, the rest running on CPU. Lowering it deliberately slows a node down, which is how heterogeneity is manufactured on identical hardware (F-9a). |
+| **Slots / `--parallel`** | How many requests the engine will process concurrently, each holding its own KV cache. The engine batches them together, so a node's behaviour under load is governed by this number. |
+| **Service time** | How long a node itself spent on a request, excluding any wait for a free slot. **Queue wait** is that wait, measured separately. |
+| **Heterogeneity ratio *R*** | Fastest node's throughput divided by slowest node's, within one pool. The study's primary independent variable. *R* = 1 is a uniform pool; consumer hardware can reach 10–100×. |
+| **Autocorrelation time τ** | How long a node's throughput stays correlated with itself — informally, how long a speed measurement remains informative before drift makes it stale. Central to H3. |
+| **p50 / p95 / p99** | Percentiles of a latency distribution. p50 is the median; p99 is the value 99% of requests come in under, and is where scheduling decisions show up most clearly. |
+| **Open-loop load generation** | The load generator sends requests on a fixed schedule and never waits for a response before sending the next. *Closed-loop* generation would let a slow pool throttle its own workload, which silently changes the experiment being run. |
+| **Trace / replay** | A trace is a generated, seeded list of requests with arrival times and lengths. Replaying the same trace against different schedulers is what makes their results comparable. |
+| **Discrete-event simulator (DES)** | A simulation that advances time event by event rather than in fixed ticks, used here to reach node counts and *R* values physical hardware cannot. |
+| **Cost model** | A calibrated table predicting a node's service time for a given prompt length, output length, and concurrency. What a hardware-aware policy consults. |
+| **Staleness** | How old the scheduler's estimate of a node is at the moment it makes a decision. Deliberately injectable, because H3 is a claim about it. |
+| **Node class** | One machine under one configuration (`-ngl`, threads, slots). The same physical box at two `-ngl` settings is two node classes, and each is calibrated separately. |
 
 ## What is being tested
 
@@ -69,7 +94,8 @@ with an engine effect that none of the three hypotheses can decompose. Per-node 
 is then set by configuration — GPU offload (`-ngl`), threads, slot count — which also makes
 *R* **tunable on real hardware** rather than reachable only in simulation.
 
-Two vehicles, and the split between them is the core methodological commitment:
+We run the study on two vehicles, and the split between them is our core methodological
+commitment:
 
 - **Hardware** measures what the simulator must not assume: cost-model parameters, the
   autocorrelation time τ and variance envelope, validation anchors, and the range of *R*
@@ -82,8 +108,8 @@ reimplementation), is parameterized from measured hardware data, and is validate
 live runs on identical replayed traces before any simulated result is believed. Every
 simulated figure is labelled as such.
 
-Three disciplines run through the whole design, and are worth stating because they are the
-sort of thing that quietly invalidates measurement studies:
+Three disciplines run through the whole design. We state them up front because each guards
+against something that quietly invalidates measurement studies:
 
 1. **No cross-host clock subtraction.** Host clocks are not synchronised. Every duration in
    the analysis comes from a single machine's monotonic clock; whatever is left over is
@@ -97,8 +123,9 @@ sort of thing that quietly invalidates measurement studies:
 
 ### The pinned engine
 
-*R* is a hardware property only if the engine underneath it does not move, so the engine is
-pinned as part of the contract rather than installed per machine and hoped to match:
+*R* is a hardware property only if the engine underneath it does not move, so we pin the
+engine as part of the contract rather than installing it per machine and hoping the versions
+match:
 
 | | |
 |---|---|
@@ -234,9 +261,9 @@ contaminates the very tail latencies MPR-1 is measuring.
 
 ### The model set
 
-One model is an anecdote. A reviewer will ask whether a scheduling result is a property of
-scheduling or a property of Llama-3-8B, and "we only ran one model" is not an answer. Seven
-GGUFs are staged, varying along three axes that can each be named in a sentence.
+One model is an anecdote. A reviewer will reasonably ask whether a scheduling result is a
+property of scheduling or a property of Llama-3-8B, and a single model cannot answer that.
+We stage seven GGUFs, varying along three axes that can each be named in a sentence.
 
 | Model | `Q4_K_M` bytes | Fits 4 GB VRAM | KV/token | What it is for |
 |---|---:|---|---:|---|
@@ -262,6 +289,13 @@ admissible set is drawn "at every calibrated concurrency". The old four-model se
 architecture control varied the tokenizer and the weights but not the thing the study
 measures. The set now spans **8 KiB to 168 KiB, a factor of 21**, and it does so through
 three different mechanisms rather than by picking bigger and smaller models:
+
+Three mechanisms appear in that table and are worth naming. **Mamba-2** layers replace
+attention with a fixed-size recurrent state, so their memory cost does not grow with
+context at all. A **mixture of experts (MoE)** holds many parallel sub-networks but routes
+each token through only a few, so compute stays small while resident memory stays large. A
+**sliding-window** attention layer attends only to the last *N* tokens rather than the whole
+context, which caps KV growth per sequence.
 
 | | Layers | With attention | Experts | Vocab | Mechanism |
 |---|---:|---:|---|---:|---|
@@ -322,7 +356,7 @@ stream managed 1.6 MB/s and three managed 3.0 MB/s together, which turned 110 mi
 
 `~/models/gguf/SHA256SUMS` is the check a node runs before it joins the pool — `sha256sum
 -c SHA256SUMS` — because "the same model" has to mean the same bytes, not the same name on
-a HuggingFace page that can be re-uploaded under you:
+a HuggingFace page whose contents can be replaced after the fact:
 
 ```
 85a896a047553e842f25297ee5b031d64ff30147d9c4af17b1e4b394cd1fab87  gemma-4-E4B-it-Q4_K_M.gguf
@@ -365,14 +399,14 @@ The campaign has two phases and one by-product:
 - **A sustained segment** at one operating point, held under constant load for minutes.
   This is what τ and the variance envelope are measured on.
 - **A snapshot series**, re-fitting the sustained cell on a rolling window every 60 s. This
-  is the least obvious requirement in C-3 and the most expensive to get wrong: if I hand
-  Aditya a single fitted model, his staleness injection (F-8) has to *synthesize* age by
-  perturbing parameters, and H3 stops being a result about real drift and becomes a study
-  of his perturbation model.
+  is the least obvious requirement in C-3 and the most expensive to get wrong. If the data
+  plane hands the control plane a single fitted model, staleness injection (F-8) has to
+  *synthesize* age by perturbing parameters, and H3 stops being a result about real drift
+  and becomes a study of that perturbation model.
 
 Failures are counted, never fitted. A timeout is a censored observation, and a cell mean
-that averaged in the 60 s ceiling would report my own `--timeout` setting as the node's
-speed. The counts feed the Week-3 admissible-set work (F-13) and the cliff
+that averaged in the 60 s ceiling would report the harness's own `--timeout` setting as
+the node's speed. The counts feed the Week-3 admissible-set work (F-13) and the cliff
 characterization (F-15).
 
 **C-3 `form` is `lookup_table`**, committed as a module constant rather than a runtime
@@ -384,10 +418,10 @@ six-parameter form cannot hold.
 
 ### MPR-1: what the hardware actually said
 
-Measuring τ on an LLM serving node turns out to be bounded below by two things that are
-easy to miss, and finding them is most of what Week 2 produced:
+Measuring τ on an LLM serving node turns out to be bounded below by two things that are easy
+to miss. Finding them is most of what Week 2 produced:
 
-1. **You only learn a node's rate when a request finishes.** So the finest timescale the
+1. **A node's rate is only observable when a request finishes.** So the finest timescale the
    throughput series can carry is one request. Worse, spreading each request's tokens
    across its own decode interval — which is the honest way to build the series, since a
    request does not produce its tokens at the instant it completes — *induces* correlation
@@ -404,7 +438,7 @@ happened to be near-integer multiples of the ~5 s burst period averaged it out, 
 others aliased against it. A number that moves with the binning is a number about the
 binning, and it would have been very easy to report the 16 s.
 
-Both floors are now enforced by the instrument rather than left to judgement.
+We now enforce both floors in the instrument rather than leaving them to judgement.
 `resolution_floor_s` is the larger of the median request duration and the window;
 `cadence_limited` is true below five slot turnovers per window; and `tau_resolved` is false
 unless τ clears both. A run that cannot support a τ says so and keeps its samples instead
@@ -441,21 +475,25 @@ cleanly:
 | Variance envelope | p05–p95 = **9.65 – 10.41 tok/s**, band **1.08×**, CV **0.027** |
 | Standard-error inflation | **1.36×** — only 16.7 independent windows in 31 |
 | Median decode throughput | 3.74 tok/s |
-| σ (lognormal multiplier, F-22) | 0.040 |
+| σ — spread of the fitted lognormal multiplier the simulator applies to service times (F-22) | 0.040 |
 
-Three estimators that do not share a failure mode — the exponential fit, Sokal's integrated
-time, and the 1/e crossing — land within 30% of each other on a 0.99 fit. So the MPR-1
+Three estimators that do not share a failure mode land within 30% of each other on a 0.99
+fit. They are: fitting an exponential decay to the autocorrelation function (the curve of
+how strongly the throughput series correlates with a time-shifted copy of itself); Sokal's
+integrated time, which sums that curve rather than assuming its shape; and the 1/e
+crossing, which simply reads off where the correlation has fallen to about 37%. So the MPR-1
 sentence finally has a number in it:
 
 > **A single calibrated tok/s figure on the CPU node understates its own standard error by
-> 1.36×.** Ten minutes of samples buy you sixteen independent observations, not thirty-one.
+> 1.36×.** Ten minutes of samples yield sixteen independent observations, not thirty-one.
 
 And the two GPU classes say the opposite, at every timescale their own service time lets
 them look: *r²* = 0, τ pinned to the window, no decay. The pool is not uniformly
 non-stationary — **the drift lives on the CPU node**, which is exactly the class the pool's
 heterogeneity is built out of.
 
-Three caveats belong next to those numbers rather than in a footnote.
+Three caveats belong next to those numbers rather than in a footnote, and we state them
+here rather than in the writeup.
 
 **The CPU τ is fitted, not "resolved".** `tau_resolved` is false, because the bar is
 τ ≥ 2 × `resolution_floor_s` and that floor is `max(median request, window)` = 48 s, so it
@@ -465,18 +503,18 @@ which is five times stricter than the effect it guards against. Both numbers are
 and neither should be quoted alone.
 
 **\*The 1B point is cadence-limited** (4.33 bursts per window against a floor of 5). Real
-service came out at 0.81 s where I had predicted 0.63 s from the cost table, so the window
-should have been 4.0 s and I ran 3.5. The bound holds; the exact figure should not be
+service came out at 0.81 s against the 0.63 s predicted from the cost table, so the window
+should have been 4.0 s and 3.5 s was used. The bound holds; the exact figure should not be
 quoted.
 
-**H3 now has somewhere to live.** After Week 2 I wrote that if τ sits below ~10 s then
+**H3 now has somewhere to live.** After Week 2 we recorded a concern: if τ sits below ~10 s then
 "staleness approaching τ" is a regime any sane heartbeat interval is already inside, and
 H3's staleness axis would have to be re-grounded or declared simulator-only. That worry is
 answered: on the CPU node τ is 70 s, comfortably above any heartbeat interval, so the
 staleness sweep has a real target on real hardware. It is the GPU classes where the axis is
 degenerate.
 
-### The synthesizable *R* range — and the machine I do not have
+### The synthesizable *R* range — and the machine we do not have
 
 F-9a's promise is that *R* is tunable on real hardware, because with the engine, the
 quantization **and the model** all held constant, per-node capability is set by `-ngl`,
@@ -499,7 +537,7 @@ same physical machine, and F-9a forbids running two logical nodes on one host, s
 would contend for PCIe, memory bandwidth and cache and reintroduce as contention the exact
 confound per-node throttling exists to remove.
 
-So the honest Week-2 statement is that **the physical pool cannot yet span any
+So our honest Week-2 statement is that **the physical pool cannot yet span any
 heterogeneity at all**, and the fix is not code — it is a second machine. MPR-2 is the 2×2
 decomposition *across the synthesized R range*, so it stays out of reach until the pool has
 at least two hosts. That is worth knowing in Week 2 rather than Week 4.
@@ -526,15 +564,15 @@ plausible number nobody questions.
 
 ### The live pool: what a node actually is
 
-Week 1 gave me an engine *adapter* — something that can drive `llama-server` and describe
+Week 1 produced an engine *adapter* — something that can drive `llama-server` and describe
 what came back. Week 3 needs a node: a process on the network that answers `Execute`,
 serves the request, and returns the response to the client. That is
 [`worker/serve.py`](dataplane/src/dataplane/worker/serve.py), and three of its decisions are
 measurement decisions rather than plumbing.
 
 **The wrapper owns admission, not the engine.** llama.cpp will happily accept more requests
-than it has slots and queue them internally, and if I let it, that wait lands inside
-`service_ns` where nothing can separate it from compute. So the wrapper holds a semaphore of
+than it has slots and queue them internally, and left alone that wait lands inside
+`service_ns`, where nothing can separate it from compute. So the wrapper holds a semaphore of
 exactly `--parallel` permits. `queue_wait_ns` is time spent waiting for a permit and
 `service_ns` is the engine's own span, which is what makes C-4's two duration columns mean
 two different things — and it is why the simulator can model a node as a fixed-capacity
@@ -569,8 +607,8 @@ uv run worker --node-id gtx1650ti --engine http://127.0.0.1:18080 \
               --bind 0.0.0.0:50061 --scheduler <scheduler-host>:50051 \
               --slots 4 --engine-version b10569+cuda13.2 --log-dir runs/worker
 
-# 3. the scheduler. Aditya's LiveSchedulerApp goes here; until the seam findings in
-#    issue #5 are closed I drive the pool with my own fixture, which round-robins
+# 3. the scheduler. The control plane's LiveSchedulerApp goes here; until the seam
+#    findings in issue #5 are closed we drive the pool with a fixture that round-robins
 #    blindly and writes no decision record.
 uv run python fixtures/fake_scheduler/serve.py --bind 0.0.0.0:50051 --worker <node>:50061
 ```
@@ -612,6 +650,11 @@ admissible set: prompt <= 512, output <= 128 at a 60000 ms ceiling
 trace buckets inside it: p128_o64, p256_o64, p512_o128
 ```
 
+A **bucket** in that output is a named `(prompt length, output length)` band — `p128_o64`
+is "prompts up to 128 tokens, outputs of 64" — and buckets rather than exact lengths are
+what the cost model is indexed by, because measuring every length individually is not
+affordable.
+
 Three things in that output are deliberate.
 
 **The boundary is drawn on p95, not the mean.** A bucket whose mean fits under the ceiling
@@ -623,7 +666,7 @@ node is idle and blows the ceiling at `--parallel 4` is not admissible, because 
 scheduler will absolutely put four requests on that node under load — that is what the load
 band *is*.
 
-**The last line is the honesty check, and it is the one I expect to be argued with.** A
+**The last line is the honesty check, and the one we expect to be argued with.** A
 bucket is named by its **ceiling** and sampled in its **interior**. The `(129, 512)` bucket
 was admitted on samples that reach 256 tokens, so "prompt ≤ 512" is a claim about 512 that
 nothing in the campaign tested. The envelope still reports the ceiling — that is what C-2's
@@ -650,6 +693,17 @@ those two emphasised phrases are the whole design.
 fitted. The interesting failure is a service-time model that is right when the node is idle
 and wrong when it is saturated, and a single anchor at either end cannot see it.
 
+**The tolerance is ±25%, and it is set by the anchors rather than chosen.** F-23 requires a
+*stated* tolerance and the observed error against it. Bootstrapping the four committed
+anchor runs — resampling each run's own requests 4,000 times to see how much its percentiles
+would move under a different draw — gives 95% intervals on their own p50 and p95 of **±25.9%
+and ±24.7%**, at 180–196 measured requests per run. That is the resolution of the instrument
+the simulator is being compared against, so a tighter tolerance would not be a stricter test
+but an unfalsifiable one. Improving it is a matter of run length rather than analysis:
+halving the interval takes roughly four times the requests per anchor. Every reported error
+carries the corresponding anchor interval beside it, so the limiting side of the comparison
+stays visible.
+
 **One trace across all of them.** The points differ only by `rate_scale`: the same trace
 file, replayed with its arrival timeline compressed. Three separately seeded traces would
 change the length draw and the burst structure along with the rate, and a disagreement
@@ -667,14 +721,14 @@ $ uv run anchors configs/anchors_1b.json
 4/4 anchors valid, written under runs/anchors
 ```
 
-Four points rather than three, because F-23's "at least 3" is a floor and a sweep that
-loses one run to a send-lag violation should still have an anchor set. Each is the same 200
+We run four points rather than three, because F-23's "at least 3" is a floor and a sweep
+that loses one run to a send-lag violation should still leave a usable anchor set. Each is the same 200
 requests of `Llama-3.2-1B-Instruct` on one GTX 1650 Ti at `-ngl 99 --parallel 4`; only the
 clock differs. The manifests are committed under [`runs/anchors`](runs/anchors) — they are
 the whole record, since the trace regenerates from its seed.
 
 The operating points are chosen against the pool's **measured** capacity, and the first
-sweep exists to measure it. My estimate from the C-3 table's concurrency-4 cells was 2.9
+sweep exists to measure it. The estimate from the C-3 table's concurrency-4 cells was 2.9
 req/s; the pool actually retires about 1.65, because the table prices a cell at a controlled
 concurrency and a real length mix does not hold concurrency still. That first sweep is kept
 under [`runs/sweeps/capacity_probe_1b`](runs/sweeps/capacity_probe_1b) with its own note,
@@ -697,9 +751,9 @@ A lone UTF-8 continuation byte. Forced-length generation (`n_predict` + `ignore_
 mid-character, and this build runs `/completion` output through the chat content parser.
 The work was done; the engine refused to hand it over. It is a **response-serialization
 failure, not a capacity limit**, and it is the same signature as the periodic
-`engine_error`s the Week-2 CPU node produced and that I could not explain at the time.
+`engine_error`s the Week-2 CPU node produced, which had no explanation at the time.
 
-It is not avoidable from my side. `--no-jinja`, `--reasoning-format none` and
+It is not avoidable from the data plane's side. `--no-jinja`, `--reasoning-format none` and
 `--reasoning off` each leave the rate unchanged at 2 in 200, and Llama-3's BPE *does*
 carry byte tokens, so a `logit_bias` could suppress them — but that is not a way out
 either: truncation on a **lead** byte fails the same parse, and any token can end mid-
@@ -733,13 +787,19 @@ fitted latency rise is +12.8 s against a p50 of 14.1 s, and the pool retired 1.5
 against 1.98 offered. So the pool's ceiling is about 1.6 req/s and the band sits just under
 it.
 
+A third reading, added when the analysis layer was audited against §5.4, agrees with both.
+Queue wait is a dependent variable in its own right, and it locates the onset more sharply
+than the tail test does: median queue wait is **0.01 ms** at both the quiet and light
+anchors — effectively no queue at all — then **731 ms** at mid and **11.8 s** at heavy. The
+band's upper edge sits exactly at that transition.
+
 Worth noting what did **not** move. These are the numbers from the patched engine, and the
 band lands in the same place as the pre-patch sweep did — 1.03–1.30 either way. The patch
 recovered the ~1% of requests the engine had been dropping without changing the queueing
 physics, which is what a fix to a serialization bug should look like. What changed is the
 `ok` column: 198/200 on every point before, **200/200 on every point now**.
 
-Three rules, stated rather than tuned:
+We fixed three rules in advance rather than tuning them against the data:
 
 **Onset is tail against tail.** A point is inside the band once its p99 is 20% worse than
 the *reference point's p99*. The first version of this rule compared p99 to the reference
@@ -751,14 +811,16 @@ trace, so the length composition is identical by construction and a tail-to-tail
 isolates the one thing that changed.
 
 **Saturation is read two ways.** The trend test fits latency against arrival time and calls
-a point saturated when the fitted rise across the window is at least the run's own p50. The
-shortfall test compares achieved throughput to the offered rate — in an open-loop replay the
-trace fixes the offered rate, so a pool retiring less than that grew a backlog by definition.
+a point saturated when the fitted rise across the window is at least the run's own p50 — a
+pool that is keeping up shows flat latency, one that is falling behind shows a climb. The
+shortfall test instead compares completions per second against the rate that was offered;
+because the replay is open-loop, the trace fixes the offered rate, so a pool retiring less
+than that has grown a backlog by definition.
 Both are here because the trend test missed a point the shortfall test caught: at 1.80 req/s
 against a pool that retires 1.65, the backlog builds slowly enough that over 111 seconds the
 fitted rise reached only 0.30 of the run's p50, while the pool was visibly retiring 1.63.
 
-**What one node cannot tell you.** With a single-node pool there is no placement to get
+**What one node cannot show.** With a single-node pool there is no placement to get
 wrong, so these runs bound the band from physics — queueing exists here, the queue clears
 here — but cannot demonstrate the thing the band is *defined* by, which is that policies
 differ inside it. `policy_separable` is `false` in the output until the pool has two hosts,
@@ -772,7 +834,7 @@ The window has no slack, so the result ladder is defined in advance and strictly
 | | | Depends on |
 |---|---|---|
 | **MPR-1** ✅ | A characterization of throughput non-stationarity in consumer LLM serving nodes — τ, the variance envelope, and the implication that any single calibrated tok/s figure is a moving average over a non-stationary process. | Nothing. Hardware only. |
-| **MPR-2** | The H1 2×2 decomposition on real hardware, across the synthesized *R* range, plus the load-band characterization. | Week 3–4, **and a second machine**. |
+| **MPR-2** | The H1 2×2 decomposition on real hardware, across the synthesized *R* range, plus the load-band characterization. | Week 3–4, **and a second machine**. The estimator is built and the load band is done; the decomposition needs a pool that spans some heterogeneity. |
 | **MPR-3** | H2 and H3 — the non-monotonic advantage curve and its shift under staleness, in the validated simulator. | Weeks 5–6. |
 
 MPR-1 stands alone as a measurement contribution and needs no scheduler comparison at all —
@@ -866,8 +928,8 @@ uv run load-band  runs/anchors --out runs/anchors/load_band.json  # §5.5
 ```
 
 Analysis is two more, and neither needs a node up — they are pure functions of the files
-the runs left behind, which is what lets Aditya hand me a directory of *simulator* logs and
-have the same code process it:
+the runs left behind — which is what lets the control plane hand over a directory of
+*simulator* logs and have the same code process them:
 
 ```bash
 uv run runset  runs/anchors --out runs/anchors/runset.parquet   # F-19 — many runs, one frame
@@ -929,7 +991,7 @@ of Week 1.
 | 1 | Worker wrapper, heartbeat, thin client, measurement harness. One query routed and measured end to end. |
 | 2 | Calibration campaign; τ and the variance envelope; synthesizable *R* range. **MPR-1.** — ✅ *τ = 69.5 s on the CPU class (r² = 0.989, SE inflation 1.36×), no measurable drift on either GPU class, with the instrument limit that explains the difference. R = 2.00× configured, 1.00× deployable. F-9b still blocked on VRAM.* |
 | 3 | Multi-node pool; all five policies behind one config value; load band identified. **Feature freeze.** — *node serving; admissible set determined on two node classes; 4 valid anchors at 200/200; load band 1.03–1.30 req/s; LAN preflight built. Still one host, so policy separation is not demonstrated and the pool is not yet multi-node.* |
-| 4 | Discrete-event simulator sharing policy code; validated against hardware. — *my half done ahead of the LAN: the pipeline now assembles run **sets**, derives R from each run's own C-3 snapshots rather than a typed flag, and renders §5.5 with F-24's stamp read from the manifest. The F-23 validation figure is written and refuses until the simulator's half of the set exists.* |
+| 4 | Discrete-event simulator sharing policy code; validated against hardware. — *the data-plane half is complete and did not need the LAN: the pipeline assembles run **sets**, derives R from each run's own C-3 snapshots rather than a typed flag, and renders §5.5 and all four of §5.4's dependent variables with F-24's stamp read from the manifest. F-23's validation figure reports p50 and p95 against a stated ±25% tolerance and refuses until the simulator's half of the set exists.* |
 | 5 | Sweeps: *R* × load × staleness × policy. Hypotheses tested. |
 | 6 | Analysis, threats to validity, literature positioning, writeup. |
 

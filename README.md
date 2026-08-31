@@ -713,11 +713,19 @@ The window has no slack, so the result ladder is defined in advance and strictly
 
 | | | Depends on |
 |---|---|---|
-| **MPR-1** | A characterization of throughput non-stationarity in consumer LLM serving nodes — τ, the variance envelope, and the implication that any single calibrated tok/s figure is a moving average over a non-stationary process. | Nothing. Week 2, hardware only. |
-| **MPR-2** | The H1 2×2 decomposition on real hardware, across the synthesized *R* range, plus the load-band characterization. | Week 3–4. |
+| **MPR-1** ✅ | A characterization of throughput non-stationarity in consumer LLM serving nodes — τ, the variance envelope, and the implication that any single calibrated tok/s figure is a moving average over a non-stationary process. | Nothing. Hardware only. |
+| **MPR-2** | The H1 2×2 decomposition on real hardware, across the synthesized *R* range, plus the load-band characterization. | Week 3–4, **and a second machine**. |
 | **MPR-3** | H2 and H3 — the non-monotonic advantage curve and its shift under staleness, in the validated simulator. | Weeks 5–6. |
 
-MPR-1 stands alone as a measurement contribution and needs no scheduler comparison at all.
+MPR-1 stands alone as a measurement contribution and needs no scheduler comparison at all —
+which is exactly why it is the one that has landed. It came out sharper than "here is a τ",
+because the drift turned out to belong to a *particular kind of node*: **τ = 69.5 s on the
+CPU class, and nothing measurable on either GPU class**, with an instrument limit
+(`τ > 5 × service`) that explains why. That last part is the reusable half — it tells anyone
+repeating this what their hardware has to be able to do before the question is even askable.
+
+MPR-2 has half its inputs. The load-band characterization is done; the 2×2 decomposition
+across *R* is not, and cannot be, while deployable *R* is 1.00×.
 
 ---
 
@@ -845,8 +853,8 @@ of Week 1.
 | Week | Focus |
 |---|---|
 | 1 | Worker wrapper, heartbeat, thin client, measurement harness. One query routed and measured end to end. |
-| 2 | Calibration campaign; τ and the variance envelope; synthesizable *R* range. **MPR-1.** — *campaign built and run; τ reported as a bound with the two measurement floors that bound it; R range measured and blocked on a second host; F-9b outstanding* |
-| 3 | Multi-node pool; all five policies behind one config value; load band identified. **Feature freeze.** — *node serving; admissible set determined; 4 valid F-23 anchors on one trace; load band 1.03–1.30 req/s. Still one host, so policy separation is not demonstrated, and the pinned engine 500s on ~1% of requests* |
+| 2 | Calibration campaign; τ and the variance envelope; synthesizable *R* range. **MPR-1.** — ✅ *τ = 69.5 s on the CPU class (r² = 0.989, SE inflation 1.36×), no measurable drift on either GPU class, with the instrument limit that explains the difference. R = 2.00× configured, 1.00× deployable. F-9b still blocked on VRAM.* |
+| 3 | Multi-node pool; all five policies behind one config value; load band identified. **Feature freeze.** — *node serving; admissible set determined on two node classes; 4 valid anchors at 200/200; load band 1.03–1.30 req/s; LAN preflight built. Still one host, so policy separation is not demonstrated and the pool is not yet multi-node.* |
 | 4 | Discrete-event simulator sharing policy code; validated against hardware. |
 | 5 | Sweeps: *R* × load × staleness × policy. Hypotheses tested. |
 | 6 | Analysis, threats to validity, literature positioning, writeup. |

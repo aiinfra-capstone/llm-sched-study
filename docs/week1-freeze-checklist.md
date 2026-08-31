@@ -226,13 +226,19 @@ with no slack, not on merit.
 
       | point | `rate_scale` | λ | ok | max send lag |
       |---|---:|---:|---:|---:|
-      | quiet | 0.80 | 0.72/s | 198/200 | 6.6 ms |
-      | light | 1.15 | 1.03/s | 198/200 | 3.7 ms |
-      | mid | 1.45 | 1.30/s | 198/200 | 2.8 ms |
-      | heavy | 2.20 | 1.98/s | 198/200 | 2.7 ms |
+      | quiet | 0.80 | 0.72/s | **200/200** | 26.1 ms |
+      | light | 1.15 | 1.03/s | **200/200** | 12.8 ms |
+      | mid | 1.45 | 1.30/s | **200/200** | 9.3 ms |
+      | heavy | 2.20 | 1.98/s | **200/200** | 5.7 ms |
 
       Four rather than three, because "at least 3" is a floor and a sweep that loses a run to
       a send-lag violation should still have an anchor set. The manifests are committed.
+
+      These are the numbers from the patched engine. The set collected before `+p1` had
+      198/200 at every point — the two missing per run were the engine discarding a completed
+      generation, not the pool failing — and it is kept under
+      `runs/superseded/week2-unpatched-engine/` rather than deleted, so the two can be
+      compared.
 
 - [x] **Load band (§5.5) — 1.03–1.30 req/s** on the one-node 1B pool, against a measured
       ceiling of about 1.6 req/s. `policy_separable` is `false` in the output and stays there
@@ -266,7 +272,8 @@ with no slack, not on merit.
 - [x] **A methodology note I paid for.** The first four-point campaign collapsed — 99 timeouts
       and a 3.7-second client send lag at an offered rate well under capacity — because I ran
       the test suite on the load host while it was measuring. The re-run on a quiet machine
-      gave 4/4 valid with 198/200 ok at every point. `perf` tests are deselected by default
+      gave 4/4 valid with 198/200 ok at every point — and 200/200 once the engine patch
+      landed. `perf` tests are deselected by default
       for exactly this reason; the rule has to cover the *whole* suite during a campaign, not
       just the tests labelled as load measurements.
 

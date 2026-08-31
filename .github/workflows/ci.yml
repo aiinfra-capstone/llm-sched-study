@@ -18,17 +18,9 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-      # Validates every file in contracts/examples/ against its schema and
-      # compiles scheduling.proto. If you add a field, add it to the example in
-      # the same commit — an example that no longer exercises the schema is how
-      # drift gets in (§12.2).
       - run: uv run contracts/check.py
-      # contracts/check.py and fixtures/ live outside dataplane/, so they need their
-      # own lint pass — otherwise the fake scheduler is the one Python in the repo
-      # that nothing checks.
       - run: uv run --with ruff ruff check contracts/check.py fixtures
       - run: uv run --with ruff ruff format --check contracts/check.py fixtures
-
 
   dataplane:
     name: "Data plane — Divyansh (A)"
@@ -46,15 +38,16 @@ jobs:
       - run: uv run ruff format --check .
       - run: uv run pytest -q
 
-    controlplane:
+  controlplane:
     name: "Control plane — Aditya (B)"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # PLACEHOLDER. F-21 leaves B free to choose any gRPC-capable language for
-      # scheduler + policies + DES — but B must choose ONCE, and the choice is a
-      # Week-1 freeze item. Replace this step with the real build/test
-      # invocation when the language is committed.
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: "temurin"
       - name: Build Control Plane (Java)
         working-directory: ./controlplane
         run: mvn clean compile

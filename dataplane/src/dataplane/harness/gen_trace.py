@@ -45,11 +45,26 @@ TRACE_SCHEMA_VERSION = 1
 # nothing that is measured. A trace claiming `true` while sampling id 2 would be the
 # actual problem. See harness/prompts.py for why excluding a low floor properly needs a
 # C-2 field that does not exist yet.
+# Every entry read out of the GGUF the node actually loads, never off a model card. The
+# materializer samples ids below `vocab_size`, so a wrong number here fills prompts with ids
+# the model does not have — and the trace stores seeds rather than tokens, so it would
+# surface weeks later as strange prefill figures in someone else's plot.
+#
+# `reserved_ids_excluded` is True only where a *ceiling* can exclude the reserved block,
+# which needs the specials to sit at the top of the vocabulary. Llama-3 and Granite keep
+# theirs there (128000 of 128256; 100256 of 100352). Mistral, Gemma and LFM2 keep theirs at
+# 0-7, and a ceiling cannot exclude a floor — LFM2 has reserved ids at *both* ends — so the
+# honest value is False. Nothing measured changes either way: output length is forced with
+# `ignore_eos` and no prompt is ever decoded back to text, so a reserved id inside a prompt
+# is a token the model has and nothing more.
 MODELS: dict[str, dict[str, Any]] = {
     "llama3-8b": {"vocab_size": 128000, "reserved_ids_excluded": True},
     "llama32-3b": {"vocab_size": 128000, "reserved_ids_excluded": True},
     "llama32-1b": {"vocab_size": 128000, "reserved_ids_excluded": True},
     "mistral-7b-v03": {"vocab_size": 32768, "reserved_ids_excluded": False},
+    "gemma4-e4b": {"vocab_size": 262144, "reserved_ids_excluded": False},
+    "granite4-h-tiny": {"vocab_size": 100256, "reserved_ids_excluded": True},
+    "lfm2-2.6b": {"vocab_size": 65536, "reserved_ids_excluded": False},
 }
 
 # Header field order is fixed to match contracts/examples/trace.sample.jsonl. Byte-identical

@@ -235,39 +235,80 @@ contaminates the very tail latencies MPR-1 is measuring.
 ### The model set
 
 One model is an anecdote. A reviewer will ask whether a scheduling result is a property of
-scheduling or a property of Llama-3-8B, and "we only ran one model" is not an answer. Four
-GGUFs are staged, chosen to vary along two axes that can be named in a sentence each:
+scheduling or a property of Llama-3-8B, and "we only ran one model" is not an answer. Seven
+GGUFs are staged, varying along three axes that can each be named in a sentence.
 
-| Model | `Q4_K_M` bytes | Fits 4 GB VRAM | What it is for |
-|---|---:|---|---|
-| `Llama-3.2-1B-Instruct` | 807,694,464 | fully, `-ngl 99` | Fast iteration; the harness smoke path |
-| `Llama-3.2-3B-Instruct` | 2,019,377,696 | fully, `-ngl 99` | Scale rung; a fully GPU-resident node class |
-| `Mistral-7B-Instruct-v0.3` | 4,372,812,000 | partial | **Architecture control** at the 8B's size class |
-| `Meta-Llama-3-8B-Instruct` | 4,920,734,272 | partial | The primary condition |
+| Model | `Q4_K_M` bytes | Fits 4 GB VRAM | KV/token | What it is for |
+|---|---:|---|---:|---|
+| `Llama-3.2-1B-Instruct` | 807,694,464 | fully, `-ngl 99` | 64 KiB | Fast iteration; the harness smoke path |
+| `LFM2-2.6B` | 1,563,668,704 | fully, `-ngl 99` | **16 KiB** | **KV-light hybrid** — GPU-resident and cheap per token |
+| `Llama-3.2-3B-Instruct` | 2,019,377,696 | fully, `-ngl 99` | 112 KiB | Scale rung; a fully GPU-resident node class |
+| `granite-4.0-h-tiny` | 4,230,976,352 | partial | **8 KiB** | **Mamba-2 hybrid + MoE** — the extreme of the KV axis |
+| `Mistral-7B-Instruct-v0.3` | 4,372,812,000 | partial | 128 KiB | Architecture control at the 8B's size class |
+| `gemma-4-E4B-it` | 4,977,171,584 | partial | 168 KiB\* | **Bounded KV growth** — 512-token sliding window |
+| `Meta-Llama-3-8B-Instruct` | 4,920,734,272 | partial | 128 KiB | The primary condition |
 
-Scale (1B → 3B → 8B, one family, one quantization) separates *bigger model* from
-*different model*. Mistral-7B against Llama-3-8B at the same quantization separates
-*architecture* from *size*. Between them a reviewer gets variety that answers a question
-rather than variety that just looks like effort.
+**Axis 1 — scale.** 1B → 3B → 8B, one family, one quantization, separating *bigger model*
+from *different model*.
+
+**Axis 2 — architecture at a fixed size class.** Mistral-7B against Llama-3-8B separates
+*architecture* from *size*.
+
+**Axis 3 — KV-cache footprint per token**, which is new and is the one that matters most
+here. Every slot of `--parallel` holds a KV cache, so KV pressure is what bends the
+service-time-versus-concurrency curve — it *is* the knee F-4 is about and the reason the
+admissible set is drawn "at every calibrated concurrency". The old four-model set spanned
+64–128 KiB, a factor of two, and Mistral and Llama-3-8B are **identical** at 128 KiB: the
+architecture control varied the tokenizer and the weights but not the thing the study
+measures. The set now spans **8 KiB to 168 KiB, a factor of 21**, and it does so through
+three different mechanisms rather than by picking bigger and smaller models:
+
+| | Layers | With attention | Experts | Vocab | Mechanism |
+|---|---:|---:|---|---:|---|
+| `granite-4.0-h-tiny` | 40 | **4** | 64, **6 used** | 100,352 | Mamba-2 state on 36 of 40 layers; sparse activation |
+| `LFM2-2.6B` | 30 | **8** | dense | 65,536 | short convolutions on 22 of 30 layers |
+| `gemma-4-E4B-it` | 42 | 42 | dense | 262,144 | 512-token sliding window interleaved with global |
+
+\*Gemma 4's 168 KiB is the per-token figure; with a 512-token sliding window on most layers
+its KV per *sequence* saturates rather than growing linearly, so its KV-versus-context curve
+is flat where every other model's is a straight line. That is the point of including it.
+
+Granite is the extreme case and the most interesting node a scheduler could be handed: at
+4 slots × 2048 tokens it holds **64 MiB** of KV against Llama-3-8B's **1 GiB**, and it
+advertises a 1,048,576-token context. It is also MoE, so its decode compute is 1B-scale
+while its resident memory is 7B-scale. Weight footprint, compute per token and KV footprint
+are three separate things, and this set now varies them independently.
 
 > **The model is held constant inside a pool, exactly like the engine and the
 > quantization.** F-9 is not only about llama.cpp. A pool running two models has an *R*
-> confounded with a model effect, and neither the H1 2×2 decomposition nor the *R*-sweep
-> can pull those apart afterwards. Variety here is a **replication axis across run sets** —
-> the same hypotheses re-run end to end at a second model — and `manifest.nodes[].model`
-> with `.quant` is what makes that auditable instead of assumed.
+> confounded with a model effect, and neither the H1 2×2 decomposition nor the *R*-sweep can
+> pull those apart afterwards. Variety here is a **replication axis across run sets** — the
+> same hypotheses re-run end to end at a second model — and `manifest.nodes[].model` with
+> `.quant` is what makes that auditable instead of assumed.
 
-The payoff is not only rhetorical. The 1B and 3B builds fit entirely in 4 GB of VRAM, so on
-the same card they reach `-ngl 99` node classes the 8B cannot — which *widens the
+The payoff is not only rhetorical. The 1B, 3B and LFM2 builds fit entirely in 4 GB of VRAM,
+so on the same card they reach `-ngl 99` node classes the 8B cannot — which *widens the
 synthesizable R range*, and §7 asks for that range to be reported as a range rather than a
 single figure (MPR-2).
+
+**All three additions load and serve on the pinned, patched engine** — checked rather than
+assumed, since `strings libllama.so` reporting an architecture is not the same as loading a
+file. Each was started under `llama-server`, health-polled and asked for a completion, and
+each returned HTTP 200 with the F-18 `timings` block intact. The pinned commit is dated
+2026-08-21, which is why an April-2026 architecture like `gemma4` loads with **no re-pin and
+no re-patch**. Two things that do *not* load, so nobody wastes an afternoon: `gemma4moe`
+(the 26B-A4B variant) is absent from this build, and of the GLM family only `glm4moe` is
+present, which starts at 106B and does not fit.
 
 ```bash
 cd ~/models/gguf
 for m in \
   bartowski/Llama-3.2-1B-Instruct-GGUF/Llama-3.2-1B-Instruct-Q4_K_M.gguf \
   bartowski/Llama-3.2-3B-Instruct-GGUF/Llama-3.2-3B-Instruct-Q4_K_M.gguf \
-  bartowski/Mistral-7B-Instruct-v0.3-GGUF/Mistral-7B-Instruct-v0.3-Q4_K_M.gguf
+  bartowski/Mistral-7B-Instruct-v0.3-GGUF/Mistral-7B-Instruct-v0.3-Q4_K_M.gguf \
+  unsloth/gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q4_K_M.gguf \
+  ibm-granite/granite-4.0-h-tiny-GGUF/granite-4.0-h-tiny-Q4_K_M.gguf \
+  LiquidAI/LFM2-2.6B-GGUF/LFM2-2.6B-Q4_K_M.gguf
 do
   f=$(basename "$m")
   curl -sL --fail -C - -o "$f" "https://huggingface.co/$(dirname "$m")/resolve/main/$f"
@@ -275,17 +316,34 @@ done
 sha256sum *.gguf > SHA256SUMS
 ```
 
+Run those in parallel rather than in a loop if the link allows: on this connection one
+stream managed 1.6 MB/s and three managed 3.0 MB/s together, which turned 110 minutes into
+50.
+
 `~/models/gguf/SHA256SUMS` is the check a node runs before it joins the pool — `sha256sum
 -c SHA256SUMS` — because "the same model" has to mean the same bytes, not the same name on
 a HuggingFace page that can be re-uploaded under you:
 
 ```
+85a896a047553e842f25297ee5b031d64ff30147d9c4af17b1e4b394cd1fab87  gemma-4-E4B-it-Q4_K_M.gguf
+5a38b08c441ae1adbafb1d2b8a7167e0d48734d83af68b268cefea1eec553dcd  granite-4.0-h-tiny-Q4_K_M.gguf
+384bc877b6c37064982f96885bef69e4475919f5969218ed4e3b9399ae0340df  LFM2-2.6B-Q4_K_M.gguf
 6f85a640a97cf2bf5b8e764087b1e83da0fdb51d7c9fab7d0fece9385611df83  Llama-3.2-1B-Instruct-Q4_K_M.gguf
 6c1a2b41161032677be168d354123594c0e6e67d2b9227c84f296ad037c728ff  Llama-3.2-3B-Instruct-Q4_K_M.gguf
 8ba9baf3a7345f705a11878397500fb25174034f0fd784e83aa4a96aaa47735f  Meta-Llama-3-8B-Instruct-Q4_K_M.gguf
 1270d22c0fbb3d092fb725d4d96c457b7b687a5f5a715abe1e818da303e562b6  Mistral-7B-Instruct-v0.3-Q4_K_M.gguf
 ```
 
+Each model's `vocab_size` and `reserved_ids_excluded` in `gen_trace.MODELS` are read out of
+the **GGUF the node actually loads**, never off a model card. The materializer samples ids
+below `vocab_size`, so a wrong number fills prompts with ids the model does not have — and
+because a trace stores seeds rather than tokens, that would surface weeks later as strange
+prefill figures in someone else's plot. `reserved_ids_excluded` is `true` only where a
+*ceiling* can exclude the reserved block: Llama-3 and Granite keep their specials at the top
+(128000 of 128256; 100256 of 100352), while Mistral, Gemma and LFM2 keep theirs at ids 0-7.
+A ceiling cannot exclude a floor, and LFM2 has reserved ids at **both** ends, so `false` is
+the honest value there. Nothing measured changes either way — output length is forced with
+`ignore_eos` and no prompt is ever decoded back to text.
 
 ### The calibration campaign
 
@@ -797,7 +855,7 @@ cd dataplane && uv sync --all-groups && uv run pytest
 ```
 
 With a node up (see [*The live pool*](#the-live-pool-what-a-node-actually-is)), the Week-2
-and Week-3 determinations are four commands, each of which writes the artifact it prints:
+and Week-3 determinations are five commands, each of which writes the artifact it prints:
 
 ```bash
 uv run calibrate  --config configs/calibration_1b.json --out runs/calibration/llama32-1b

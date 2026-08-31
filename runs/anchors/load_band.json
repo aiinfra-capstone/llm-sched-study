@@ -1,0 +1,72 @@
+{
+  "lo_rps": 1.035,
+  "hi_rps": 1.305,
+  "identified": true,
+  "reference_p50_ms": 1366.64,
+  "reference_p99_ms": 4105.95,
+  "policy_separable": false,
+  "onset_rule": "p99 >= 1.2 x the reference point's p99",
+  "saturation_rule": "fitted rise across the window >= 1.0 x own p50, or achieved throughput < 0.95 x offered",
+  "points": [
+    {
+      "name": "quiet",
+      "lambda_rps": 0.72,
+      "n": 196,
+      "failures": 0,
+      "p50_ms": 1366.64,
+      "p95_ms": 3739.05,
+      "p99_ms": 4105.95,
+      "drift_ms": -115.75,
+      "achieved_rps": 0.7448,
+      "saturated": false,
+      "climbing": false,
+      "short": false,
+      "usable": true
+    },
+    {
+      "name": "light",
+      "lambda_rps": 1.035,
+      "n": 193,
+      "failures": 0,
+      "p50_ms": 1981.19,
+      "p95_ms": 4534.44,
+      "p99_ms": 5476.0,
+      "drift_ms": -128.03,
+      "achieved_rps": 1.0614,
+      "saturated": false,
+      "climbing": false,
+      "short": false,
+      "usable": true
+    },
+    {
+      "name": "mid",
+      "lambda_rps": 1.305,
+      "n": 190,
+      "failures": 0,
+      "p50_ms": 2980.19,
+      "p95_ms": 5974.21,
+      "p99_ms": 7115.03,
+      "drift_ms": -311.97,
+      "achieved_rps": 1.3385,
+      "saturated": false,
+      "climbing": false,
+      "short": false,
+      "usable": true
+    },
+    {
+      "name": "heavy",
+      "lambda_rps": 1.98,
+      "n": 180,
+      "failures": 0,
+      "p50_ms": 14137.12,
+      "p95_ms": 23985.7,
+      "p99_ms": 25068.3,
+      "drift_ms": 12829.64,
+      "achieved_rps": 1.5785,
+      "saturated": true,
+      "climbing": false,
+      "short": true,
+      "usable": true
+    }
+  ]
+}

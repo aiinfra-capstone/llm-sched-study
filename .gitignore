@@ -21,13 +21,30 @@ wheels/
 # sha256, and the git shas needed to reproduce any of it (F-20).
 # ---------------------------------------------------------------------------
 traces/
-runs/
+runs/**
 results/
 *.parquet
 figures/out/
 
-# Calibration snapshots are the exception: the TIME-ORDERED C-3 series is an
-# input to B's DES and to H3, so it is versioned. Keep it under contracts/.
+# Two exceptions, and both are things another person has to be able to read.
+#
+# The run manifest is the committed record of a run (F-20) — it carries the seed, the
+# trace sha256 and the git shas needed to reproduce everything else. Week 3's validation
+# anchors are *identified* by their manifests, so a checkout with no manifests has no
+# anchor set and F-23 cannot be checked by anyone but me.
+!runs/**/
+!runs/**/manifest.json
+!runs/**/README.md
+
+# Week 3's two determinations are small JSON and they ARE the deliverable — an admissible
+# set that lives only on my disk has not been reported alongside results (F-13), and a load
+# band nobody else can read is not a characterization.
+!runs/admissible/*.json
+!runs/**/load_band.json
+
+# And the TIME-ORDERED C-3 snapshot series, which is an input to B's DES and to H3.
+# Versioned under contracts/cost_models/<node_class>/ so that parameterizing the simulator
+# does not require a copy of my machine.
 !contracts/examples/*.json
 
 # UML figures: sources and the report's pdf-notitle set are committed; the PNG and
@@ -35,3 +52,6 @@ figures/out/
 docs/uml/out/png/
 docs/uml/out/pdf/
 docs/uml/.plantuml/
+
+# protoc output — regenerated from contracts/scheduling.proto on import
+dataplane/src/dataplane/_generated/

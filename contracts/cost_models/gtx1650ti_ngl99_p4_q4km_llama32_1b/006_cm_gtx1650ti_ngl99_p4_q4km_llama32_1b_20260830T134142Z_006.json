@@ -1,0 +1,164 @@
+{
+  "cost_model_schema": 1,
+  "snapshot_id": "cm_gtx1650ti_ngl99_p4_q4km_llama32_1b_20260830T134142Z_006",
+  "node_class": "gtx1650ti_ngl99_p4_q4km_llama32_1b",
+  "measured_at_unix": 1788097302,
+  "calibration_run_ids": [
+    "cal_gtx1650ti_ngl99_p4_q4km_llama32_1b_1788096882"
+  ],
+  "form": "lookup_table",
+  "entries": [
+    {
+      "prompt_bucket": [
+        1,
+        128
+      ],
+      "output_bucket": [
+        1,
+        64
+      ],
+      "concurrency": 1,
+      "service_ms_mean": 310.973,
+      "service_ms_p50": 310.975,
+      "service_ms_p95": 311.373,
+      "tokens_per_s": 151.2323,
+      "n_samples": 4
+    },
+    {
+      "prompt_bucket": [
+        1,
+        128
+      ],
+      "output_bucket": [
+        1,
+        64
+      ],
+      "concurrency": 4,
+      "service_ms_mean": 812.905,
+      "service_ms_p50": 812.828,
+      "service_ms_p95": 816.293,
+      "tokens_per_s": 71.5489,
+      "n_samples": 588
+    },
+    {
+      "prompt_bucket": [
+        1,
+        128
+      ],
+      "output_bucket": [
+        65,
+        128
+      ],
+      "concurrency": 1,
+      "service_ms_mean": 971.643,
+      "service_ms_p50": 972.529,
+      "service_ms_p95": 973.766,
+      "tokens_per_s": 147.029,
+      "n_samples": 4
+    },
+    {
+      "prompt_bucket": [
+        1,
+        128
+      ],
+      "output_bucket": [
+        65,
+        128
+      ],
+      "concurrency": 4,
+      "service_ms_mean": 1720.686,
+      "service_ms_p50": 1720.814,
+      "service_ms_p95": 2123.035,
+      "tokens_per_s": 92.8146,
+      "n_samples": 4
+    },
+    {
+      "prompt_bucket": [
+        129,
+        512
+      ],
+      "output_bucket": [
+        1,
+        64
+      ],
+      "concurrency": 1,
+      "service_ms_mean": 564.475,
+      "service_ms_p50": 563.597,
+      "service_ms_p95": 567.292,
+      "tokens_per_s": 149.0758,
+      "n_samples": 4
+    },
+    {
+      "prompt_bucket": [
+        129,
+        512
+      ],
+      "output_bucket": [
+        1,
+        64
+      ],
+      "concurrency": 4,
+      "service_ms_mean": 1387.52,
+      "service_ms_p50": 1387.835,
+      "service_ms_p95": 1798.549,
+      "tokens_per_s": 92.6884,
+      "n_samples": 4
+    },
+    {
+      "prompt_bucket": [
+        129,
+        512
+      ],
+      "output_bucket": [
+        65,
+        128
+      ],
+      "concurrency": 1,
+      "service_ms_mean": 1240.173,
+      "service_ms_p50": 1240.982,
+      "service_ms_p95": 1241.901,
+      "tokens_per_s": 144.3821,
+      "n_samples": 4
+    },
+    {
+      "prompt_bucket": [
+        129,
+        512
+      ],
+      "output_bucket": [
+        65,
+        128
+      ],
+      "concurrency": 4,
+      "service_ms_mean": 2514.929,
+      "service_ms_p50": 2514.993,
+      "service_ms_p95": 3169.187,
+      "tokens_per_s": 90.0932,
+      "n_samples": 4
+    }
+  ],
+  "stochastic": {
+    "model": "lognormal_multiplier",
+    "sigma": 0.02372,
+    "autocorr_time_s": 3.5,
+    "fit_r2": 0.0
+  },
+  "admissibility": {
+    "max_prompt": 2048,
+    "max_output": 256,
+    "timeout_ceiling_ms": 60000
+  },
+  "provenance": {
+    "engine": "llamacpp",
+    "engine_version": "b10569+p1+cuda13.2",
+    "quant": "Q4_K_M",
+    "gpu": "NVIDIA GeForce GTX 1650 Ti",
+    "driver": "580.173.02",
+    "prefix_caching": false,
+    "engine_config": {
+      "ngl": 99,
+      "threads": 6,
+      "parallel": 4
+    }
+  }
+}

@@ -1,0 +1,100 @@
+{
+  "cost_model_schema": 1,
+  "snapshot_id": "cm_gtx1650ti_ngl20_p4_q4km_llama3_8b_20260830T140339Z_005",
+  "node_class": "gtx1650ti_ngl20_p4_q4km_llama3_8b",
+  "measured_at_unix": 1788098619,
+  "calibration_run_ids": [
+    "cal_gtx1650ti_ngl20_p4_q4km_llama3_8b_1788098199"
+  ],
+  "form": "lookup_table",
+  "entries": [
+    {
+      "prompt_bucket": [
+        1,
+        128
+      ],
+      "output_bucket": [
+        1,
+        64
+      ],
+      "concurrency": 1,
+      "service_ms_mean": 4503.156,
+      "service_ms_p50": 4502.694,
+      "service_ms_p95": 4517.69,
+      "tokens_per_s": 13.4409,
+      "n_samples": 4
+    },
+    {
+      "prompt_bucket": [
+        1,
+        128
+      ],
+      "output_bucket": [
+        1,
+        64
+      ],
+      "concurrency": 4,
+      "service_ms_mean": 6023.317,
+      "service_ms_p50": 5989.155,
+      "service_ms_p95": 6416.258,
+      "tokens_per_s": 7.3895,
+      "n_samples": 120
+    },
+    {
+      "prompt_bucket": [
+        129,
+        512
+      ],
+      "output_bucket": [
+        1,
+        64
+      ],
+      "concurrency": 1,
+      "service_ms_mean": 6443.155,
+      "service_ms_p50": 6438.7,
+      "service_ms_p95": 6466.462,
+      "tokens_per_s": 12.999,
+      "n_samples": 4
+    },
+    {
+      "prompt_bucket": [
+        129,
+        512
+      ],
+      "output_bucket": [
+        1,
+        64
+      ],
+      "concurrency": 4,
+      "service_ms_mean": 13415.716,
+      "service_ms_p50": 13415.766,
+      "service_ms_p95": 17343.061,
+      "tokens_per_s": 8.9506,
+      "n_samples": 4
+    }
+  ],
+  "stochastic": {
+    "model": "lognormal_multiplier",
+    "sigma": 0.04264,
+    "autocorr_time_s": 32.0,
+    "fit_r2": 0.0
+  },
+  "admissibility": {
+    "max_prompt": 2048,
+    "max_output": 256,
+    "timeout_ceiling_ms": 300000
+  },
+  "provenance": {
+    "engine": "llamacpp",
+    "engine_version": "b10569+p1+cuda13.2",
+    "quant": "Q4_K_M",
+    "gpu": "NVIDIA GeForce GTX 1650 Ti",
+    "driver": "580.173.02",
+    "prefix_caching": false,
+    "engine_config": {
+      "ngl": 20,
+      "threads": 6,
+      "parallel": 4
+    }
+  }
+}

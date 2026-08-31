@@ -1,0 +1,60 @@
+{
+  "node_class": "gtx1650ti_ngl99_p4_q4km_llama32_1b",
+  "model": "Llama-3.2-1B-Instruct",
+  "host": "fedora",
+  "endpoint": "http://127.0.0.1:18080",
+  "prompt_edges": [
+    1,
+    128,
+    512,
+    2048
+  ],
+  "output_edges": [
+    1,
+    64,
+    128,
+    256
+  ],
+  "prompt_lens": [
+    64,
+    256
+  ],
+  "output_lens": [
+    128
+  ],
+  "concurrencies": [
+    1,
+    4
+  ],
+  "samples_per_cell": 4,
+  "warmup_per_cell": 2,
+  "sustained": {
+    "prompt_len": 256,
+    "output_len": 256,
+    "concurrency": 4,
+    "duration_s": 660,
+    "window_s": 10.0
+  },
+  "snapshot_every_s": 60.0,
+  "snapshot_window_s": 120.0,
+  "vocab_size": 128000,
+  "seed": 20260830,
+  "provenance": {
+    "engine": "llamacpp",
+    "engine_version": "b10569+p1+cuda13.2",
+    "quant": "Q4_K_M",
+    "gpu": "NVIDIA GeForce GTX 1650 Ti",
+    "driver": "580.173.02",
+    "prefix_caching": false,
+    "engine_config": {
+      "ngl": 99,
+      "threads": 6,
+      "parallel": 4
+    }
+  },
+  "admissibility": {
+    "max_prompt": 2048,
+    "max_output": 256,
+    "timeout_ceiling_ms": 60000
+  }
+}

@@ -21,14 +21,27 @@ dependencies = [
 # install that in a throwaway environment, not here.
 
 [project.scripts]
-gen-trace = "dataplane.harness.gen_trace:main"
-replay    = "dataplane.harness.replay:main"
-pipeline  = "dataplane.pipeline.join:main"
+gen-trace  = "dataplane.harness.gen_trace:main"
+replay     = "dataplane.harness.replay:main"
+pipeline   = "dataplane.pipeline.join:main"
+calibrate  = "dataplane.calibration.campaign:main"    # Week 2: the campaign (F-6, F-9a, MPR-1)
+r-range    = "dataplane.calibration.r_range:main"      # Week 2: the synthesizable R range (F-9a)
+launch     = "dataplane.harness.launch:main"          # F-9a: refuses a co-located pool
+worker     = "dataplane.worker.serve:main"            # Week 3: one live pool node (F-9/F-10/F-11)
+admissible = "dataplane.calibration.admissible:main"  # Week 3: the admissible set + cliff (F-13/F-15)
+anchors    = "dataplane.harness.anchors:main"         # Week 3: the F-23 validation anchors
+load-band  = "dataplane.pipeline.loadband:main"       # Week 3: the controlled load band (§5.5)
+preflight  = "dataplane.harness.preflight:main"       # before a multi-host pool: prove the LAN
+runset     = "dataplane.pipeline.runset:main"        # Week 4: many joined runs -> one frame
+figures    = "dataplane.figures.plots:main"         # Week 4: the figures, vehicle-stamped (F-24)
 
 [dependency-groups]
 dev = [
     "pytest>=8.0",
     "ruff>=0.6",
+    "jsonschema>=4.21", # C-4 conformance from the harness's own suite, not just contracts/check.py
+    "pytest-cov>=5.0",  # the coverage gate below; CI runs plain `pytest`, so it has to live here
+    "hypothesis>=6.100", # generated inputs for the invariants I can state but not enumerate
 ]
 
 [build-system]
@@ -43,3 +56,45 @@ line-length = 100
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# -rs prints the reason for every skip. The `test_forward_*` files are written against
+# work that is scheduled but not yet built, so the skip list IS the remaining backlog of
+# my half — and it should be readable from a CI log without adding a flag by hand.
+# --cov is on by default so that the gate in [tool.coverage.report] applies to the run CI
+# actually makes (`uv run pytest -q`), which I cannot add a flag to — .github/ is shared.
+# The cost is that running a subset trips the gate; use `--no-cov` for that:
+#
+#     uv run pytest tests/test_manifest.py --no-cov
+addopts = "-rs -m \"not perf\" --cov --cov-report=term-missing"
+markers = [
+    "forward: guards a deliverable from a later week; skips until the implementation lands",
+    "integration: crosses a real process boundary or a real socket; slower than a unit test",
+    "perf: a load measurement, not an assertion about correctness — see the note below",
+]
+# `perf` is deselected by default. Send-lag under sustained load is a property of the
+# machine, not of the code, so a shared CI runner cannot assert a threshold on it without
+# either flaking or being set so loose it proves nothing. Run it on the load host, where
+# the number means something:
+#
+#     uv run pytest -m perf
+
+[tool.coverage.run]
+source = ["src/dataplane"]
+branch = true
+# protoc output. Regenerated on import and gitignored (§12.2), so it is not code I wrote
+# and its uncovered lines are the grpc plumbing no caller reaches. What the stubs must
+# actually do is asserted behaviourally in tests/test_proto_stubs.py.
+omit = ["*/_generated/*"]
+
+[tool.coverage.report]
+show_missing = true
+# 100, deliberately, and not as a vanity number: this half of the repo is an instrument.
+# A line of the harness that no test executes is a line whose behaviour I would be
+# assuming when I report a measurement taken through it. Every entry point, every
+# refusal, and every arrival branch is reachable from a test today — if a new one is not,
+# the honest options are to test it or to delete it, and this makes that choice explicit
+# instead of letting the number drift down a percent per commit.
+fail_under = 100
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+]

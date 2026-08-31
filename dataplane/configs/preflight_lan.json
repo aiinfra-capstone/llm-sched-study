@@ -1,0 +1,38 @@
+{
+  "_comment": "Fill in the LAN addresses before the first multi-host run. client_endpoint is the port the replay client binds for F-11 deliveries; it must be reachable INBOUND from every worker host, which is the check nothing else performs.",
+  "client_endpoint": "192.168.1.50:50071",
+  "scheduler": "192.168.1.50:50051",
+  "workers": {
+    "gtx1650ti": "192.168.1.50:50061",
+    "node2": "192.168.1.51:50061"
+  },
+  "pool": [
+    {
+      "node_id": "gtx1650ti",
+      "host": "fedora",
+      "role": "pool",
+      "engine": "llamacpp",
+      "engine_version": "b10569+p1+cuda13.2",
+      "model": "Meta-Llama-3-8B-Instruct",
+      "quant": "Q4_K_M",
+      "gpu": "NVIDIA GeForce GTX 1650 Ti",
+      "driver": "580.173.02",
+      "prefix_caching": false,
+      "max_batch": 4,
+      "engine_config": { "ngl": 20, "threads": 6, "parallel": 4 }
+    },
+    {
+      "node_id": "node2",
+      "host": "REPLACE-ME",
+      "role": "pool",
+      "engine": "llamacpp",
+      "engine_version": "b10569+p1+cuda13.2",
+      "model": "Meta-Llama-3-8B-Instruct",
+      "quant": "Q4_K_M",
+      "gpu": "none",
+      "prefix_caching": false,
+      "max_batch": 4,
+      "engine_config": { "ngl": 0, "threads": 4, "parallel": 4 }
+    }
+  ]
+}

@@ -5,13 +5,17 @@ import java.io.File;
 import java.io.IOException;
 
 public class CostModelParser {
-    // A single, thread-safe ObjectMapper instance for the application
     private static final ObjectMapper mapper = new ObjectMapper();
 
-    /**
-     * Parses a C-3 JSON snapshot file into a CostModelSnapshot record.
-     */
-    public static CostModelSnapshot parse(String filePath) throws IOException {
-        return mapper.readValue(new File(filePath), CostModelSnapshot.class);
+    public static CostModelSnapshot parse(File file) throws IOException {
+        CostModelSnapshot snap = mapper.readValue(file, CostModelSnapshot.class);
+
+        // §12.2 strict schema version validation
+        if (snap.costModelSchema() != 1) {
+            throw new IOException(
+                    "cost_model_schema " + snap.costModelSchema() + " is not 1 in file: " + file.getName());
+        }
+
+        return snap;
     }
 }

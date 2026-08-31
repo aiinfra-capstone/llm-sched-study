@@ -44,7 +44,7 @@ jobs:
       - run: uv run ruff format --check .
       - run: uv run pytest -q
 
-  controlplane:
+    controlplane:
     name: "Control plane — Aditya (B)"
     runs-on: ubuntu-latest
     steps:
@@ -53,8 +53,6 @@ jobs:
       # scheduler + policies + DES — but B must choose ONCE, and the choice is a
       # Week-1 freeze item. Replace this step with the real build/test
       # invocation when the language is committed.
-      - name: Build and test
-        run: |
-          echo "::notice title=controlplane::No build configured yet."
-          echo "Week-1 freeze item: choose ONE language for controlplane/"
-          echo "(scheduler + policies + DES — F-21) and wire it up here."
+      - name: Build Control Plane (Java)
+        working-directory: ./controlplane
+        run: mvn clean compile

@@ -519,3 +519,37 @@ def test_cli_passes_the_experimental_condition_through_to_the_node(tmp_path, mon
     assert seen["config"].scheduler_endpoint == "127.0.0.1:50051"
     assert seen["config"].heartbeat_interval_s == 0.5
     assert seen["bind"] == "0.0.0.0:50061"
+
+
+def test_a_stop_driven_cancel_is_a_clean_exit_and_an_external_one_is_not(tmp_path) -> None:
+    """`outgoing()` returns when `stop` is set, which half-closes the stream and makes
+    grpc.aio cancel the call — so a normal shutdown surfaces as CancelledError inside the
+    loop. Swallowing every cancel would hide a real one; `stop` is what tells them apart."""
+
+    async def go():
+        svc = serve.WorkerService(
+            _config(tmp_path, scheduler_endpoint="127.0.0.1:1"), _FakeAdapter()
+        )
+
+        async def _cancelled(outbox, stop):
+            # Exactly the live sequence: the stream is up, `stop` fires, `outgoing()`
+            # returns, grpc cancels the call underneath us.
+            stop.set()
+            raise asyncio.CancelledError
+
+        async def _cancelled_from_outside(outbox, stop):
+            raise asyncio.CancelledError
+
+        svc._stream = _cancelled
+
+        # Shutting down on purpose: the loop exits without raising.
+        await svc.heartbeat_forever(stop=asyncio.Event())
+
+        svc._stream = _cancelled_from_outside
+
+        # Cancelled from outside with no stop pending: it still means what it means.
+        with pytest.raises(asyncio.CancelledError):
+            await svc.heartbeat_forever(stop=asyncio.Event())
+        await svc.drain()
+
+    asyncio.run(go())

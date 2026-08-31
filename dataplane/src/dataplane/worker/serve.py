@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -354,6 +355,16 @@ class WorkerService(sched_grpc.WorkerServicer):
             while not stop.is_set():
                 try:
                     await self._stream(outbox, stop)
+                except asyncio.CancelledError:
+                    # `outgoing()` returns when `stop` is set, which half-closes the stream,
+                    # and grpc.aio cancels the call in response. That is this loop shutting
+                    # itself down on purpose — not the task being cancelled from outside —
+                    # and letting it escape turns every clean stop into an exception. The
+                    # two cases are told apart by `stop`, and a real external cancel is
+                    # re-raised so it still means what it means.
+                    if not stop.is_set():
+                        raise
+                    return
                 except grpc.aio.AioRpcError:
                     if reconnect_s is None:
                         return
@@ -362,7 +373,14 @@ class WorkerService(sched_grpc.WorkerServicer):
                     except TimeoutError:
                         pass
         finally:
+            # Cancelled *and awaited*. `cancel()` only requests it; without waiting for the
+            # task to actually finish, this returns with a live task still unwinding, and a
+            # caller that closes the loop straight afterwards gets a CancelledError out of
+            # teardown instead of a clean stop. That is a real shutdown bug, not a test
+            # artifact -- `run_worker` does exactly this on the way out.
             beats.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await beats
 
     async def _stream(self, outbox: asyncio.Queue, stop: asyncio.Event) -> None:
         """One `StreamHeartbeat` call: drain the outbox up, take `BeginRun` down."""

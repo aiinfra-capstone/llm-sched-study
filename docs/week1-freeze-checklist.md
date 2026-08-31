@@ -12,7 +12,40 @@ decision that must be closed *before* the freeze, not after.
 
 ## Divyansh Shukla (A)
 
-- [ ] `scheduling.proto` reviewed and agreed with Aditya (C-1)
+- [x] `scheduling.proto` **reviewed — my half of the C-1 sign-off.** Not a rubber stamp: I
+      checked the wire against everything that has since been built, and the three invariants
+      the proto claims for itself all hold in code.
+
+      1. **`Completion` is separate from `Heartbeat`**, so the scheduler learns about a finish
+         immediately rather than at the next tick. Implemented — the worker fires
+         `ReportCompletion` per request. Without it, completion news would arrive only on the
+         heartbeat interval, which is a second uncontrolled staleness source sitting alongside
+         the one H3 injects on purpose.
+      2. **`client_endpoint` travels with the request**, which is what makes F-11 cheap.
+         Implemented and exercised over a real socket: the worker returns the response
+         directly and the scheduler is not in the response path.
+      3. **Cross-host stamps are carried, never differenced.** `client_send_mono_ns` and
+         `worker_mono_ns` are the only two, and grepping for arithmetic on either returns
+         nothing. Every duration in the analysis comes from one machine's monotonic clock.
+
+      All three services and all nine messages are reachable from working code — `Scheduler`,
+      `Worker` and `Client` servicers all implemented, `BeginRun` received both through
+      `Worker.Begin` and down the `StreamHeartbeat` response stream.
+
+      **Nothing needs to change for Weeks 4–6.** Staleness (H3) is injected inside the
+      scheduler from its own snapshot history; the R-sweep, node-count sweep and staleness
+      sweep are simulator axes; policy is a config value that reaches the record through C-4.
+      None of them touch the wire.
+
+      **One consequence worth stating rather than discovering.** A scheduler cannot learn a
+      node's slot count from the wire — `Heartbeat` carries occupancy and queue depth but not
+      capacity, and recovering `--parallel` from `inflight / kv_occupancy_frac` divides by
+      zero on an idle node. That is deliberate: under F-9a `engine_config` is the experimental
+      condition and belongs in the per-run C-6 record, not in a per-second message. But it
+      means **the scheduler has to read C-6**, and there is no manifest reader in
+      `controlplane/` yet. Raised in issue #6.
+
+      Aditya's box below is his to tick.
 - [x] **One** worker wrapper — llama.cpp + GGUF — running on a node (F-9, per
       F-9; the second runtime integration is withdrawn from Week 1)
       — `dataplane/src/dataplane/worker/serve.py`, `uv run worker`. It answers `Execute`,
@@ -100,7 +133,27 @@ decision that must be closed *before* the freeze, not after.
       scheduler is the one in the path: my fixture writes no C-4 decision record, because a
       fixture with no state store cannot fill in `candidates[].estimate_age_ms` honestly and
       fabricating it would be worse than the gap.
-- [ ] All six contract artifacts tagged `contract-v1`
+- [x] All six contract artifacts tagged **`contract-v1`** — an annotated tag pinning each
+      artifact by content hash, so "the contract" names bytes rather than a branch that keeps
+      moving. Verified green by `uv run contracts/check.py` at the tagged commit.
+
+      | | Artifact | sha256 (first 16) |
+      |---|---|---|
+      | C-1 | `scheduling.proto` | `8c2395ebfeb1be12` |
+      | C-2 | `trace.schema.json` | `431238ae178fcbf3` |
+      | C-3 | `cost_model.schema.json` | `d4607dea9f2e6cf5` |
+      | C-4 | `log_client.schema.json` | `451554a02c5914a5` |
+      | C-4 | `log_scheduler.schema.json` | `75c48270a2b47109` |
+      | C-4 | `log_worker.schema.json` | `305d52b106276fc6` |
+      | C-5 | `joined_record.schema.json` | `a8186c4d5335316f` |
+      | C-6 | `manifest.schema.json` | `3f08a8dec333b388` |
+
+      The freeze has held in practice, which is the part worth recording: Weeks 2 and 3 added
+      a live worker, three calibration campaigns, an admissible-set determination, an anchor
+      campaign and a load band, and **none of it required a schema change**. The two places
+      that came closest both resolved without one — F-18's prefill/decode split turned out to
+      be `full` on both backends so C-6 needed no `backend` field, and the engine patch rides
+      inside `engine_version` as the free string it was designed to be.
 
 ---
 

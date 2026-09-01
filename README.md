@@ -1,1133 +1,423 @@
 # Scheduling LLM Inference Under Uncalibrated Heterogeneity
 
-A six-week **measurement study** of how to route large language model inference requests
-across a pool of mismatched consumer machines. The scheduler in this repository is an
-*instrument*, not a product: we built it to produce measurements, at the minimum fidelity
-that supports the hypotheses below.
+A six-week measurement study of how to route language model inference across a pool of
+mismatched consumer machines. The scheduler here is an **instrument**, not a product. We
+built it to produce measurements, at the lowest fidelity that still supports the claims.
 
 ---
 
 ## The problem
 
-Consider four machines of the kind a small lab already owns — a desktop with a discrete
-GPU, a laptop with a weaker one, an older GPU box, and a CPU-only machine — all serving one
-large language model together. A request arrives. Where should it go?
+Four machines of the kind a small lab already owns. A desktop with a discrete GPU, a laptop
+with a weaker one, an older GPU box, a CPU-only machine. All serving one model together.
 
-Two things make this harder than ordinary load balancing:
+A request arrives. Where does it go?
 
-**The machines differ enormously.** In a datacenter, hardware generations differ by
-roughly 2–5×. Consumer machines differ by **10–100×**. A request that takes 2 seconds on
-the fast node may take 3 minutes on the slow one — or exceed any reasonable timeout
-entirely, which is a *categorical* failure rather than a latency tail.
+Two things make this harder than ordinary load balancing.
 
-**Per-node speed is not reliably known.** It can be measured, but the measurement decays.
-Serving throughput is *non-stationary* under sustained load — meaning its statistical
-properties change over time rather than settling to a constant — drifting with thermal
-state, memory pressure, and the mix of requests being processed together. The scheduler is
-therefore always routing on an estimate that is somewhat out of date.
+**The machines differ enormously.** Datacenter hardware generations differ by 2 to 5×.
+Consumer machines differ by 10 to 100×. A request that takes 2 seconds on the fast node can
+take 3 minutes on the slow one, or blow past any sane timeout entirely. That is a
+categorical failure, not a latency tail.
 
-The obvious fix is calibration: measure each node's tokens per second and weight routing by
-it. This study asks whether that is actually worth doing:
+**Nobody knows how fast each node really is.** It can be measured, but the measurement
+decays. Serving throughput is non-stationary under sustained load: it drifts with thermal
+state, memory pressure, and whatever else happens to be batched alongside. The scheduler is
+always routing on an estimate that is already slightly wrong.
+
+The obvious fix is calibration. Measure each node's tokens per second, weight the routing by
+it. This study asks whether that is worth doing at all.
 
 > **Research question.** In a pool of consumer machines whose per-node throughput is
 > heterogeneous, non-stationary, and known only through stale estimates, does explicit
-> hardware calibration improve scheduling **beyond what live queue depth already reveals**
-> — and over what range of heterogeneity does that advantage hold?
+> hardware calibration improve scheduling **beyond what live queue depth already reveals**,
+> and over what range of heterogeneity does that advantage hold?
 
-The reason to doubt it: **queue depth is already a partial proxy for speed.** Slow nodes
-accumulate queue, so a scheduler that simply joins the shortest queue is *implicitly*
-hardware-aware. Calibration may be measuring something the queue already reports for free.
+There is a real reason to doubt it. **Queue depth is already a proxy for speed.** Slow nodes
+accumulate queue, so a scheduler that simply joins the shortest queue is implicitly
+hardware-aware. Calibration may be paying for something the queue reports for free.
 
-## Terms used throughout
+## What we are testing
 
-The study sits between two vocabularies — LLM serving and queueing measurement — and this
-section defines the terms from both that the rest of the document relies on.
-
-| Term | What it means here |
-|---|---|
-| **Token** | The unit a language model reads and writes: roughly a short word or word-fragment. A model's **vocabulary** is the fixed set of tokens it knows, typically 32,000–262,000 of them. |
-| **Prefill / decode** | The two phases of serving one request. *Prefill* processes the whole prompt at once and is compute-bound; *decode* then emits output tokens one at a time and is memory-bandwidth-bound. They scale differently, so F-18 requires them to be measured separately. |
-| **KV cache** | Per-request memory holding the model's intermediate state for every token seen so far, so each new token does not re-read the whole prompt. It grows linearly with context length, and it is what limits how many requests a node can serve at once. |
-| **Quantization / GGUF / `Q4_K_M`** | Storing model weights at reduced numerical precision to cut memory and increase speed. GGUF is llama.cpp's model file format; `Q4_K_M` is a roughly 4-bit scheme. Both are held constant across every node so that speed differences are hardware differences. |
-| **`-ngl`** | *Number of GPU layers*: how many of the model's layers are placed on the GPU, the rest running on CPU. Lowering it deliberately slows a node down, which is how heterogeneity is manufactured on identical hardware (F-9a). |
-| **Slots / `--parallel`** | How many requests the engine will process concurrently, each holding its own KV cache. The engine batches them together, so a node's behaviour under load is governed by this number. |
-| **Service time** | How long a node itself spent on a request, excluding any wait for a free slot. **Queue wait** is that wait, measured separately. |
-| **Heterogeneity ratio *R*** | Fastest node's throughput divided by slowest node's, within one pool. The study's primary independent variable. *R* = 1 is a uniform pool; consumer hardware can reach 10–100×. |
-| **Autocorrelation time τ** | How long a node's throughput stays correlated with itself — informally, how long a speed measurement remains informative before drift makes it stale. Central to H3. |
-| **p50 / p95 / p99** | Percentiles of a latency distribution. p50 is the median; p99 is the value 99% of requests come in under, and is where scheduling decisions show up most clearly. |
-| **Open-loop load generation** | The load generator sends requests on a fixed schedule and never waits for a response before sending the next. *Closed-loop* generation would let a slow pool throttle its own workload, which silently changes the experiment being run. |
-| **Trace / replay** | A trace is a generated, seeded list of requests with arrival times and lengths. Replaying the same trace against different schedulers is what makes their results comparable. |
-| **Discrete-event simulator (DES)** | A simulation that advances time event by event rather than in fixed ticks, used here to reach node counts and *R* values physical hardware cannot. |
-| **Cost model** | A calibrated table predicting a node's service time for a given prompt length, output length, and concurrency. What a hardware-aware policy consults. |
-| **Staleness** | How old the scheduler's estimate of a node is at the moment it makes a decision. Deliberately injectable, because H3 is a claim about it. |
-| **Node class** | One machine under one configuration (`-ngl`, threads, slots). The same physical box at two `-ngl` settings is two node classes, and each is calibrated separately. |
-
-## What is being tested
-
-Three hypotheses, each falsifiable, each with a negative result that is worth reporting.
+Three hypotheses. Each falsifiable, each with a negative result worth reporting.
 
 | | Claim | Why it matters |
 |---|---|---|
-| **H1** | Calibration is largely **redundant** given queue-awareness, and more so as load rises. Formally, the interaction term is negative: `(WJSQ − JSQ) < (StaticWeighted − RoundRobin)`. | If true, the honest headline contradicts the intuition motivating hardware-aware schedulers. If false, calibration carries independent signal and the mechanism needs identifying. |
-| **H2** | The advantage of hardware-aware routing is **non-monotonic** in the heterogeneity ratio *R*: it rises, peaks, then declines toward zero. | As *R* → ∞ the best policy converges to *thresholding* — never dispatch below a cutoff — which is behaviourally round-robin over the strong subset, achievable by a one-line static rule with no calibration machinery. So hardware-awareness has a **sweet spot**, and is matched by something trivial outside it. |
-| **H3** | Routing quality degrades as the age of a node's estimate approaches the **autocorrelation time τ** of that node's actual throughput. | This turns the non-stationarity of LLM throughput from a threat to the method into the independent variable — and it gives an empirical basis for choosing a heartbeat frequency, which is otherwise arbitrary. |
+| **H1** | Calibration is largely **redundant** given queue-awareness, and more so as load rises. Formally the interaction is negative: `(WJSQ − JSQ) < (StaticWeighted − RoundRobin)`. | If true, the honest headline contradicts the intuition that motivates hardware-aware schedulers. If false, calibration carries independent signal and we have to say where it comes from. |
+| **H2** | The advantage of hardware-aware routing is **non-monotonic** in the heterogeneity ratio *R*. It rises, peaks, and falls back toward zero. | As *R* grows the best policy converges to thresholding, which is round-robin over the strong nodes and is a one-line static rule. Hardware-awareness has a sweet spot, and outside it something trivial matches it. |
+| **H3** | Routing quality degrades as the age of a node's estimate approaches the **autocorrelation time τ** of that node's real throughput. | This turns non-stationarity from a threat to the method into the independent variable, and it gives an empirical basis for picking a heartbeat interval instead of guessing one. |
 
-The policies form a **2×2 factorial, not a ladder** — a ladder confounds hardware-knowledge
+The policies form a **2×2 factorial, not a ladder.** A ladder confounds hardware-knowledge
 with queue-knowledge and cannot decompose the gain:
 
 | | Queue-blind | Queue-aware |
 |---|---|---|
-| **Hardware-blind** | `RoundRobin` | `JSQ` (join-shortest-queue) |
-| **Hardware-aware** | `StaticWeighted` (calibration weights, ignores live queue) | `WJSQ` (capability-weighted queue depth) |
+| **Hardware-blind** | `RoundRobin` | `JSQ` |
+| **Hardware-aware** | `StaticWeighted` | `WJSQ` |
 
-Plus `Threshold(T)` — round-robin over nodes above a calibrated cutoff — as the degenerate
-baseline H2 predicts `WJSQ` converges to at high *R*.
+Plus `Threshold(T)`, round-robin over nodes above a calibrated cutoff, as the degenerate
+baseline H2 predicts `WJSQ` collapses into at high *R*.
+
+## The vocabulary that matters
+
+| Term | What it means here |
+|---|---|
+| **Prefill / decode** | The two phases of one request. Prefill reads the whole prompt at once and is compute-bound. Decode emits output tokens one at a time and is memory-bandwidth-bound. They scale differently, so we measure them separately. |
+| **Heterogeneity ratio *R*** | Fastest node's throughput over slowest, within one pool. The study's primary independent variable. |
+| **`-ngl` / `--parallel`** | How many model layers sit on the GPU, and how many requests the engine serves at once. Lowering `-ngl` genuinely slows a node down, which is how we manufacture heterogeneity on hardware we already own. |
+| **Autocorrelation time τ** | How long a node's throughput stays correlated with itself. Informally, how long a speed measurement stays useful. |
+| **Open-loop load** | The generator sends on a fixed schedule and never waits for a response. Closed-loop would let a slow pool throttle its own workload, silently changing the experiment. |
+| **Node class** | One machine under one configuration. The same box at two `-ngl` settings is two node classes, calibrated separately. |
+| **Cost model** | A calibrated table predicting service time from prompt length, output length, and concurrency. What a hardware-aware policy consults. |
+
+---
 
 ## How it is measured
 
 ![Deployment view](assets/fig03_deployment.png)
 
-Four machines on a LAN, **all running the same inference runtime** (llama.cpp + GGUF).
-Holding engine and quantization constant is deliberate: it makes the heterogeneity ratio
-*R* a property of hardware and configuration alone. A mixed-engine pool would confound *R*
-with an engine effect that none of the three hypotheses can decompose. Per-node capability
-is then set by configuration — GPU offload (`-ngl`), threads, slot count — which also makes
-*R* **tunable on real hardware** rather than reachable only in simulation.
+Machines on a LAN, **all running the same inference runtime**. Holding the engine and the
+quantization constant is what makes *R* a property of hardware and configuration alone. A
+mixed-engine pool would fold an engine effect into *R*, and none of the three hypotheses can
+pull it back out.
 
-We run the study on two vehicles, and the split between them is our core methodological
-commitment:
+We run on two vehicles, and the split between them is the core methodological commitment.
 
-- **Hardware** measures what the simulator must not assume: cost-model parameters, the
-  autocorrelation time τ and variance envelope, validation anchors, and the range of *R*
-  that real machines can actually span.
-- **A discrete-event simulator** provides breadth — node counts to 12, *R* to 100×,
-  controlled estimate staleness — none of which four machines can reach.
+**Hardware** measures what the simulator must not assume: cost-model parameters, τ and the
+variance envelope, validation anchors, and the range of *R* real machines can span.
 
-The simulator **executes the same policy code as the live scheduler** (not a
-reimplementation), is parameterized from measured hardware data, and is validated against
-live runs on identical replayed traces before any simulated result is believed. Every
-simulated figure is labelled as such.
+**A discrete-event simulator** provides breadth: node counts to 12, *R* to 100×, controlled
+estimate staleness. Four machines reach none of that.
 
-Three disciplines run through the whole design. We state them up front because each guards
-against something that quietly invalidates measurement studies:
+The simulator runs the *same policy code* as the live scheduler, not a reimplementation. It
+is parameterized from measured hardware and validated against live runs on identical
+replayed traces before any simulated result is believed. Every simulated figure is stamped.
 
-1. **No cross-host clock subtraction.** Every duration in the analysis comes from a single
-   machine's monotonic clock; whatever is left over is reported as one honest *residual*,
-   not decomposed into invented stages. The rule stands, and from the two-machine setup
-   onward the assumption behind it is measured rather than asserted: `clocksync` records
-   each host's clock discipline into the manifest, and the pipeline divides out the one
-   thing that a differing clock can actually corrupt, which is *rate*, not offset.
-2. **Open-loop load generation.** The replay client never waits for a response before
-   firing the next request, and asserts its own send-lag per request. A run whose timing
-   drifted is marked invalid rather than analysed.
-3. **Byte-identical trace regeneration.** A trace is reproducible from `(config, seed)` and
-   identified by its SHA-256, so the same workload can be replayed across every policy and
-   across the hardware/simulator boundary.
+### Three disciplines
+
+Each one guards against something that quietly invalidates measurement studies.
+
+**No duration crosses a host boundary.** Every duration comes from one machine's monotonic
+clock. What is left over is reported as a single honest residual, never decomposed into
+invented stages. From the two-machine setup onward the assumption behind this is measured
+rather than asserted: `clocksync` records each host's clock discipline into the manifest,
+and the pipeline divides out the only thing a differing clock can actually corrupt, which is
+rate, not offset.
+
+**Open-loop load generation.** The client never waits for a response before firing the next
+request, and asserts its own send-lag per request. A run whose timing drifted is marked
+invalid rather than analysed.
+
+**Byte-identical trace regeneration.** A trace is reproducible from `(config, seed)` and
+identified by its SHA-256, so the same workload replays across every policy and across the
+hardware/simulator boundary.
 
 ### The pinned engine
 
-*R* is a hardware property only if the engine underneath it does not move, so we pin the
-engine as part of the contract rather than installing it per machine and hoping the versions
-match:
+*R* is a hardware property only if the engine underneath does not move.
 
 | | |
 |---|---|
-| Source | [`ggml-org/llama.cpp`](https://github.com/ggml-org/llama.cpp) tag `b10569`, commit `5a32f7b66ef6cfb3e60deea26e3454cc6ad3438c`, **plus one patch** — [`patches/`](patches) |
-| Model | `Meta-Llama-3-8B-Instruct` GGUF — the primary condition; three more are staged, see [*The model set*](#the-model-set) |
-| Quantization | `Q4_K_M`, held constant across every model and every node |
-| Backends | CUDA 13.2 and Vulkan, **both built from that one commit** |
-| Install root | `~/opt/llama.cpp/` — outside the repo; the pin travels in the manifest, not in git |
+| Source | [`ggml-org/llama.cpp`](https://github.com/ggml-org/llama.cpp) tag `b10569`, commit `5a32f7b`, plus one patch in [`patches/`](patches) |
+| Model | `Llama-3.2-1B-Instruct` GGUF, `Q4_K_M`, the same bytes on every node |
+| Backends | CUDA and Vulkan, both built from that one commit |
+| Recorded as | `engine_version: b10569+p1+cuda13.2` |
 
-Two backends are built because the pool is not backend-homogeneous by luck of hardware: an
-NVIDIA node runs CUDA, and Vulkan is what a non-NVIDIA node — or one whose distribution has
-no CUDA toolkit — can run *without changing the engine*. Same source commit, same model,
-same quantization; only the compute backend differs.
+The patch stops `llama-server` throwing a 500 on the `/completion` path when generation ends
+mid-character, which it did on roughly 1 request in 100. `llama-server --version` cannot
+report a patched tree, which is exactly why the manifest carries `+p1` and the SHA-256 of
+the engine's shared libraries. A pin a running node cannot prove is not a pin.
 
-**A backend is not a free variable inside a comparison.** Every node in a given policy
-comparison runs the same one. Where a machine can run both, the CUDA/Vulkan throughput gap
-is measured during the Week-2 calibration campaign as two `node_class` entries — the same
-move F-9b makes for vLLM, and for the same reason: the cost of the choice becomes a number
-in the writeup instead of an assumption underneath it.
+---
 
-The contract already carries the pin. `manifest.nodes[]` records `engine_version`, `model`,
-`quant`, `gpu`, `driver`, and the F-9a knobs under `engine_config`. The backend and the
-binary's SHA-256 ride inside `engine_version` (`b10569+p1+cuda13.2`, `b10569+p1+vulkan`),
-which the schema holds as a free string — a first-class `backend` field would be a
-**Week-1 contract change** and has to be raised before the freeze, not after.
+## What we have found
 
-#### The `+p1` — why the engine is patched rather than upgraded
+**Throughput drift belongs to a particular kind of node.** τ = 69.5 s on the CPU class
+(*r²* = 0.989, integrated 89.0 s, 1/e crossing 72.1 s), and nothing measurable on either GPU
+class. The instrument limit explains the difference: a node whose τ is shorter than about
+five service times cannot show its own drift, and the GPU classes are too fast to resolve
+theirs with this workload. That last part is the reusable half. It tells anyone repeating
+this what their hardware has to be able to do before the question is even askable.
 
-`llama-server` returned HTTP 500 on about 1 request in 100 —
-*"The model produced output that does not match the expected Content-only format"* — and
-lost the completion. The cause is in
-`server_task_result_cmpl_final::update()`: it populates `oaicompat_msg` unconditionally,
-which runs the chat PEG parser, which throws on output it cannot parse. But `/completion`
-renders through `to_json_non_oaicompat()`, which reads `oaicompat_msg` **zero times**. The
-parse is dead work on that path, and it is dead work that can fail. It fires because
-`n_predict` + `ignore_eos` stops generation wherever the budget runs out, sometimes
-mid-UTF-8-character, and the parser rejects the lone continuation byte.
+**Batching buys nothing on this card.** Prefill is flat in concurrency, at 174 / 343 / 698 ms
+for prompts of 128 / 256 / 512 tokens. Per-request decode falls almost exactly as 1/c:
+143 / 71 / 58 / 39 tok/s at concurrency 1 through 4. Multiply those back out and aggregate
+decode throughput is constant. So on a 4 GB consumer GPU, concurrency does not buy
+throughput, and the effects the policies compete over here are queueing effects rather than
+throughput effects. That is a result about the hardware class the study is *about*.
 
-**Upgrading does not fix it**, which is why the pin moved sideways rather than forward.
-The lenient-parsing fix for the same failure ([#20191](https://github.com/ggml-org/llama.cpp/pull/20191),
-merged March 2026, for [#20193](https://github.com/ggml-org/llama.cpp/issues/20193)) is
-already in b10569 — our commit is five months later — and it only rescues *partial*
-parses, so the final result of a non-streaming `/completion` still throws. The call is
-still unconditional on master.
+**The deployed cost model missed its own hardware by 127%.** We found it with `costcheck`, a
+diagnostic that asks whether the model a run was served by would have predicted that run.
+Two causes, both about grid placement rather than model form: bucket representatives were
+calibrated at prompt 64 / output 32 while the traces ran 128 to 512 / 64 to 128, and the
+concurrency grid held only {1, 4} while the anchors spent a quarter of their time at 2 slots.
+Recalibrating onto the trace's own lengths brought it to **20.8%** request-weighted and
+**9.9%** on medians, inside the ±25% tolerance the validation criterion asserts.
 
-So the fix is a two-line guard on `res_type`, kept as a patch in
-[`patches/`](patches) with its full rationale, applied to **both** backend builds so the
-pool stays homogeneous under F-9. `llama-server --version` still reports
-`build 10569, commit 5a32f7b` — it has no idea the tree was modified — which is precisely
-why `engine_version` carries `+p1` and why the manifest records the binary hash. A pin
-that a running node cannot prove is not a pin.
+**The admissible envelope is `prompt ≤ 512, output ≤ 128`**, with the load band at
+**1.03 to 1.30 req/s** on a one-node pool.
 
-```bash
-git -C ~/opt/llama.cpp/src apply \
-  ~/Documents/capstone/patches/llamacpp-b10569-skip-chat-parse-on-completion.patch
-cmake --build ~/opt/llama.cpp/b10569-cuda   --target llama-server -j6
-cmake --build ~/opt/llama.cpp/b10569-vulkan --target llama-server -j"$(nproc)"
-```
+*R* is currently **2.00× configured and 1.00× deployable**. That gap is the whole of what is
+left, and it is a hardware problem rather than a code one.
 
-```bash
-# Prerequisites, once per node (Fedora 43)
-# All four matter, and each one only announces itself when the previous is satisfied:
-# without vulkan-loader-devel cmake says "Could NOT find Vulkan (missing: Vulkan_LIBRARY)"
-# on a box with a working driver, and without spirv-headers-devel it then fails on
-# find_package(SPIRV-Headers). The "missing components: glslangValidator" line FindVulkan
-# prints along the way is noise — only glslc is REQUIRED.
-sudo dnf install -y vulkan-headers vulkan-loader-devel glslc spirv-headers-devel
-CUDA_REPO=https://developer.download.nvidia.com/compute/cuda/repos/fedora43/x86_64
-sudo dnf config-manager addrepo --from-repofile=$CUDA_REPO/cuda-fedora43.repo
-sudo dnf install -y cuda-toolkit-13-2                                     # CUDA backend
+---
 
-# The rpm does not put nvcc on PATH, and cmake will not find it on its own.
-export PATH=/usr/local/cuda-13.2/bin:$PATH
+## Setting up the experiment
 
-# One source tree, pinned; two build trees
-git clone --branch b10569 --depth 1 https://github.com/ggml-org/llama.cpp.git \
-  ~/opt/llama.cpp/src
+Six stages, in order. Each one refuses to proceed on something the previous leaves broken,
+which is deliberate: every failure below is silent if it is discovered during a run instead
+of before one.
 
-cmake -S ~/opt/llama.cpp/src -B ~/opt/llama.cpp/b10569-cuda \
-  -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=75 \
-  -DLLAMA_BUILD_NUMBER=10569
-cmake --build ~/opt/llama.cpp/b10569-cuda -j6      # not $(nproc): see the note below
+Paths are relative to the repo root for `tools/`, and to `dataplane/` for everything run
+through `uv`.
 
-cmake -S ~/opt/llama.cpp/src -B ~/opt/llama.cpp/b10569-vulkan \
-  -DCMAKE_BUILD_TYPE=Release -DGGML_VULKAN=ON -DLLAMA_BUILD_NUMBER=10569
-cmake --build ~/opt/llama.cpp/b10569-vulkan -j"$(nproc)"
+### 1. Machines
 
-# `llama-server` is a ~12 KB wrapper — the engine is in the shared libraries beside it, so
-# hash those. `--version` is what a running node can prove about itself, and is the value
-# manifest.nodes[].engine_version is asserting.
-~/opt/llama.cpp/b10569-cuda/bin/llama-server --version
-#   version: 0.2.0-dev (build 10569, commit 5a32f7b)
-sha256sum ~/opt/llama.cpp/b10569-*/bin/libllama.so ~/opt/llama.cpp/b10569-*/bin/libggml-*.so
-
-# The weights (~4.9 GB), same file on every node
-curl -L --output-dir ~/models/gguf --create-dirs -O \
-  https://huggingface.co/bartowski/Meta-Llama-3-8B-Instruct-GGUF/resolve/main/Meta-Llama-3-8B-Instruct-Q4_K_M.gguf
-
-# Hashes live in one place, ~/models/gguf/SHA256SUMS — see The model set below.
-```
-
-Two Fedora-specific traps, both hit on the first build. The CUDA rpm installs `nvcc` under
-`/usr/local/cuda-13.2/bin` and does not add it to `PATH`, so cmake reports no CUDA compiler
-on a box that plainly has one. And CUDA 13.2 accepts GCC up to 15, which is exactly what
-Fedora 43 ships — so no compat toolchain is needed here, but check `host_config.h` before
-assuming that on a newer release.
-
-`-DLLAMA_BUILD_NUMBER` is not cosmetic. llama.cpp derives its build number by counting
-commits, so a `--depth 1` clone stamps the binary `build 1` and the engine can no longer
-say which pin it is. Passing the number explicitly restores the one field that lets a
-running server prove it is b10569: `--version` then reports the build *and* the commit,
-which is exactly what `engine_version` claims about it.
-
-Use `-j6` rather than `-j$(nproc)` for the CUDA build on a 16 GB machine: `nvcc`
-instantiates ggml's kernel templates at several GB per translation unit, and a parallel
-build that gets OOM-killed halfway leaves a tree that looks configured and is not.
-
-`CMAKE_CUDA_ARCHITECTURES` is per node — `75` is Turing (GTX 16-series, RTX 20-series), `86`
-is Ampere, `89` is Ada. Setting it wrong costs a long JIT stall on first token, which then
-contaminates the very tail latencies MPR-1 is measuring.
-
-> **F-18 on the CUDA build: confirmed, `f18_status: "full"`.** The pinned build's
-> `/completion` response carries a `timings` block with both halves of the split —
-> `prompt_ms` / `prompt_n` for prefill and `predicted_ms` / `predicted_n` for decode — so
-> the prefill/decode split comes from one code path for the whole pool, as F-9 intended.
-> `/slots` returns exactly `--parallel` entries with `is_processing`, which is the worker's
-> `LiveState.kv_frac`: llama.cpp exposes slot occupancy, not paged-KV occupancy.
->
-> **Still to check on the Vulkan build.** If a backend does not emit it, log `service_ns`
-> only and set `f18_status: "partial"` rather than faking the split. This was the one thing
-> about the engine that could still have forced a contract change, which is why it was
-> worth doing on day one rather than in Week 3.
-
-### The model set
-
-One model is an anecdote. A reviewer will reasonably ask whether a scheduling result is a
-property of scheduling or a property of Llama-3-8B, and a single model cannot answer that.
-We stage seven GGUFs, varying along three axes that can each be named in a sentence.
-
-| Model | `Q4_K_M` bytes | Fits 4 GB VRAM | KV/token | What it is for |
-|---|---:|---|---:|---|
-| `Llama-3.2-1B-Instruct` | 807,694,464 | fully, `-ngl 99` | 64 KiB | Fast iteration; the harness smoke path |
-| `LFM2-2.6B` | 1,563,668,704 | fully, `-ngl 99` | **16 KiB** | **KV-light hybrid** — GPU-resident and cheap per token |
-| `Llama-3.2-3B-Instruct` | 2,019,377,696 | fully, `-ngl 99` | 112 KiB | Scale rung; a fully GPU-resident node class |
-| `granite-4.0-h-tiny` | 4,230,976,352 | partial | **8 KiB** | **Mamba-2 hybrid + MoE** — the extreme of the KV axis |
-| `Mistral-7B-Instruct-v0.3` | 4,372,812,000 | partial | 128 KiB | Architecture control at the 8B's size class |
-| `gemma-4-E4B-it` | 4,977,171,584 | partial | 168 KiB\* | **Bounded KV growth** — 512-token sliding window |
-| `Meta-Llama-3-8B-Instruct` | 4,920,734,272 | partial | 128 KiB | The primary condition |
-
-**Axis 1 — scale.** 1B → 3B → 8B, one family, one quantization, separating *bigger model*
-from *different model*.
-
-**Axis 2 — architecture at a fixed size class.** Mistral-7B against Llama-3-8B separates
-*architecture* from *size*.
-
-**Axis 3 — KV-cache footprint per token**, which is new and is the one that matters most
-here. Every slot of `--parallel` holds a KV cache, so KV pressure is what bends the
-service-time-versus-concurrency curve — it *is* the knee F-4 is about and the reason the
-admissible set is drawn "at every calibrated concurrency". The old four-model set spanned
-64–128 KiB, a factor of two, and Mistral and Llama-3-8B are **identical** at 128 KiB: the
-architecture control varied the tokenizer and the weights but not the thing the study
-measures. The set now spans **8 KiB to 168 KiB, a factor of 21**, and it does so through
-three different mechanisms rather than by picking bigger and smaller models:
-
-Three mechanisms appear in that table and are worth naming. **Mamba-2** layers replace
-attention with a fixed-size recurrent state, so their memory cost does not grow with
-context at all. A **mixture of experts (MoE)** holds many parallel sub-networks but routes
-each token through only a few, so compute stays small while resident memory stays large. A
-**sliding-window** attention layer attends only to the last *N* tokens rather than the whole
-context, which caps KV growth per sequence.
-
-| | Layers | With attention | Experts | Vocab | Mechanism |
-|---|---:|---:|---|---:|---|
-| `granite-4.0-h-tiny` | 40 | **4** | 64, **6 used** | 100,352 | Mamba-2 state on 36 of 40 layers; sparse activation |
-| `LFM2-2.6B` | 30 | **8** | dense | 65,536 | short convolutions on 22 of 30 layers |
-| `gemma-4-E4B-it` | 42 | 42 | dense | 262,144 | 512-token sliding window interleaved with global |
-
-\*Gemma 4's 168 KiB is the per-token figure; with a 512-token sliding window on most layers
-its KV per *sequence* saturates rather than growing linearly, so its KV-versus-context curve
-is flat where every other model's is a straight line. That is the point of including it.
-
-Granite is the extreme case and the most interesting node a scheduler could be handed: at
-4 slots × 2048 tokens it holds **64 MiB** of KV against Llama-3-8B's **1 GiB**, and it
-advertises a 1,048,576-token context. It is also MoE, so its decode compute is 1B-scale
-while its resident memory is 7B-scale. Weight footprint, compute per token and KV footprint
-are three separate things, and this set now varies them independently.
-
-> **The model is held constant inside a pool, exactly like the engine and the
-> quantization.** F-9 is not only about llama.cpp. A pool running two models has an *R*
-> confounded with a model effect, and neither the H1 2×2 decomposition nor the *R*-sweep can
-> pull those apart afterwards. Variety here is a **replication axis across run sets** — the
-> same hypotheses re-run end to end at a second model — and `manifest.nodes[].model` with
-> `.quant` is what makes that auditable instead of assumed.
-
-The payoff is not only rhetorical. The 1B, 3B and LFM2 builds fit entirely in 4 GB of VRAM,
-so on the same card they reach `-ngl 99` node classes the 8B cannot — which *widens the
-synthesizable R range*, and §7 asks for that range to be reported as a range rather than a
-single figure (MPR-2).
-
-**All three additions load and serve on the pinned, patched engine** — checked rather than
-assumed, since `strings libllama.so` reporting an architecture is not the same as loading a
-file. Each was started under `llama-server`, health-polled and asked for a completion, and
-each returned HTTP 200 with the F-18 `timings` block intact. The pinned commit is dated
-2026-08-21, which is why an April-2026 architecture like `gemma4` loads with **no re-pin and
-no re-patch**. Two things that do *not* load, so nobody wastes an afternoon: `gemma4moe`
-(the 26B-A4B variant) is absent from this build, and of the GLM family only `glm4moe` is
-present, which starts at 106B and does not fit.
+Every machine gets surveyed before it is assigned anything. The survey reads only. It needs
+no root, installs nothing, and runs on a bare install.
 
 ```bash
-cd ~/models/gguf
-for m in \
-  bartowski/Llama-3.2-1B-Instruct-GGUF/Llama-3.2-1B-Instruct-Q4_K_M.gguf \
-  bartowski/Llama-3.2-3B-Instruct-GGUF/Llama-3.2-3B-Instruct-Q4_K_M.gguf \
-  bartowski/Mistral-7B-Instruct-v0.3-GGUF/Mistral-7B-Instruct-v0.3-Q4_K_M.gguf \
-  unsloth/gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q4_K_M.gguf \
-  ibm-granite/granite-4.0-h-tiny-GGUF/granite-4.0-h-tiny-Q4_K_M.gguf \
-  LiquidAI/LFM2-2.6B-GGUF/LFM2-2.6B-Q4_K_M.gguf
-do
-  f=$(basename "$m")
-  curl -sL --fail -C - -o "$f" "https://huggingface.co/$(dirname "$m")/resolve/main/$f"
-done
-sha256sum *.gguf > SHA256SUMS
+./tools/survey.sh --json survey-$(hostname).json
 ```
 
-Run those in parallel rather than in a loop if the link allows: on this connection one
-stream managed 1.6 MB/s and three managed 3.0 MB/s together, which turned 110 minutes into
-50.
+It answers the three questions that decide a machine's role. Which models fit, computed at
+the study's actual shape rather than from weights alone. What `-ngl` and `--threads` range
+the machine can produce, which is where *R* comes from. And whether it has the RAM to host
+the scheduler and the client instead of an engine.
 
-`~/models/gguf/SHA256SUMS` is the check a node runs before it joins the pool — `sha256sum
--c SHA256SUMS` — because "the same model" has to mean the same bytes, not the same name on
-a HuggingFace page whose contents can be replaced after the fact:
+Roles follow from the answers, not from preference:
 
-```
-85a896a047553e842f25297ee5b031d64ff30147d9c4af17b1e4b394cd1fab87  gemma-4-E4B-it-Q4_K_M.gguf
-5a38b08c441ae1adbafb1d2b8a7167e0d48734d83af68b268cefea1eec553dcd  granite-4.0-h-tiny-Q4_K_M.gguf
-384bc877b6c37064982f96885bef69e4475919f5969218ed4e3b9399ae0340df  LFM2-2.6B-Q4_K_M.gguf
-6f85a640a97cf2bf5b8e764087b1e83da0fdb51d7c9fab7d0fece9385611df83  Llama-3.2-1B-Instruct-Q4_K_M.gguf
-6c1a2b41161032677be168d354123594c0e6e67d2b9227c84f296ad037c728ff  Llama-3.2-3B-Instruct-Q4_K_M.gguf
-8ba9baf3a7345f705a11878397500fb25174034f0fd784e83aa4a96aaa47735f  Meta-Llama-3-8B-Instruct-Q4_K_M.gguf
-1270d22c0fbb3d092fb725d4d96c457b7b687a5f5a715abe1e818da303e562b6  Mistral-7B-Instruct-v0.3-Q4_K_M.gguf
-```
+| Role | What it runs | Needs |
+|---|---|---|
+| **Pool node** | one engine, one worker wrapper | a GPU or enough cores, and room for the model |
+| **Harness host** | the scheduler and the replay client | about 1.5 GiB of RAM, and no engine |
 
-Each model's `vocab_size` and `reserved_ids_excluded` in `gen_trace.MODELS` are read out of
-the **GGUF the node actually loads**, never off a model card. The materializer samples ids
-below `vocab_size`, so a wrong number fills prompts with ids the model does not have — and
-because a trace stores seeds rather than tokens, that would surface weeks later as strange
-prefill figures in someone else's plot. `reserved_ids_excluded` is `true` only where a
-*ceiling* can exclude the reserved block: Llama-3 and Granite keep their specials at the top
-(128000 of 128256; 100256 of 100352), while Mistral, Gemma and LFM2 keep theirs at ids 0-7.
-A ceiling cannot exclude a floor, and LFM2 has reserved ids at **both** ends, so `false` is
-the honest value there. Nothing measured changes either way — output length is forced with
-`ignore_eos` and no prompt is ever decoded back to text.
+Nothing is ever both. The client has to fire on a fixed schedule, and an engine will take
+the CPU it needs. A late send marks the whole run invalid.
 
-### The calibration campaign
+### 2. Nodes
 
-Week 2 turns the pinned engine into numbers. One campaign per node class produces all
-three of the week's deliverables, and it is one command:
+Same engine, same weights, same everything, on every pool node.
 
 ```bash
-uv run calibrate --config configs/calibration_1b_dense.json --out runs/calibration/llama32-1b
-uv run r-range   runs/calibration/llama3-8b --out runs/calibration/llama3-8b/r_range.json
+./tools/pool-install.sh --role node --backend cuda --reference 10.42.0.1
+./tools/pool-install.sh --role harness --reference 10.42.0.1
 ```
 
-The campaign has two phases and one by-product:
+It prints a plan and waits, because two of these machines belong to other people. It detects
+the CUDA architecture from the card rather than assuming ours, refuses to build if the patch
+does not apply cleanly, and ends by printing what the node can *prove* about itself: the
+build number and commit the server reports, the SHA-256 of the engine's shared libraries,
+and the hash of the weights. Those three go into the manifest.
 
-- **A grid pass** over every (prompt bucket × output bucket × concurrency) cell, warmed and
-  then sampled. This is the C-3 lookup table. Warmup is discarded *per cell*, not once per
-  campaign: the first request into a new `-ngl` pays kernel JIT and the first at a new
-  concurrency pays slot allocation, and either folded into a cell mean becomes a one-off
-  cost the scheduler then applies to every request forever.
-- **A sustained segment** at one operating point, held under constant load for minutes.
-  This is what τ and the variance envelope are measured on.
-- **A snapshot series**, re-fitting the sustained cell on a rolling window every 60 s. This
-  is the least obvious requirement in C-3 and the most expensive to get wrong. If the data
-  plane hands the control plane a single fitted model, staleness injection (F-8) has to
-  *synthesize* age by perturbing parameters, and H3 stops being a result about real drift
-  and becomes a study of that perturbation model.
+### 3. LAN
 
-Failures are counted, never fitted. A timeout is a censored observation, and a cell mean
-that averaged in the 60 s ceiling would report the harness's own `--timeout` setting as
-the node's speed. The counts feed the Week-3 admissible-set work (F-13) and the cliff
-characterization (F-15).
+The network this study needs is not the one people assume. The worker returns the response
+**directly to the client**, so traffic has to flow worker to client, and that is the
+direction consumer wireless breaks.
 
-**C-3 `form` is `lookup_table`**, committed as a module constant rather than a runtime
-option — F-7 allowed either that or a ≤6-parameter regression, and supporting both doubles
-Aditya's interpolation logic for no research gain. The deciding reason is that service
-time against concurrency is flat while slots are free and then bends sharply once
-`--parallel` saturates, and that knee — which is what F-4 is about — is exactly what a
-six-parameter form cannot hold.
-
-### MPR-1: what the hardware actually said
-
-Measuring τ on an LLM serving node turns out to be bounded below by two things that are easy
-to miss. Finding them is most of what Week 2 produced:
-
-1. **A node's rate is only observable when a request finishes.** So the finest timescale the
-   throughput series can carry is one request. Worse, spreading each request's tokens
-   across its own decode interval — which is the honest way to build the series, since a
-   request does not produce its tokens at the instant it completes — *induces* correlation
-   out to one request duration. A τ of that order is indistinguishable from the binning.
-2. **llama.cpp decodes its `--parallel` slots as one batch**, so requests do not finish
-   independently, they finish in bursts. The completion process is near-periodic, and the
-   ACF of a near-periodic signal has peaks and troughs that an exponential fit will
-   happily read as decay.
-
-The second one was not a theoretical worry. On a 660 s segment at 0.78 completions/s with
-four slots — about two bursts per 10 s window — τ came out *censored* at 6, 8 and 12 s
-windows and ≈16 s at 10 and 15 s windows, **from the same samples**: the windows that
-happened to be near-integer multiples of the ~5 s burst period averaged it out, and the
-others aliased against it. A number that moves with the binning is a number about the
-binning, and it would have been very easy to report the 16 s.
-
-We now enforce both floors in the instrument rather than leaving them to judgement.
-`resolution_floor_s` is the larger of the median request duration and the window;
-`cadence_limited` is true below five slot turnovers per window; and `tau_resolved` is false
-unless τ clears both. A run that cannot support a τ says so and keeps its samples instead
-of throwing an exception and losing ten minutes of GPU time.
-
-With those floors enforced, the answer is not one number. It is three readings that only
-mean anything together, because the limit is the **instrument's** and it lands in a
-different place on every node.
-
-**The floor, stated once.** `bursts_per_window` is `samples_per_window / batch_size`, and at
-saturation `samples_per_window = (batch_size / service) × window`, so the batch size
-cancels:
-
-> `bursts_per_window == window_s / service_s` — the five-burst floor means
-> **`window ≥ 5 × service`**, and **τ is only visible if τ > 5 × service**. Concurrency does
-> not enter it.
-
-A node that takes seconds per request cannot see a correlation time of seconds. That is not
-a statement about this study's patience; it is arithmetic, and it is why the Week-2 cells —
-which put the window *above* τ on every node — could not have worked however long they ran.
-
-| node class | sustained cell | service | window | τ | *r²* | reading |
-|---|---|---:|---:|---:|---:|---|
-| `cpu_ngl0_p4_q4km_llama3_8b` | p64/o24 c4 | 9.6 s | 48 s | **69.5 s** | **0.989** | real drift, cleanly fitted |
-| `gtx1650ti_ngl20_p4_q4km_llama3_8b` | p64/o24 c4 | 6.0 s | 32 s | ≤ 32 s | 0.0 | no structure |
-| `gtx1650ti_ngl99_p4_q4km_llama32_1b` | p64/o32 c4 | 0.81 s | 3.5 s | ≤ 3.5 s | 0.0 | no structure* |
-
-**The CPU node is MPR-1.** It is the only class in the pool that drifts, and it drifts
-cleanly:
-
-| | `cpu_ngl0_p4_q4km_llama3_8b`, `--parallel 4`, saturated, 1500 s |
-|---|---|
-| τ | **69.5 s** — integrated **89.0 s**, 1/e crossing **72.1 s**, *r²* = **0.989** |
-| Variance envelope | p05–p95 = **9.65 – 10.41 tok/s**, band **1.08×**, CV **0.027** |
-| Standard-error inflation | **1.36×** — only 16.7 independent windows in 31 |
-| Median decode throughput | 3.74 tok/s |
-| σ — spread of the fitted lognormal multiplier the simulator applies to service times (F-22) | 0.040 |
-
-Three estimators that do not share a failure mode land within 30% of each other on a 0.99
-fit. They are: fitting an exponential decay to the autocorrelation function (the curve of
-how strongly the throughput series correlates with a time-shifted copy of itself); Sokal's
-integrated time, which sums that curve rather than assuming its shape; and the 1/e
-crossing, which simply reads off where the correlation has fallen to about 37%. So the MPR-1
-sentence finally has a number in it:
-
-> **A single calibrated tok/s figure on the CPU node understates its own standard error by
-> 1.36×.** Ten minutes of samples yield sixteen independent observations, not thirty-one.
-
-And the two GPU classes say the opposite, at every timescale their own service time lets
-them look: *r²* = 0, τ pinned to the window, no decay. The pool is not uniformly
-non-stationary — **the drift lives on the CPU node**, which is exactly the class the pool's
-heterogeneity is built out of.
-
-Three caveats belong next to those numbers rather than in a footnote, and we state them
-here rather than in the writeup.
-
-**The CPU τ is fitted, not "resolved".** `tau_resolved` is false, because the bar is
-τ ≥ 2 × `resolution_floor_s` and that floor is `max(median request, window)` = 48 s, so it
-wants 96 s and got 69.5. That bar is deliberately conservative: the *physical* confound is
-one request duration, 9.6 s, and τ is **7.3×** that. The bar compares against the window,
-which is five times stricter than the effect it guards against. Both numbers are reported
-and neither should be quoted alone.
-
-**\*The 1B point is cadence-limited** (4.33 bursts per window against a floor of 5). Real
-service came out at 0.81 s against the 0.63 s predicted from the cost table, so the window
-should have been 4.0 s and 3.5 s was used. The bound holds; the exact figure should not be
-quoted.
-
-**H3 now has somewhere to live.** After Week 2 we recorded a concern: if τ sits below ~10 s then
-"staleness approaching τ" is a regime any sane heartbeat interval is already inside, and
-H3's staleness axis would have to be re-grounded or declared simulator-only. That worry is
-answered: on the CPU node τ is 70 s, comfortably above any heartbeat interval, so the
-staleness sweep has a real target on real hardware. It is the GPU classes where the axis is
-degenerate.
-
-### The synthesizable *R* range — and the machine we do not have
-
-F-9a's promise is that *R* is tunable on real hardware, because with the engine, the
-quantization **and the model** all held constant, per-node capability is set by `-ngl`,
-`--threads` and `--parallel` alone. Week 2 is where that promise gets a number. Two node
-classes of `Meta-Llama-3-8B-Instruct`, both `--parallel 4`, sustained at concurrency 4:
-
-| Node class | `-ngl` | Decode tok/s |
-|---|---:|---:|
-| `gtx1650ti_ngl20_p4_q4km_llama3_8b` | 20 | 7.49 |
-| `cpu_ngl0_p4_q4km_llama3_8b` | 0 | 3.74 |
-
-```
-R in [1.00, 1.00] deployable across 1 host(s) from 2 node class(es);
-configuration alone reaches 2.00 but F-9a forbids co-locating the extremes on one host
-```
-
-Two numbers, and conflating them would overstate the result badly. **Configuration alone
-reaches 2.00×.** **Deployable *R* is 1.00×** — because both classes were measured on the
-same physical machine, and F-9a forbids running two logical nodes on one host, since they
-would contend for PCIe, memory bandwidth and cache and reintroduce as contention the exact
-confound per-node throttling exists to remove.
-
-So our honest Week-2 statement is that **the physical pool cannot yet span any
-heterogeneity at all**, and the fix is not code — it is a second machine. MPR-2 is the 2×2
-decomposition *across the synthesized R range*, so it stays out of reach until the pool has
-at least two hosts. That is worth knowing in Week 2 rather than Week 4.
-
-Also worth stating: 2.00× is a narrow span even ignoring co-location, because a GTX 1650 Ti
-holding 20 of 33 layers is not far ahead of the same box's CPU. Reaching the 10–100× the
-research question is about will need genuinely different machines, not just a wider `-ngl`
-sweep on this one.
-
-The `Llama-3.2-1B-Instruct` class reaches 71.6 tok/s on the same card at `-ngl 99`, which
-is roughly 19× the CPU 8B — but that is **not an *R***, and the tool refuses to compute it
-as one:
-
-```
-ValueError: R would be computed across 2 models (['Llama-3.2-1B-Instruct',
-'Meta-Llama-3-8B-Instruct']), which confounds the heterogeneity ratio with a model
-effect (F-9). Compute one range per model and report them separately
-```
-
-Model variety is a replication axis *across run sets* — the same hypotheses re-run end to
-end at a second model — not a way to widen *R* inside one pool. The guard is in the tool
-rather than in a reviewer's memory because that is the kind of mistake that produces a
-plausible number nobody questions.
-
-### The live pool: what a node actually is
-
-Week 1 produced an engine *adapter* — something that can drive `llama-server` and describe
-what came back. Week 3 needs a node: a process on the network that answers `Execute`,
-serves the request, and returns the response to the client. That is
-[`worker/serve.py`](dataplane/src/dataplane/worker/serve.py), and three of its decisions are
-measurement decisions rather than plumbing.
-
-**The wrapper owns admission, not the engine.** llama.cpp will happily accept more requests
-than it has slots and queue them internally, and left alone that wait lands inside
-`service_ns`, where nothing can separate it from compute. So the wrapper holds a semaphore of
-exactly `--parallel` permits. `queue_wait_ns` is time spent waiting for a permit and
-`service_ns` is the engine's own span, which is what makes C-4's two duration columns mean
-two different things — and it is why the simulator can model a node as a fixed-capacity
-server without approximating anything: the slot count *is* `SimNode.batch_capacity`.
-
-**`Execute` returns before the work is done.** It answers `queued=true` and hands the
-request to a task. A worker that blocked until the completion came back would apply
-backpressure to the scheduler, and backpressure at the scheduler silently converts an
-open-loop experiment into a closed-loop one — the single failure mode the replay client's
-send-lag guard exists to catch. The guard watches the client; this is the other end of the
-same rule.
-
-**The response goes to the client, not back through the scheduler (F-11).** The
-`client_endpoint` rides on the request for exactly this reason.
-
-One cost paid on purpose: `/slots` is read once per request, after the permit is acquired
-and before the completion is posted. It costs a loopback round trip that lands in neither
-`queue_wait_ns` nor `service_ns`, and it buys a `kv_occupancy_at_admission` that is a
-reading rather than a value copied from a heartbeat up to a second old. A stale per-request
-field is indistinguishable from a fresh one once it is in the log.
-
-Bringing a node up is three processes, and they are deliberately three:
+**Not a phone hotspot.** Most of them isolate connected devices from each other, which kills
+the reply path silently: the dispatch succeeds, the worker serves the request, the client
+records a timeout, and the run reads as a saturated pool.
 
 ```bash
-# 1. the engine
-llama-server -m ~/models/gguf/Llama-3.2-1B-Instruct-Q4_K_M.gguf \
-             --host 127.0.0.1 --port 18080 \
-             -ngl 99 --threads 6 --parallel 4 -c 8192 --slots --no-webui
+./tools/lan-up.sh --ap   --ssid poolnet --pass '<secret>'          # harness host
+./tools/lan-up.sh --join --ssid poolnet --pass '<secret>' --ip 10.42.0.11
+./tools/lan-up.sh --open node                                      # tcp/50061
+./tools/lan-up.sh --verify 10.42.0.1:50051 10.42.0.1:50071
+```
 
-# 2. the node — one per physical host (F-9a)
+Addresses are static because the manifest records where each node was, and an address that
+changes between runs makes two runs incomparable. The engine's own port is never opened.
+
+Then the two checks that test what a TCP connect cannot:
+
+```bash
+uv run preflight --serve 0.0.0.0:50071        # harness host
+uv run preflight --probe <harness>:50071      # from each pool node
+uv run clocksync --measure --out clocks/$(hostname).json
+uv run clocksync --combine clocks/*.json --reference <harness> --out clock_sync.json
+```
+
+`preflight` speaks gRPC, so a port that accepts TCP but not HTTP/2 fails there rather than at
+the first request of a run. `clocksync` records each host's clock discipline into the
+manifest. The offset it records is subtracted from nothing. The number that matters is the
+rate, because Linux slews the monotonic clock along with the system clock, and that is what
+makes two machines' durations comparable at all.
+
+### 4. Workers
+
+The engine listens on loopback only. The worker wrapper is the only thing that talks to it,
+and the only thing exposed to the LAN.
+
+```bash
+~/opt/llama.cpp/b10569-cuda/bin/llama-server \
+  --host 127.0.0.1 --port 18080 \
+  -m ~/models/gguf/Llama-3.2-1B-Instruct-Q4_K_M.gguf \
+  -ngl 99 --threads 6 --parallel 4
+
 uv run worker --node-id gtx1650ti --engine http://127.0.0.1:18080 \
-              --bind 0.0.0.0:50061 --scheduler <scheduler-host>:50051 \
-              --slots 4 --engine-version b10569+cuda13.2 --log-dir runs/worker
-
-# 3. the scheduler. The control plane's LiveSchedulerApp goes here; until the seam
-#    findings in issue #5 are closed we drive the pool with a fixture that round-robins
-#    blindly and writes no decision record.
-uv run python fixtures/fake_scheduler/serve.py --bind 0.0.0.0:50051 --worker <node>:50061
+  --bind 0.0.0.0:50061 --engine-version b10569+p1+cuda13.2 --log-dir runs/worker
 ```
 
-Nothing here starts anything else. An engine, a wrapper and a scheduler have three
-lifetimes, and a campaign runner that owned all three would hide an engine restart inside a
-Python traceback — `engine_restarts` is a field in the C-6 validity block precisely because
-it is a thing to be *counted*, not something to be papered over by a supervisor.
+**This is where *R* is set.** A second node running the same engine at a lower `-ngl` is
+genuinely slower, and that is how we produce a second *R* point without a second machine.
+The settings are part of the experimental condition, so they are recorded per run rather
+than per machine.
 
-### The admissible set, and the cliff outside it
+### 5. Scheduler
 
-F-13 says the primary study operates over a `(prompt, output)` range that **every** pool
-node can serve inside a stated timeout ceiling, and that the restricted range is reported
-alongside results. It is an intersection, not an average: one slow node shrinks the whole
-study's range. `uv run admissible` computes it from the C-3 snapshots the calibration
-campaign already wrote, so the boundary is measured rather than assumed:
+Control plane only. It picks a node and steps out of the way, so it never sits in the
+response path.
 
-```
-$ uv run admissible runs/calibration/llama3-8b --out runs/admissible/llama3-8b.json
-model: Meta-Llama-3-8B-Instruct
-admissible set: prompt <= 128, output <= 64 at a 300000 ms ceiling
-                                            (limited by cpu_ngl0_p4_q4km_llama3_8b)
-trace buckets inside it: p128_o64
-  cpu_ngl0_p4_q4km_llama3_8b          prompt<=128  output<=64
-  gtx1650ti_ngl20_p4_q4km_llama3_8b   prompt<=512  output<=64
-  NOTE: cpu_ngl0_p4_q4km_llama3_8b admits prompts to 128 on samples that reach only 64 —
-        the bucket ceiling is claimed, not measured
+```bash
+uv run --project dataplane python fixtures/fake_scheduler/serve.py \
+  --bind 0.0.0.0:50051 --worker 10.42.0.11:50061 --worker 10.42.0.12:50061
 ```
 
-Those two rows are F-13 doing the thing it exists for. The GPU class would serve prompts to
-512; the CPU class would not, and **the CPU class is what the pool's range becomes** —
-`limited by` names it so the shrunk range travels with the result instead of being applied
-silently. The 1B pool, having one class, intersects to that class:
+The fixture round-robins blindly and writes no decision record. It exists so neither half of
+the project blocks on the other. The real control plane replaces it at the same address.
 
-```
-$ uv run admissible runs/calibration/llama32-1b --out runs/admissible/llama32-1b.json
-model: Llama-3.2-1B-Instruct
-admissible set: prompt <= 512, output <= 128 at a 60000 ms ceiling
-trace buckets inside it: p128_o64, p256_o64, p512_o128
-```
+### 6. Run
 
-A **bucket** in that output is a named `(prompt length, output length)` band — `p128_o64`
-is "prompts up to 128 tokens, outputs of 64" — and buckets rather than exact lengths are
-what the cost model is indexed by, because measuring every length individually is not
-affordable.
+One trace, generated once from a config and a seed. It prints its own SHA-256, and the
+replay refuses to start unless the file still hashes to it.
 
-Three things in that output are deliberate.
-
-**The boundary is drawn on p95, not the mean.** A bucket whose mean fits under the ceiling
-but whose p95 does not will time out one request in twenty, and those timeouts land in
-exactly the tail statistics the study is about.
-
-**"At every calibrated concurrency", not at concurrency 1.** A bucket that fits when the
-node is idle and blows the ceiling at `--parallel 4` is not admissible, because the
-scheduler will absolutely put four requests on that node under load — that is what the load
-band *is*.
-
-**The last line is the honesty check, and the one we expect to be argued with.** A
-bucket is named by its **ceiling** and sampled in its **interior**. The `(129, 512)` bucket
-was admitted on samples that reached only 256 tokens, so "prompt ≤ 512" was a claim about
-512 that nothing in the campaign had tested. The envelope still reports the ceiling — that
-is what C-2's header and the trace generator consume — but `evidence` in the JSON reports
-what was actually measured, and the difference is printed rather than left for someone to
-notice in Week 6.
-
-**That gap is now closed.** The Week-4 recalibration measures prompt 512 directly, and
-re-deriving the set from it gives the same answer — `prompt ≤ 512, output ≤ 128` — with
-`unmeasured_ceiling` empty and `max_prompt_measured: 512`. The determination did not change;
-what changed is that it is now supported at the ceiling it claims. This is the whole reason
-the field exists: it turned an unexamined claim into a to-do that could be closed rather than
-into a footnote nobody read.
-
-The cliff (F-15) is computed from the campaign's **discarded** samples, because a fitted
-cost table excludes failures by construction and therefore cannot say where the cliff is.
-That is what those samples are for.
-
-The tool refuses to intersect across two models for the same reason `r-range` refuses to
-divide across them: F-9 holds the model constant across a pool, so an envelope spanning two
-models describes a pool that cannot exist.
-
-### Validation anchors, and the load band they also locate
-
-F-23 fixes the form of the Week-4 answer to *does the simulator agree with the machine?* —
-p50 and p95 end-to-end latency, within a stated tolerance, at **three or more operating
-points**, on **identical replayed traces**. `uv run anchors` produces the hardware half, and
-those two emphasised phrases are the whole design.
-
-**Three points, not one.** A simulator tuned at a single load is not validated, it is
-fitted. The interesting failure is a service-time model that is right when the node is idle
-and wrong when it is saturated, and a single anchor at either end cannot see it.
-
-**The tolerance is ±25%, and it is set by the anchors rather than chosen.** F-23 requires a
-*stated* tolerance and the observed error against it. Bootstrapping the four committed
-anchor runs — resampling each run's own requests 4,000 times to see how much its percentiles
-would move under a different draw — gives 95% intervals on their own p50 and p95 of **±25.9%
-and ±24.7%**, at 180–196 measured requests per run. That is the resolution of the instrument
-the simulator is being compared against, so a tighter tolerance would not be a stricter test
-but an unfalsifiable one. Improving it is a matter of run length rather than analysis:
-halving the interval takes roughly four times the requests per anchor. Every reported error
-carries the corresponding anchor interval beside it, so the limiting side of the comparison
-stays visible.
-
-**One trace across all of them.** The points differ only by `rate_scale`: the same trace
-file, replayed with its arrival timeline compressed. Three separately seeded traces would
-change the length draw and the burst structure along with the rate, and a disagreement
-between vehicles could then be a workload difference rather than a simulator error. Sharing
-the trace is also what makes `trace_sha256` identical across the set, which is the property
-`load_anchors` refuses to run without.
-
-```
-$ uv run anchors configs/anchors_1b.json
-     quiet  x0.80  lambda=0.72/s  200/200 ok  max send lag 26.1 ms  VALID
-     light  x1.15  lambda=1.03/s  200/200 ok  max send lag 12.8 ms  VALID
-       mid  x1.45  lambda=1.30/s  200/200 ok  max send lag  9.3 ms  VALID
-     heavy  x2.20  lambda=1.98/s  200/200 ok  max send lag  5.7 ms  VALID
-
-4/4 anchors valid, written under runs/anchors
+```bash
+uv run gen-trace configs/trace_anchor_1b.json -o runs/traces/t_lam1.2.jsonl
 ```
 
-We run four points rather than three, because F-23's "at least 3" is a floor and a sweep
-that loses one run to a send-lag violation should still leave a usable anchor set. Each is the same 200
-requests of `Llama-3.2-1B-Instruct` on one GTX 1650 Ti at `-ngl 99 --parallel 4`; only the
-clock differs. The manifests are committed under [`runs/anchors`](runs/anchors) — they are
-the whole record, since the trace regenerates from its seed.
+Then one replay per policy, and the whole set again per *R* point. `--advertise` is the
+LAN address the worker sends the response back to, which is the F-11 path and the thing
+nothing else exercises.
 
-The operating points are chosen against the pool's **measured** capacity, and the first
-sweep exists to measure it. The estimate from the C-3 table's concurrency-4 cells was 2.9
-req/s; the pool actually retires about 1.65, because the table prices a cell at a controlled
-concurrency and a real length mix does not hold concurrency still. That first sweep is kept
-under [`runs/sweeps/capacity_probe_1b`](runs/sweeps/capacity_probe_1b) with its own note,
-because it is what the anchor rates were chosen from and because it is where the
-`engine_error`s finally got a cause.
-
-#### About those `engine_error`s
-
-Two requests in every two hundred come back as `engine_error`, and the reason is not the
-hardware:
-
-```
-W common_chat_peg_parse: unparsed Content-only output: <0xB2>
-W srv operator(): got exception: {"error":{"code":500,
-    "message":"The model produced output that does not match the expected Content-only
-               format","type":"server_error"}}
+```bash
+uv run replay runs/traces/t_lam1.2.jsonl \
+  --scheduler 10.42.0.1:50051 --run-id jsq_r1 --policy jsq \
+  --sha256 <printed by gen-trace> \
+  --bind 0.0.0.0:50071 --advertise 10.42.0.1 \
+  --nodes nodes.json --out runs/exp
 ```
 
-A lone UTF-8 continuation byte. Forced-length generation (`n_predict` + `ignore_eos`) ends
-mid-character, and this build runs `/completion` output through the chat content parser.
-The work was done; the engine refused to hand it over. It is a **response-serialization
-failure, not a capacity limit**, and it is the same signature as the periodic
-`engine_error`s the Week-2 CPU node produced, which had no explanation at the time.
+Then the pipeline, which is a pure function of the manifest and the three log files. No
+network, no engine, and it runs on a laptop.
 
-It is not avoidable from the data plane's side. `--no-jinja`, `--reasoning-format none` and
-`--reasoning off` each leave the rate unchanged at 2 in 200, and Llama-3's BPE *does*
-carry byte tokens, so a `logit_bias` could suppress them — but that is not a way out
-either: truncation on a **lead** byte fails the same parse, and any token can end mid-
-character. So it is reported: the count is in every anchor's summary line, the status is
-in the C-4 log, and the rate is stated wherever an anchor is used.
-
-#### The load band
-
-Policy differences vanish at both ends of the load axis and for two different reasons —
-too light and nothing is queued, so every policy makes the same placement; too heavy and
-everything is queued, so no placement helps. §5.5 makes finding the band between them a
-prerequisite step and a reportable characterization in its own right, and it comes off the
-same runs:
-
-```
-$ uv run load-band runs/anchors
-load band: 1.03–1.30 req/s (reference p50 1367 ms, p99 4106 ms); one-node pool, so this is
-the band's physical bound only — policy separation is not demonstrated by these runs
-     quiet  lambda= 0.72/s  n=196  p50= 1366.6  p95= 3739.0  p99= 4105.9  drift=  -115.8 ms
-     light  lambda= 1.03/s  n=193  p50= 1981.2  p95= 4534.4  p99= 5476.0  drift=  -128.0 ms
-       mid  lambda= 1.30/s  n=190  p50= 2980.2  p95= 5974.2  p99= 7115.0  drift=  -312.0 ms
-     heavy  lambda= 1.98/s  n=180  p50=14137.1  p95=23985.7  p99=25068.3  drift=+12829.6 ms
-                                                          [retired only 1.58/s]
+```bash
+uv run pipeline  runs/exp/jsq_r1 --trace runs/traces/t_lam1.2.jsonl
+uv run costcheck runs/exp                                     # before blaming the simulator
+uv run runset    runs/exp --out runs/exp/runset.parquet
+uv run figures   runs/exp/runset.parquet --out figures/
 ```
 
-The band reads cleanly off those four rows. At 0.72 req/s the node is the reference — its
-tail is the length spread and nothing else. At 1.03 the tail is a third worse than the
-reference's with the *same* requests in it, which is queueing. At 1.30 it is still stable,
-its latency still flat across the run. At 1.98 both saturation readings fire at once: the
-fitted latency rise is +12.8 s against a p50 of 14.1 s, and the pool retired 1.58 req/s
-against 1.98 offered. So the pool's ceiling is about 1.6 req/s and the band sits just under
-it.
+Nothing changes between runs except the policy and the `-ngl` setting. That is the entire
+reason the results are comparable.
 
-A third reading, added when the analysis layer was audited against §5.4, agrees with both.
-Queue wait is a dependent variable in its own right, and it locates the onset more sharply
-than the tail test does: median queue wait is **0.01 ms** at both the quiet and light
-anchors — effectively no queue at all — then **731 ms** at mid and **11.8 s** at heavy. The
-band's upper edge sits exactly at that transition.
+**Read the manifest before reading any figure.** Four fields decide whether a run is a data
+point at all:
 
-Worth noting what did **not** move. These are the numbers from the patched engine, and the
-band lands in the same place as the pre-patch sweep did — 1.03–1.30 either way. The patch
-recovered the ~1% of requests the engine had been dropping without changing the queueing
-physics, which is what a fix to a serialization bug should look like. What changed is the
-`ok` column: 198/200 on every point before, **200/200 on every point now**.
+| Field | Must be |
+|---|---|
+| `validity.colocated_nodes` | `0`. One logical node per physical machine, or the contention confound is back. |
+| `validity.send_lag_violations` | `0`. Anything else means the client was not open-loop for the whole window. |
+| `clock_sync.ok` | `true`, with no host unsynchronised. |
+| `nodes[].engine_version` | identical across the pool. |
 
-We fixed three rules in advance rather than tuning them against the data:
-
-**Onset is tail against tail.** A point is inside the band once its p99 is 20% worse than
-the *reference point's p99*. The first version of this rule compared p99 to the reference
-**p50**, which is wrong in a way that looked right: the trace mixes `p128_o64` with
-`p512_o128`, so p99 sits several times above p50 from the length spread alone — 1603 ms
-against 4987 ms on the lightest run, with no queue anywhere — and the rule fired at the
-floor of every sweep. The fix is free from the anchor design: every point replays the same
-trace, so the length composition is identical by construction and a tail-to-tail comparison
-isolates the one thing that changed.
-
-**Saturation is read two ways.** The trend test fits latency against arrival time and calls
-a point saturated when the fitted rise across the window is at least the run's own p50 — a
-pool that is keeping up shows flat latency, one that is falling behind shows a climb. The
-shortfall test instead compares completions per second against the rate that was offered;
-because the replay is open-loop, the trace fixes the offered rate, so a pool retiring less
-than that has grown a backlog by definition.
-Both are here because the trend test missed a point the shortfall test caught: at 1.80 req/s
-against a pool that retires 1.65, the backlog builds slowly enough that over 111 seconds the
-fitted rise reached only 0.30 of the run's p50, while the pool was visibly retiring 1.63.
-
-**What one node cannot show.** With a single-node pool there is no placement to get
-wrong, so these runs bound the band from physics — queueing exists here, the queue clears
-here — but cannot demonstrate the thing the band is *defined* by, which is that policies
-differ inside it. `policy_separable` is `false` in the output until the pool has two hosts,
-and it stays in the JSON so a figure drawn from this sweep cannot quietly claim more than the
-runs support. It is the same second machine that MPR-2 is waiting on.
-
-### Does the cost model predict its own hardware?
-
-The whole Week-4 gate is "the simulator agrees with hardware within a stated tolerance". When
-that comparison fails there are two suspects and they live on opposite sides of the seam —
-the simulator's queueing and policy logic, or the cost model it was parameterised from — and
-the F-23 figure separates them not at all.
-
-So we settle the upstream half first, and it needs no simulator. `uv run costcheck
-runs/anchors` takes each of the four anchor runs, takes the C-3 snapshot the manifest says
-each node was deployed under, and asks what the reference lookup would have predicted for
-every request that actually ran. It is the reference lookup deliberately — nearest measured
-concurrency, bucketed lengths, no interpolation — because what matters is the error the
-scheduler and the simulator really carry, not the error a cleverer estimator could have
-achieved from the same samples.
-
-The answer, the first time we asked, was a request-weighted **127%**, with eleven of twelve
-exercised cells outside the ±25% tolerance and the worst at 353%. Two causes, and neither is
-a defect in anyone's code.
-
-**The grid was calibrated at lengths the study does not run.** Week 2's config sampled prompt
-64 and output 32. The anchor trace runs `p128_o64`, `p256_o64` and `p512_o128`. Every one of
-those falls inside the same buckets the calibration used, so nothing was out of range and
-nothing raised — but decode time is linear in output tokens, so a cell measured at 32 tokens
-under-predicts a request of 64 by about half. The campaign driver's own docstring warns about
-precisely this: a bucket sampled only at its lower edge advertises a speed its longer
-requests never see. The warning was written and then not followed.
-
-**The concurrency axis had holes where the anchors live.** The grid measured 1 and 4 slots.
-Reconstructing occupancy from the client log alone — a request holds the node from send to
-completion, and the wrapper admits at most `--parallel` of them at once — the quiet anchor
-spends 28% of its time at two slots and the light anchor 18%. Nearest-measured-concurrency
-then prices a two-slot request at the one-slot rate, because 2 is nearer to 1 than to 4.
-
-**What the anchors say about batching is a result in its own right.** The worker log carries
-the F-18 split, so the two effects separate cleanly. Prefill is a function of prompt length
-and is flat in concurrency: about 174 ms at 128 tokens, 343 at 256, 698 at 512, moving less
-than 10% from one slot to four. All of the concurrency dependence is in decode, and
-per-request decode throughput falls almost exactly as 1/c — 143, 71, 58, 39 tok/s at one
-through four slots. **Aggregate decode throughput is therefore flat: on this card, batching
-buys nothing.** Four concurrent requests finish in roughly the time four sequential ones
-would. That is what a memory-bandwidth-bound decode looks like on a small GPU, and it bounds
-what any routing policy can do here — with no batching gain a slot is just a slot, so the
-concurrency effects these policies compete over are queueing effects rather than throughput
-effects. On hardware where batching does pay, the same policies would be choosing between
-different things, and that belongs in the threats section rather than in a footnote.
-
-Recalibrating on a grid whose representative lengths are the trace's own, at every
-concurrency the pool can reach, is what closed the gap — **127% → 27.5% → 20.8%**, the last
-step coming from an added prompt-bucket edge at 256 so that a single bucket no longer averaged
-a fourfold range of prefill. On medians the error is 9.9%, and the four-slot cells, which
-carry most of the requests and are where the anchors sit under load, land within 2%.
-
-It is also a limitation worth stating in the same breath: the model is now calibrated for the
-traces this study replays, and a prompt length sitting between two bucket representatives
-would be priced at its bucket's rate rather than its own.
-
-**The mean and the median disagree, and the disagreement is measurable rather than
-mysterious.** The prediction is a mean measured with concurrency held *fixed*. A live run's
-cell is a mean over requests labelled by their concurrency *at admission*, and a request
-admitted alone onto a busy node does not stay alone — occupancy climbs while it is being
-served. Those requests keep the low-concurrency label and carry a high-concurrency service
-time, which lands entirely in the upper tail: one cell's median sits 13% above prediction
-while its mean sits 71% above. `costcheck` prints both. The mean stays the verdict, because a
-mean is what the model predicts; the median is there so that "the model is wrong" and "the
-label is a proxy" can be told apart rather than argued about.
-
+---
 
 ## What it produces even if things go wrong
 
-The window has no slack, so the result ladder is defined in advance and strictly ordered:
+The window has no slack, so the result ladder is fixed in advance and strictly ordered.
 
 | | | Depends on |
 |---|---|---|
-| **MPR-1** ✅ | A characterization of throughput non-stationarity in consumer LLM serving nodes — τ, the variance envelope, and the implication that any single calibrated tok/s figure is a moving average over a non-stationary process. | Nothing. Hardware only. |
-| **MPR-2** | The H1 2×2 decomposition on real hardware, across the synthesized *R* range, plus the load-band characterization. | Week 3–4, **and a second machine**. The estimator is built and the load band is done; the decomposition needs a pool that spans some heterogeneity. |
-| **MPR-3** | H2 and H3 — the non-monotonic advantage curve and its shift under staleness, in the validated simulator. | Weeks 5–6. |
+| **MPR-1** ✅ | A characterization of throughput non-stationarity in consumer serving nodes: τ, the variance envelope, and the implication that any single calibrated tok/s figure is a moving average over a non-stationary process. | Nothing. Hardware only. |
+| **MPR-2** | The H1 2×2 decomposition on real hardware across the synthesized *R* range, plus the load band. | A pool that spans real heterogeneity. |
+| **MPR-3** | H2 and H3, the non-monotonic advantage curve and its shift under staleness, in the validated simulator. | Weeks 5 to 6. |
 
-MPR-1 stands alone as a measurement contribution and needs no scheduler comparison at all —
-which is exactly why it is the one that has landed. It came out sharper than "here is a τ",
-because the drift turned out to belong to a *particular kind of node*: **τ = 69.5 s on the
-CPU class, and nothing measurable on either GPU class**, with an instrument limit
-(`τ > 5 × service`) that explains why. That last part is the reusable half — it tells anyone
-repeating this what their hardware has to be able to do before the question is even askable.
-
-MPR-2 has half its inputs. The load-band characterization is done; the 2×2 decomposition
-across *R* is not, and cannot be, while deployable *R* is 1.00×.
+MPR-1 stands alone as a measurement contribution and needs no scheduler comparison, which is
+exactly why it is the one that has landed.
 
 ---
 
 ## Repository layout
 
 ```
-contracts/       The interface between the two halves — six frozen artifacts,
-                 plus the committed C-3 snapshot series the simulator reads.
-dataplane/       Workers, calibration campaign, harness, results pipeline.  (Python)
-controlplane/    Scheduler, the five policies, discrete-event simulator.
-fixtures/        Fake scheduler and fake worker, so neither half blocks on the other.
-docs/            Spec, decision records, UML figure set.
-patches/         Changes to the pinned engine, with the reasoning that justifies them.
-runs/            Measurement output. Only the run manifests and Week 3's two
-                 determinations are versioned; the rest regenerates from a seed.
-assets/          Images used by this README.
+contracts/     The interface between the two halves. Six frozen artifacts, plus the
+               committed cost-model snapshot series the simulator reads.
+dataplane/     Workers, calibration campaign, harness, results pipeline.   (Python)
+controlplane/  Scheduler, the five policies, discrete-event simulator.     (Java)
+tools/         Machine survey, LAN bring-up, pool install.
+fixtures/      Fake scheduler and fake worker, so neither half blocks on the other.
+docs/          Spec, decision records, UML figure set.
+patches/       Changes to the pinned engine, with the reasoning that justifies them.
+runs/          Measurement output. Only manifests and determinations are versioned.
 ```
-
-The whole system is two processes and a client, and the seam between them is narrow by
-design:
 
 ![Component view](assets/fig02_component.png)
 
-The scheduler is **control-plane only** — it chooses a node and steps out of the way.
-Responses travel from worker straight back to the client, so the scheduler never sits in
-the response data path.
-
 ### The contract
 
-The two halves interact through exactly six artifacts and **nothing else crosses the
-seam**. All six are validated in CI on every pull request:
+The two halves interact through exactly six artifacts and **nothing else crosses the seam**.
+All six are validated in CI on every pull request.
 
-| # | Artifact | Direction | Format |
-|---|---|---|---|
-| C-1 | [`scheduling.proto`](contracts/scheduling.proto) | bidirectional | protobuf3 / gRPC |
-| C-2 | [Trace file](contracts/schemas/trace.schema.json) | harness → harness, simulator | JSONL + header |
-| C-3 | [Cost model snapshot](contracts/schemas/cost_model.schema.json) | data plane → control plane | JSON |
-| C-4 | Log records ([client](contracts/schemas/log_client.schema.json) · [scheduler](contracts/schemas/log_scheduler.schema.json) · [worker](contracts/schemas/log_worker.schema.json)) | both → pipeline | JSONL |
-| C-5 | [Joined record](contracts/schemas/joined_record.schema.json) | pipeline → figures | Parquet |
-| C-6 | [Run manifest](contracts/schemas/manifest.schema.json) | launcher → everything | JSON |
+| # | Artifact | Direction |
+|---|---|---|
+| C-1 | [`scheduling.proto`](contracts/scheduling.proto) | bidirectional |
+| C-2 | [Trace file](contracts/schemas/trace.schema.json) | harness to harness and simulator |
+| C-3 | [Cost model snapshot](contracts/schemas/cost_model.schema.json) | data plane to control plane |
+| C-4 | Log records ([client](contracts/schemas/log_client.schema.json), [scheduler](contracts/schemas/log_scheduler.schema.json), [worker](contracts/schemas/log_worker.schema.json)) | both to pipeline |
+| C-5 | [Joined record](contracts/schemas/joined_record.schema.json) | pipeline to figures |
+| C-6 | [Run manifest](contracts/schemas/manifest.schema.json) | launcher to everything |
 
-Only C-1 and C-3 are runtime couplings. The rest are file formats, so both halves can be
-developed against fixtures without either waiting on the other.
+Only C-1 and C-3 are runtime couplings. The rest are file formats, so both halves develop
+against fixtures without waiting on each other.
 
-**Why the seam sits where it does.** The binding constraint is that the simulator must run
-*the same policy implementations* as the live scheduler. Split those across two people and
-they drift — not maliciously, but through ordinary divergence in tie-breaking, or in
-whether an in-flight request counts before or after admission. That drift invalidates
-validation *silently*, because both systems still run and still produce plausible numbers.
-So one person owns the policy code and both of its hosts, and everything else is arranged
-around that.
+**Why the seam sits there.** The binding constraint is that the simulator must run the same
+policy implementations as the live scheduler. Split those across two people and they drift,
+not maliciously but through ordinary divergence over tie-breaking, or over whether an
+in-flight request counts before or after admission. That drift invalidates validation
+*silently*, because both systems still run and still produce plausible numbers. So one
+person owns the policy code and both of its hosts, and everything else is arranged around
+that.
 
 ## Getting started
 
-Requires [`uv`](https://docs.astral.sh/uv/). Nothing else — no GPU needed to run the checks.
-
-Bringing up an actual worker node is a separate step — see [*The pinned engine*](#the-pinned-engine)
-for the llama.cpp tag, the two backend builds, and the GGUF.
+Requires [`uv`](https://docs.astral.sh/uv/). No GPU needed to run the checks.
 
 ```bash
-git clone git@github.com:aiinfra-capstone/llm-sched-study.git
-cd llm-sched-study
-
-# Validate the six contract artifacts (schemas + examples + proto compile)
-uv run contracts/check.py
-
-# Data plane
+uv run contracts/check.py                          # the six artifacts
 cd dataplane && uv sync --all-groups && uv run pytest
-```
-
-With a node up (see [*The live pool*](#the-live-pool-what-a-node-actually-is)), the Week-2
-and Week-3 determinations are five commands, each of which writes the artifact it prints:
-
-```bash
-uv run calibrate  --config configs/calibration_1b.json --out runs/calibration/llama32-1b
-uv run r-range    runs/calibration/llama3-8b                     # F-9a — the R range
-uv run admissible runs/calibration/llama32-1b --out runs/admissible/llama32-1b.json
-uv run anchors    configs/anchors_1b.json                        # F-23 — 4 operating points
-uv run load-band  runs/anchors --out runs/anchors/load_band.json  # §5.5
-```
-
-Analysis is two more, and neither needs a node up — they are pure functions of the files
-the runs left behind — which is what lets the control plane hand over a directory of
-*simulator* logs and have the same code process them:
-
-```bash
-uv run runset    runs/anchors --out runs/anchors/runset.parquet # F-19 — many runs, one frame
-uv run figures   runs/anchors/runset.parquet --out figures/     # F-24 — stamped from the manifest
-uv run costcheck runs/anchors                                   # F-7 — before blaming the simulator
-```
-
-`runset` derives *R* from each run's own C-3 snapshots rather than accepting it as a flag.
-Across a twenty-run sweep a mistyped `--r` does not fail — it silently relabels a point on
-H2's x-axis — so the number is recomputed from what the run was actually served under. It
-also excludes an invalid run **with its reason printed** instead of either poisoning the
-set or stopping it, and says out loud when a set cannot answer the question being asked of
-it (every anchor run is R = 1.00×, so that set cannot speak to H2 at all).
-
-Before any of that, `tools/survey.sh` reads one machine and says what it is allowed to be:
-which models fit at the study's slot count, what `-ngl`/`--threads`/`--parallel` range it
-can produce (which is where *R* comes from), whether it has the RAM to host the scheduler
-and client instead of an engine, and whether its clock and firewall are ready. It reads
-only, needs no root, and runs on a bare install.
-
-```bash
-./tools/survey.sh                            # inventory
-./tools/survey.sh --bench models/llama-3.2-1b-q4km.gguf   # plus the measured -ngl sweep
-```
-
-Once the pool spans more than one machine, `preflight` checks the network the run will
-actually use — and in particular the direction nothing else exercises:
-
-```bash
-uv run preflight --serve 0.0.0.0:50071          # on the CLIENT host
-uv run preflight --probe <client-host>:50071    # from EACH worker host
-uv run preflight configs/preflight_lan.json --out runs/preflight.json
-```
-
-Under F-11 the worker returns responses **directly to the client**, so the client's port has
-to be reachable *inbound* from every worker host. Nothing about bringing the scheduler up
-tests that, and when it is blocked the failure is not loud: the dispatch succeeds, the
-worker serves the request, the record says `timeout`, and a firewall is indistinguishable
-from a saturated pool. Hence the two-sided `--serve` / `--probe` pair.
-
-One thing it deliberately does **not** check: bandwidth, because a five-node pool at the
-measured load band runs at about **0.08 Mbit/s** — a `Dispatch` is 754 bytes on average, a
-`Deliver` is 33, a heartbeat 47 — and even a 30 ms hop is roughly 2% of the fastest
-end-to-end latency measured here.
-
-### Clocks: what we measure, and what it corrects
-
-Preflight reports whether this host's clock is being disciplined, and `clocksync` records
-the answer for every host into the manifest. Three separate things get run together here,
-so we keep them apart.
-
-**Offset** is how far ahead one machine's wall clock reads. It biases any quantity built by
-subtracting one host's timestamp from another's, and this study builds none: `e2e_ms` is
-client-local, `queue_wait_ms` and `service_ms` are worker-local, `decide_us` is
-scheduler-local, and `transport_residual_ms` is a difference of those durations, in which a
-constant offset cancels exactly. So the offset corrects nothing. We record it because it is
-the evidence that the clocks were disciplined at all, and a reader is entitled to check the
-claim rather than take it.
-
-**Epoch** is why the offset could not help even if we wanted it to. The two timestamps that
-cross the wire under C-1, `client_send_mono_ns` and `worker_mono_ns`, are `CLOCK_MONOTONIC`
-reads whose zero is each machine's boot. An NTP offset says nothing about the gap between
-two boot times. That is the technical reason F-18's transport decomposition stays out of
-reach however well the clocks agree, and why "do not install PTP" survives this rather than
-being overturned by it.
-
-**Rate** is the one that touches a measured number. If a worker's clock ticks r ppm faster
-than the client's, its `service_ms` is inflated by r ppm relative to `e2e_ms`, and that is
-multiplicative in the duration, so it does not cancel. The pipeline divides it out and
-prints the size of the correction. On this hardware chrony reports a 1.1 ppm skew, which is
-2 µs on a two-second service time, roughly 500 times smaller than the millisecond the
-residual is quoted in. The point of doing the arithmetic is that "the clocks did not
-matter" becomes a number in the run summary instead of an assumption in a README.
-
-The practical consequence for the LAN build is that **chrony is worth running for rate
-discipline, not for offset**: Linux slews `CLOCK_MONOTONIC` along with the system clock, so
-a disciplined host's monotonic clock ticks at the reference's rate, and that is what makes
-two machines' durations comparable in the first place. Point the workers at the client host
-as their NTP source, then:
-
-```bash
-uv run clocksync --measure --out clocks/$(hostname).json   # on every machine
-uv run clocksync --combine clocks/*.json --reference box-a --out clock_sync.json
-```
-
-Rebuild the UML figures (needs `java` and `graphviz`):
-
-```bash
-docs/uml/render.sh
 ```
 
 ## Documentation
 
 | | |
 |---|---|
-| [Requirements specification](docs/scheduling-requirements-spec.pdf) | Scope, hypotheses, F-1 – F-24, non-goals, threats to validity, the MPR ladder. **Start here** — it is the authority for everything below. |
-| [Split & interface contract](docs/two-person-split-and-interface-contract.md) | Where the seam is, the six artifacts across it, and the failure modes to watch for. |
-| [Week-1 freeze checklist](docs/week1-freeze-checklist.md) | What must be true before the contract freezes. |
-| [UML figure set](docs/uml/FIGURES.md) | Twelve figures with draft captions and the requirements each discharges. |
+| [Requirements specification](docs/scheduling-requirements-spec.pdf) | Scope, hypotheses, F-1 to F-24, non-goals, threats to validity, the MPR ladder. The authority for everything else. |
+| [Split and interface contract](docs/two-person-split-and-interface-contract.md) | Where the seam is, the six artifacts across it, and the failure modes to watch. |
+| [Week-1 freeze checklist](docs/week1-freeze-checklist.md) | What had to be true before the contract froze, and the record of every week since. |
+| [UML figure set](docs/uml/FIGURES.md) | Twelve figures with captions and the requirements each discharges. |
 
 ## Project status
 
-Six weeks, no slack. Feature freeze at end of Week 3; the interface contract freezes at end
-of Week 1.
+Six weeks, no slack. Feature freeze at the end of Week 3, contract freeze at the end of
+Week 1.
 
-| Week | Focus |
-|---|---|
-| 1 | Worker wrapper, heartbeat, thin client, measurement harness. One query routed and measured end to end. |
-| 2 | Calibration campaign; τ and the variance envelope; synthesizable *R* range. **MPR-1.** — ✅ *τ = 69.5 s on the CPU class (r² = 0.989, SE inflation 1.36×), no measurable drift on either GPU class, with the instrument limit that explains the difference. R = 2.00× configured, 1.00× deployable. The 1B class was recalibrated in Week 4 on a grid that lands on the trace's own lengths — see below. F-9b is scoped (3B AWQ, captioned) and deliberately moved to Week 6, where the threats section that consumes it is written.* |
-| 3 | Multi-node pool; all five policies behind one config value; load band identified. **Feature freeze.** — *node serving; admissible set determined on two node classes; 4 valid anchors at 200/200; load band 1.03–1.30 req/s; LAN preflight built. Still one host, so policy separation is not demonstrated and the pool is not yet multi-node.* |
-| 4 | Discrete-event simulator sharing policy code; validated against hardware. — *the data-plane half is complete and did not need the LAN: the pipeline assembles run **sets**, derives R from each run's own C-3 snapshots rather than a typed flag, and renders §5.5 and all four of §5.4's dependent variables with F-24's stamp read from the manifest. F-23's validation figure reports p50 and p95 against a stated ±25% tolerance and refuses until the simulator's half of the set exists. The seam then opened, and `costcheck` found that the deployed cost model missed its own hardware by 127%. Recalibrated since; the story is under "Does the cost model predict its own hardware?"* |
-| 5 | Sweeps: *R* × load × staleness × policy. Hypotheses tested. |
-| 6 | Analysis, threats to validity, literature positioning, writeup. **F-9b engine-gap measurement**, moved here from Week 2: it bounds threat R9, nothing else reads it, and it wants the same GPU that Weeks 4–5 have a dependency chain running through. |
+| Week | Focus | |
+|---|---|---|
+| 1 | Worker, heartbeat, client, harness. One query routed and measured end to end. | ✅ |
+| 2 | Calibration campaign, τ and the variance envelope, the synthesizable *R* range. **MPR-1.** | ✅ |
+| 3 | All five policies behind one config value, admissible set, load band. **Feature freeze.** | ✅ |
+| 4 | Pipeline and figures; simulator sharing policy code, validated against hardware. | data plane ✅ |
+| 5 | Sweeps: *R* × load × staleness × policy. Hypotheses tested. | |
+| 6 | Analysis, threats to validity, positioning, writeup. Engine-gap measurement. | |
 
 ## Team
 
 | | | |
 |---|---|---|
-| **Divyansh Shukla** (A) | [@divyanshuklai](https://github.com/divyanshuklai) | Data plane & measurement — workers, calibration, harness, pipeline, figures |
-| **Aditya Gupta** (B) | [@adityaxgupta](https://github.com/adityaxgupta) | Control plane & simulation — scheduler, policies, staleness injection, simulator, validation |
+| **Divyansh Shukla** (A) | [@divyanshuklai](https://github.com/divyanshuklai) | Data plane and measurement. Workers, calibration, harness, pipeline, figures. |
+| **Aditya Gupta** (B) | [@adityaxgupta](https://github.com/adityaxgupta) | Control plane and simulation. Scheduler, policies, staleness injection, simulator, validation. |
 
-Ownership marks primary responsibility, not exclusive access; both members can run the full
-stack. The specification assigns three roles (A/B/C); B and C are merged here, for the
-reason given under *Why the seam sits where it does*.
+Ownership marks primary responsibility, not exclusive access. Both of us can run the full
+stack.

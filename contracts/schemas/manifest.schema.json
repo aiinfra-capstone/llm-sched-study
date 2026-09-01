@@ -175,6 +175,89 @@
         }
       }
     },
+    "clock_sync": {
+      "type": "object",
+      "description": "How far apart the pool's clocks were, measured at LAN setup and recorded here.\n\nOptional, and absent means exactly that: not measured. It is NOT a claim that the offset was zero.\n\nWHAT THIS DOES AND DOES NOT CORRECT. There is still no cross-host subtraction anywhere in C-4 or C-5, so `offset_ms` corrects nothing: every duration is single-host, and `transport_residual_ms` is a difference of such durations in which a constant offset cancels. It is recorded as evidence that the clocks were being disciplined, so the claim can be checked rather than taken. The offset also could not help with the two on-wire timestamps (`client_send_mono_ns`, `worker_mono_ns`) even in principle, because those are CLOCK_MONOTONIC reads whose zero is each machine's boot; an NTP offset says nothing about the gap between two boot times. That is why F-18's transport decomposition stays out of reach regardless.\n\n`rate_error_ppm` is the field that touches a number. A worker clock ticking r ppm faster than the reference inflates worker-local durations by r ppm relative to client-local ones, and that is multiplicative, so it does not cancel. The pipeline divides it out and reports the size of the correction.",
+      "required": [
+        "reference",
+        "hosts"
+      ],
+      "properties": {
+        "reference": {
+          "type": "string",
+          "description": "Host whose timebase corrected durations are expressed in. The client host, because e2e_ms is what everything else is reconciled against."
+        },
+        "measured_unix": {
+          "type": "integer"
+        },
+        "max_abs_offset_ms": {
+          "type": "number",
+          "description": "Largest offset between any two hosts, not between a host and its upstream source."
+        },
+        "max_rate_error_ppm": {
+          "type": "number",
+          "description": "Largest rate difference between any two hosts. The term the pipeline divides out."
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "hosts": {
+          "type": "object",
+          "description": "host -> that machine's clock as its own time daemon described it.",
+          "additionalProperties": {
+            "type": "object",
+            "required": [
+              "method",
+              "synchronised"
+            ],
+            "properties": {
+              "method": {
+                "enum": [
+                  "chrony",
+                  "declared",
+                  "none"
+                ],
+                "description": "'declared' means a human wrote the number in; it is kept distinguishable from a machine reading on purpose."
+              },
+              "synchronised": {
+                "type": "boolean",
+                "description": "False means the daemon was running but tracking nothing. Its other numbers are stale and are not recorded."
+              },
+              "offset_ms": {
+                "type": "number",
+                "description": "Positive when this host reads ahead of its reference."
+              },
+              "dispersion_ms": {
+                "type": "number",
+                "minimum": 0,
+                "description": "The daemon's own bound on the offset."
+              },
+              "rate_error_ppm": {
+                "type": "number",
+                "description": "Signed residual frequency error left after discipline."
+              },
+              "skew_ppm": {
+                "type": "number",
+                "minimum": 0,
+                "description": "The daemon's own bound on rate_error_ppm."
+              },
+              "source": {
+                "type": "string"
+              },
+              "stratum": {
+                "type": "integer"
+              },
+              "measured_unix": {
+                "type": "integer"
+              },
+              "note": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
     "git_shas": {
       "type": "object",
       "required": [

@@ -53,9 +53,11 @@ Discharges: F-1–F-5, F-9–F-12, F-21.
 > configurability is what makes $R$ tunable on physical hardware (F-9a) and what
 > places the admissibility cliff. The single vLLM run sits outside the pool
 > boundary: it is a measured condition rather than a pool member, run once to
-> report the engine gap as a magnitude (F-9b). Host clocks are not synchronised;
-> every process reports only durations it observed itself, joined offline on
-> `req_id`.
+> report the engine gap as a magnitude (F-9b). No duration crosses a host
+> boundary: every process reports only durations it observed itself, joined
+> offline on `req_id`. Host clocks are disciplined to one reference and the
+> measured offsets recorded in C-6, which makes the machines' clock *rates*
+> comparable without making the transport stage decomposable.
 
 Discharges: F-9, F-9a, F-9b, F-10–F-13, F-18, §5.1; threat R9.
 

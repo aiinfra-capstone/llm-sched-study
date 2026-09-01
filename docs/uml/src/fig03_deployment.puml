@@ -95,9 +95,11 @@ note bottom of VGAP
 end note
 
 note bottom of RES
-  Host clocks are **not** synchronised. Every process reports only
+  No duration crosses a host boundary. Every process reports only
   durations it measured itself; the stages are reassembled offline
-  by joining on req_id (F-18).
+  by joining on req_id (F-18). Host clocks are disciplined to one
+  reference and the measured offsets recorded in C-6, which buys
+  comparable clock **rates**, not a decomposable transport stage.
 end note
 
 legend right

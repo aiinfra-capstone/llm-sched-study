@@ -111,9 +111,12 @@ simulated figure is labelled as such.
 Three disciplines run through the whole design. We state them up front because each guards
 against something that quietly invalidates measurement studies:
 
-1. **No cross-host clock subtraction.** Host clocks are not synchronised. Every duration in
-   the analysis comes from a single machine's monotonic clock; whatever is left over is
-   reported as one honest *residual*, not decomposed into invented stages.
+1. **No cross-host clock subtraction.** Every duration in the analysis comes from a single
+   machine's monotonic clock; whatever is left over is reported as one honest *residual*,
+   not decomposed into invented stages. The rule stands, and from the two-machine setup
+   onward the assumption behind it is measured rather than asserted: `clocksync` records
+   each host's clock discipline into the manifest, and the pipeline divides out the one
+   thing that a differing clock can actually corrupt, which is *rate*, not offset.
 2. **Open-loop load generation.** The replay client never waits for a response before
    firing the next request, and asserts its own send-lag per request. A run whose timing
    drifted is marked invalid rather than analysed.
@@ -1033,13 +1036,50 @@ tests that, and when it is blocked the failure is not loud: the dispatch succeed
 worker serves the request, the record says `timeout`, and a firewall is indistinguishable
 from a saturated pool. Hence the two-sided `--serve` / `--probe` pair.
 
-Two things it deliberately does **not** check. Bandwidth, because a five-node pool at the
+One thing it deliberately does **not** check: bandwidth, because a five-node pool at the
 measured load band runs at about **0.08 Mbit/s** — a `Dispatch` is 754 bytes on average, a
 `Deliver` is 33, a heartbeat 47 — and even a 30 ms hop is roughly 2% of the fastest
-end-to-end latency measured here. And clock synchronisation, because no duration in this
-study is computed by subtracting stamps taken on different hosts, and heartbeat gaps are
-found through `Heartbeat.seq` rather than through time. NTP is not needed; that is a
-property the design paid for deliberately.
+end-to-end latency measured here.
+
+### Clocks: what we measure, and what it corrects
+
+Preflight reports whether this host's clock is being disciplined, and `clocksync` records
+the answer for every host into the manifest. Three separate things get run together here,
+so we keep them apart.
+
+**Offset** is how far ahead one machine's wall clock reads. It biases any quantity built by
+subtracting one host's timestamp from another's, and this study builds none: `e2e_ms` is
+client-local, `queue_wait_ms` and `service_ms` are worker-local, `decide_us` is
+scheduler-local, and `transport_residual_ms` is a difference of those durations, in which a
+constant offset cancels exactly. So the offset corrects nothing. We record it because it is
+the evidence that the clocks were disciplined at all, and a reader is entitled to check the
+claim rather than take it.
+
+**Epoch** is why the offset could not help even if we wanted it to. The two timestamps that
+cross the wire under C-1, `client_send_mono_ns` and `worker_mono_ns`, are `CLOCK_MONOTONIC`
+reads whose zero is each machine's boot. An NTP offset says nothing about the gap between
+two boot times. That is the technical reason F-18's transport decomposition stays out of
+reach however well the clocks agree, and why "do not install PTP" survives this rather than
+being overturned by it.
+
+**Rate** is the one that touches a measured number. If a worker's clock ticks r ppm faster
+than the client's, its `service_ms` is inflated by r ppm relative to `e2e_ms`, and that is
+multiplicative in the duration, so it does not cancel. The pipeline divides it out and
+prints the size of the correction. On this hardware chrony reports a 1.1 ppm skew, which is
+2 µs on a two-second service time, roughly 500 times smaller than the millisecond the
+residual is quoted in. The point of doing the arithmetic is that "the clocks did not
+matter" becomes a number in the run summary instead of an assumption in a README.
+
+The practical consequence for the LAN build is that **chrony is worth running for rate
+discipline, not for offset**: Linux slews `CLOCK_MONOTONIC` along with the system clock, so
+a disciplined host's monotonic clock ticks at the reference's rate, and that is what makes
+two machines' durations comparable in the first place. Point the workers at the client host
+as their NTP source, then:
+
+```bash
+uv run clocksync --measure --out clocks/$(hostname).json   # on every machine
+uv run clocksync --combine clocks/*.json --reference box-a --out clock_sync.json
+```
 
 Rebuild the UML figures (needs `java` and `graphviz`):
 

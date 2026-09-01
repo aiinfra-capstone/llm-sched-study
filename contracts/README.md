@@ -37,6 +37,12 @@ an example that no longer exercises the schema is how drift gets in.
    machine's monotonic clock. `transport_residual_ms` in C-5 is named *residual*
    precisely so nobody mistakes it for a measurement.
 
+   C-6's optional `clock_sync` block does not weaken this. It records what each host's
+   time daemon reported at LAN setup, and the only field the pipeline acts on is
+   `rate_error_ppm`: a clock ticking r ppm fast inflates that host's durations by r ppm,
+   multiplicatively, so unlike an offset it does not cancel in the residual. The offset
+   is recorded and subtracted from nothing. Absent means not measured, never zero.
+
 2. **Version gates reject, they do not default.** `trace_schema` and
    `cost_model_schema` are integers, and loaders must fail loudly on an unknown value.
    The failure this prevents: A learns something in Week 2, adds a field, and B's DES

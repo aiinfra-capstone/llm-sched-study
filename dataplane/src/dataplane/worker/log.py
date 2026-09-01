@@ -53,11 +53,12 @@ def build_record(
     records too and is not a llama.cpp client at all, so it passes the fields flat. Where
     both are given the explicit field wins — the objects are defaults, not overrides.
 
-    `batch_size_at_admission` and `inflight_at_admission` are the same number under
-    llama.cpp and that is not an oversight: a slot is a batch member, so the size of the
-    batch this request joined *is* the number of slots busy when it was admitted. C-4
-    keeps them separate because the vLLM probe distinguishes them, and a schema that only
-    fitted the pool engine would have to change to carry the probe.
+    `batch_size_at_admission` counts this request and `inflight_at_admission` does not, so
+    under llama.cpp the first is the second plus one. That off-by-one is the point of
+    keeping two fields: `inflight` is what the scheduler could have observed before it
+    dispatched, and `batch_size` is the batch that actually resulted, which is what indexes
+    C-3's `concurrency` axis. The cost model is calibrated at concurrency 1 and 4, so a
+    request served alone has to record 1 and not 0 or it indexes nothing.
 
     A `ServiceResult.error` is deliberately not written: C-4 is `additionalProperties:
     false`, and the diagnostic text belongs where it is useful — on the result object and
@@ -91,7 +92,7 @@ def build_record(
         "prompt_tokens": pick(prompt_tokens, lambda r: r.prompt_tokens, 0),
         "output_tokens": pick(output_tokens, lambda r: r.output_tokens, 0),
         "batch_size_at_admission": (
-            batch_size_at_admission if batch_size_at_admission is not None else inflight
+            batch_size_at_admission if batch_size_at_admission is not None else inflight + 1
         ),
         "inflight_at_admission": inflight,
         "status": pick(status, lambda r: r.status, "ok"),

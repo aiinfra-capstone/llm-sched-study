@@ -37,7 +37,7 @@
               "inflight": { "type": "integer" },
               "capability_tok_s": { "type": "number" },
               "estimate_age_ms": { "type": "integer",
-                "description": "Required by H3. Also drives the staleness ceiling above which a node is treated as unavailable (§12.4)." },
+                "description": "Age of the state estimate this decision was made on, at decide time. Required by H3, which regresses routing error against it. There is no staleness ceiling: a stale node stays selectable, because H3 is about what staleness costs a policy, and a ceiling that hid the stale node would remove the effect being measured." },
               "admissible": { "type": "boolean",
                 "description": "F-14: applied by the AdmissionFilter OUTSIDE the policy, so every policy inherits it identically." },
               "score": { "type": ["number", "null"], "description": "null when inadmissible." }

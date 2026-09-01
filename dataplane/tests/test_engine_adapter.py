@@ -216,8 +216,9 @@ def test_worker_record_omits_the_split_it_does_not_have() -> None:
     full, partial = asyncio.run(go())
 
     assert full["prefill_ns"] == 243_288_000 and full["decode_ns"] == 109_847_000
-    # A slot is a batch member under llama.cpp, so these are the same number by design.
-    assert full["batch_size_at_admission"] == full["inflight_at_admission"] == 3
+    # Off by one by design: inflight is what the scheduler could have seen before it
+    # dispatched, batch counts this request too and is what indexes C-3's concurrency.
+    assert full["inflight_at_admission"] == 3 and full["batch_size_at_admission"] == 4
     assert full["kv_occupancy_at_admission"] == 0.75
     assert full["engine"] == "llamacpp" and full["node_id"] == "n1"
 

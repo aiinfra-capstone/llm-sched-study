@@ -197,11 +197,12 @@ class LlamaCppAdapter:
     ) -> dict[str, Any]:
         """One C-4 worker log record. Optional fields are omitted, never faked.
 
-        `batch_size_at_admission` and `inflight_at_admission` are the same number under
-        llama.cpp and that is not an oversight: a slot is a batch member, so the size of
-        the batch this request joined *is* the number of slots busy when it was admitted.
-        C-4 keeps them separate because vLLM's F-9b probe distinguishes them, and a
-        schema that only fits the pool engine would have to change to carry the probe.
+        `batch_size_at_admission` counts this request, `inflight_at_admission` does not,
+        so under llama.cpp the first is always the second plus one. They are off by one on
+        purpose. `inflight` is the state the scheduler could have seen before dispatching;
+        `batch_size` is the batch that actually resulted, and it is the number that indexes
+        C-3's `concurrency` axis, which is calibrated at 1 and 4. A request served alone
+        belongs in the concurrency-1 row, so it must record 1 rather than 0.
         """
         rec: dict[str, Any] = {
             "run_id": run_id,
@@ -212,7 +213,7 @@ class LlamaCppAdapter:
             "service_ns": completion.service_ns,
             "prompt_tokens": completion.prompt_tokens,
             "output_tokens": completion.output_tokens,
-            "batch_size_at_admission": state_at_admission.inflight,
+            "batch_size_at_admission": state_at_admission.inflight + 1,
             "inflight_at_admission": state_at_admission.inflight,
             "status": completion.status,
         }

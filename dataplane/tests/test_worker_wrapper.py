@@ -80,7 +80,9 @@ def test_build_record_takes_a_result_or_the_fields_flat() -> None:
         output_tokens=128,
         prefill_ns=210_000_000,
         decode_ns=1_790_000_000,
-        batch_size_at_admission=2,
+        # The object path derives batch from inflight as inflight + 1, so the flat path
+        # has to state 3 against the same inflight of 2 for the two shapes to agree.
+        batch_size_at_admission=3,
         inflight_at_admission=2,
         status="ok",
         kv_occupancy_at_admission=0.5,

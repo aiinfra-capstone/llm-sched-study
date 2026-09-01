@@ -57,10 +57,11 @@
     },
     "batch_size_at_admission": {
       "type": "integer",
-      "description": "F-4: routing considers the COMPOSITION of a target's in-flight set, not only its depth."
+      "description": "How many requests this one is served ALONGSIDE, counting ITSELF. A request that runs alone records 1, never 0. This is the number that indexes C-3's `concurrency` axis directly, which is the whole reason it is separate from `inflight_at_admission`: the cost model is calibrated at concurrency 1 and 4, and a request served alone belongs in the concurrency-1 row. Under llama.cpp it is `inflight_at_admission + 1`, because a slot is a batch member. Serves F-4, which asks routing to consider the composition of a target's in-flight set and not only its depth."
     },
     "inflight_at_admission": {
-      "type": "integer"
+      "type": "integer",
+      "description": "How many requests were ALREADY in the engine when this one arrived, NOT counting itself. An idle node records 0. The pair is off by one on purpose: this field is the state the scheduler could have observed before dispatching, and `batch_size_at_admission` is the batch that actually resulted."
     },
     "kv_occupancy_at_admission": {
       "type": "number",

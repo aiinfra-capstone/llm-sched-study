@@ -1,0 +1,2 @@
+{"record": "req", "req_id": "req-001", "arrival_offset_s": 0.05, "prompt_len": 100, "output_len": 50, "bucket_id": "b1", "priority": 1}
+{"record": "req", "req_id": "req-002", "arrival_offset_s": 0.15, "prompt_len": 20, "output_len": 10, "bucket_id": "b1", "priority": 1}

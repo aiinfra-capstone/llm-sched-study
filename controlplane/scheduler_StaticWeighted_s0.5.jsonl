@@ -1,0 +1,2 @@
+{"type":"decision","run_id":"StaticWeighted_s0.5","req_id":"req-001","decision_seq":0,"policy":"StaticWeighted","staleness_param_s":0.5,"decide_duration_ns":4300,"chosen_node":"DROP","tie_break_draw":0.0,"candidates":[]}
+{"type":"decision","run_id":"StaticWeighted_s0.5","req_id":"req-002","decision_seq":1,"policy":"StaticWeighted","staleness_param_s":0.5,"decide_duration_ns":3300,"chosen_node":"DROP","tie_break_draw":0.0,"candidates":[]}

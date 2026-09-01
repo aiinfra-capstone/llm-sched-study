@@ -1,6 +1,8 @@
 package com.sched.core.policies;
 
 import java.util.List;
+import java.util.Map;
+import java.util.HashMap;
 import java.util.Optional;
 import java.util.Random;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -9,8 +11,6 @@ import com.sched.core.interfaces.StateStore.NodeView;
 import com.sched.v1.DispatchRequest;
 
 public class RoundRobin implements Policy {
-
-    // Explicit policy state injected from the outside to guarantee determinism during replay
     private final AtomicInteger counter;
 
     public RoundRobin(AtomicInteger initialCounter) {
@@ -18,16 +18,17 @@ public class RoundRobin implements Policy {
     }
 
     @Override
-    public Optional<String> choose(DispatchRequest request, List<NodeView> admissibleNodes, long nowNs, Random rng) {
-        // The architecture specifies that the AdmissionFilter applies F-14 outside the policy.
-        // Therefore, we assume admissibleNodes contains ONLY nodes that can serve this request.
-
+    public Choice choose(DispatchRequest request, List<NodeView> admissibleNodes, long nowNs, Random rng) {
         if (admissibleNodes.isEmpty()) {
-            return Optional.empty(); // Will trigger reject_reason = "no_admissible_node" in DispatchAck
+            return new Choice(Optional.empty(), new HashMap<>(), null);
         }
-
-        // Standard round-robin logic over the admissible subset
         int index = Math.abs(counter.getAndIncrement()) % admissibleNodes.size();
-        return Optional.of(admissibleNodes.get(index).nodeId());
+        String chosen = admissibleNodes.get(index).nodeId();
+        
+        Map<String, Double> scores = new HashMap<>();
+        for (int i = 0; i < admissibleNodes.size(); i++) {
+            scores.put(admissibleNodes.get(i).nodeId(), i == index ? 1.0 : 0.0);
+        }
+        return new Choice(Optional.of(chosen), scores, null);
     }
 }

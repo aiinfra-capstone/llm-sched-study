@@ -5,21 +5,19 @@ import java.util.List;
 import java.util.Map;
 import java.util.ArrayList;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.Comparator;
 
 public class InMemoryStateStore implements StateStore {
     private final Map<String, NodeView> nodes = new ConcurrentHashMap<>();
 
-    /**
-     * Updates or adds a node's current state.
-     * Live path: Called when a Heartbeat or Completion gRPC arrives.
-     * Sim path: Called by SimulationEvents in the DES.
-     */
     public void updateNode(NodeView view) {
         nodes.put(view.nodeId(), view);
     }
 
     @Override
     public List<NodeView> getAllNodes() {
-        return new ArrayList<>(nodes.values());
+        List<NodeView> list = new ArrayList<>(nodes.values());
+        list.sort(Comparator.comparing(NodeView::nodeId));
+        return list;
     }
 }

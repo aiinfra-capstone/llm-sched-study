@@ -7,6 +7,8 @@ import com.sched.core.AdmissionFilter;
 import com.sched.core.StalenessVeil;
 import com.sched.core.InMemoryStateStore;
 import com.sched.core.DecisionLogger;
+import com.sched.core.WorkerLogger;
+import com.sched.core.ClientLogger;
 import com.sched.core.models.SchedulerLogRecords.Candidate;
 import com.sched.core.models.SchedulerLogRecords.DecisionRecord;
 import com.sched.v1.DispatchRequest;
@@ -16,6 +18,7 @@ import java.util.Random;
 import java.util.Collections;
 import java.util.stream.Collectors;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.Set;
 
 public class RequestArrivalEvent extends SimulationEvent {
     private final TraceRequest traceReq;
@@ -68,52 +71,42 @@ public class RequestArrivalEvent extends SimulationEvent {
 
         List<NodeView> allNodes = veil.getAllNodes();
         List<NodeView> admissibleNodes = filter.filterAdmissible(allNodes, dispatchReq);
+        Set<String> admIds = admissibleNodes.stream().map(NodeView::nodeId).collect(Collectors.toSet());
 
-        // Track exactly how long the policy takes to execute
         long startNs = System.nanoTime();
-        Optional<String> chosenNodeOpt = policy.choose(dispatchReq, admissibleNodes, scheduledTimeNs, rng);
+        Policy.Choice choice = policy.choose(dispatchReq, admissibleNodes, scheduledTimeNs, rng);
         long durationNs = System.nanoTime() - startNs;
 
-        String chosenNode = chosenNodeOpt.orElse("DROP");
+        String chosenNode = choice.chosen().orElse(null);
 
-        // Write the decision record with the full snapshot of candidate nodes
         if (logger != null) {
             List<Candidate> candidates = allNodes.stream().map(nv -> {
-                boolean isAdm = admissibleNodes.contains(nv);
+                boolean isAdm = admIds.contains(nv.nodeId());
+                Double score = choice.scores().get(nv.nodeId());
                 return new Candidate(nv.nodeId(), nv.queueDepth(), nv.inflight(),
-                        nv.capabilityTokS(), nv.estimateAgeMs(), isAdm, null);
+                        nv.capabilityTokS(), nv.estimateAgeMs(), isAdm, score);
             }).collect(Collectors.toList());
 
             DecisionRecord rec = new DecisionRecord(
                     "decision", runId, traceReq.reqId(), decisionSeq.getAndIncrement(),
-                    policyName, stalenessParamS, durationNs, chosenNode, 0.0, candidates);
+                    policyName, stalenessParamS, durationNs, chosenNode, choice.tieBreakDraw(), candidates);
             logger.logRecord(rec);
         }
 
-        if (chosenNodeOpt.isPresent()) {
-            String nId = chosenNodeOpt.get();
-            for (NodeView nv : store.getAllNodes()) {
-                if (nv.nodeId().equals(nId)) {
-                    NodeView upd = new NodeView(
-                            nv.nodeId(), nv.queueDepth(), nv.inflight() + 1,
-                            nv.capabilityTokS(), nv.estimateAgeMs(), nv.isAdmissible());
-
-                    store.updateNode(upd);
-                    veil.updateNode(upd);
-
-                    long serviceNs = sampler.sampleServiceNs(nId, traceReq.promptLen(), traceReq.outputLen(),
-                            upd.inflight());
-                    if (serviceNs < 0)
-                        serviceNs = 100_000_000L;
-
-                    // Schedule completion event, passing the logger forward
-                    des.scheduleEvent(new CompletionEvent(scheduledTimeNs + serviceNs, nId, store, logger, runId,
-                            traceReq.reqId()));
-                    break;
-                }
+        if (chosenNode != null) {
+            SimNodeServer server = des.getServer(chosenNode);
+            if (server != null) {
+                server.admit(traceReq, scheduledTimeNs, des, sampler, store, veil, logger, runId);
             }
         } else {
-            System.out.println("[" + scheduledTimeNs + " ns] Dropped " + traceReq.reqId() + " (no admissible nodes)");
+            ClientLogger clientLogger = des.getClientLogger();
+            if (clientLogger != null) {
+                long e2e = scheduledTimeNs - (long)(traceReq.arrivalOffsetS() * 1_000_000_000L);
+                clientLogger.logRecord(new ClientLogger.ClientRecord(
+                    runId, traceReq.reqId(), traceReq.arrivalOffsetS(), traceReq.arrivalOffsetS(), 0.0, e2e, "dropped",
+                    traceReq.outputLen(), null, null, 0L
+                ));
+            }
         }
     }
 }

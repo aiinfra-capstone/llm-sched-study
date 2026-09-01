@@ -2,6 +2,8 @@ package com.sched.sim;
 
 import com.sched.core.AdmissionFilter;
 import com.sched.core.DecisionLogger;
+import com.sched.core.WorkerLogger;
+import com.sched.core.ClientLogger;
 import com.sched.core.InMemoryStateStore;
 import com.sched.core.StalenessVeil;
 import com.sched.core.models.TraceRequest;
@@ -9,97 +11,135 @@ import com.sched.core.models.CostModelSnapshot;
 import com.sched.core.models.CostModelParser;
 import com.sched.core.models.Manifest;
 import com.sched.core.models.ManifestParser;
+import com.sched.core.interfaces.StateStore.NodeView;
 import com.sched.core.policies.*;
+import com.sched.core.interfaces.Policy;
 
 import java.io.File;
 import java.nio.file.Files;
-import java.nio.file.StandardCopyOption;
+import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.Stream;
 
 public class SimApp {
     public static void main(String[] args) {
         if (args.length < 3) {
-            System.err.println("Usage: SimApp <trace_file.jsonl> <manifest_file.json> <output_dir>");
+            System.err.println("Usage: SimApp <trace_file.jsonl> <manifest_file.json> <output_dir> [--cost-models dir] [--deterministic]");
             return;
         }
         String trc = args[0];
         String manifestPath = args[1];
         String outputDir = args[2];
+        
+        String costModelDir = "../contracts/cost_models";
+        boolean deterministic = false;
+        
+        for (int i = 3; i < args.length; i++) {
+            if (args[i].equals("--cost-models") && i + 1 < args.length) {
+                costModelDir = args[i + 1];
+                i++;
+            } else if (args[i].equals("--deterministic")) {
+                deterministic = true;
+            }
+        }
 
         try {
-            // 1. Parse the specific C-6 Manifest for this anchor run
             Manifest manifest = ManifestParser.parse(manifestPath);
-            if (manifest.manifestSchema() != null && manifest.manifestSchema() != 1) {
-                System.err.println("Warning: Manifest schema is not 1");
+
+            Map<String, CostModelSnapshot> byId = new HashMap<>();
+            File root = new File(costModelDir);
+            if (root.exists()) {
+                try (Stream<Path> paths = Files.walk(root.toPath())) {
+                    for (Path p : (Iterable<Path>) paths.filter(f -> f.toString().endsWith(".json"))::iterator) {
+                        CostModelSnapshot s = CostModelParser.parse(p.toFile());
+                        byId.put(s.snapshotId(), s);
+                    }
+                }
+            } else {
+                System.err.println("Cost models dir not found: " + costModelDir);
             }
 
-            // 2. Load the exact C-3 Cost Models defined by the manifest
             Map<String, CostModelSnapshot> loadedSnaps = new HashMap<>();
             Map<String, CostModelSnapshot.Admissibility> admBounds = new HashMap<>();
-
-            for (Map.Entry<String, String> entry : manifest.costModelSnapshots().entrySet()) {
-                String nodeId = entry.getKey();
-                String snapshotFileName = entry.getValue() + ".json";
-
-                File snapFile = findSnapshotFile(snapshotFileName);
-                if (snapFile == null || !snapFile.exists()) {
-                    throw new RuntimeException("Could not find snapshot file: " + snapshotFileName);
-                }
-                CostModelSnapshot snap = CostModelParser.parse(snapFile);
-                loadedSnaps.put(nodeId, snap);
-                admBounds.put(nodeId, snap.admissibility());
+            for (Map.Entry<String, String> e : manifest.costModelSnapshots().entrySet()) {
+                CostModelSnapshot snap = byId.get(e.getValue());
+                if (snap == null)
+                    throw new IllegalStateException("node " + e.getKey() + " names snapshot "
+                        + e.getValue() + ", which is not in " + costModelDir + "/");
+                loadedSnaps.put(e.getKey(), snap);
+                admBounds.put(e.getKey(), snap.admissibility());
             }
 
             List<TraceRequest> reqs = TraceParser.parse(trc);
-            System.out.println("Parsed " + reqs.size() + " requests from " + trc);
-            System.out.println("Loaded " + loadedSnaps.size() + " cost models based on manifest.");
-
-            // 3. Configure the Simulator for the F-23 Anchor Validation
+            
             String rId = manifest.runId();
             File dir = new File(outputDir);
-            if (!dir.exists())
-                dir.mkdirs();
+            if (!dir.exists()) dir.mkdirs();
 
             SimClock clk = new SimClock();
             DiscreteEventSimulator des = new DiscreteEventSimulator(clk);
             InMemoryStateStore st = new InMemoryStateStore();
-            StalenessVeil vl = new StalenessVeil(0L, clk);
+            
+            double stalenessS = manifest.stalenessS() != null ? manifest.stalenessS() : 0.0;
+            long stalenessNs = (long)(stalenessS * 1_000_000_000L);
+            StalenessVeil vl = new StalenessVeil(stalenessNs, clk);
             AdmissionFilter flt = new AdmissionFilter(admBounds);
-            Random rng = new Random(42);
+            
+            // Seed config and RNG
+            int rngSeed = 42;
+            if (manifest.config() != null && manifest.config().containsKey("seed")) {
+                rngSeed = ((Number) manifest.config().get("seed")).intValue();
+            }
+            Random rng = new Random(rngSeed);
+            
             ServiceSampler smp = new ServiceSampler(loadedSnaps, rng);
+            if (deterministic) {
+                smp.setDeterministic(true);
+            }
 
-            // Use the standard 1-argument constructor
-            DecisionLogger log = new DecisionLogger(rId);
+            DecisionLogger log = new DecisionLogger(outputDir, rId);
+            WorkerLogger wLog = new WorkerLogger(outputDir, rId);
+            ClientLogger cLog = new ClientLogger(outputDir, rId);
+            des.setLoggers(wLog, cLog);
+
+            for (Manifest.SimNode n : manifest.nodes()) {
+                if (!"pool".equals(n.role())) continue;
+                CostModelSnapshot snap = loadedSnaps.get(n.nodeId());
+                if (snap == null)
+                    throw new IllegalStateException("node " + n.nodeId() + " is a pool member but has no snapshot");
+                
+                NodeView seed = new NodeView(n.nodeId(), 0, 0, referenceTokensPerS(snap), 0L, true);
+                st.updateNode(seed);
+                vl.seed(seed, -stalenessNs);
+
+                SimNodeServer srv = new SimNodeServer(n.nodeId(), n.batchCapacity());
+                des.addServer(srv);
+            }
+
             AtomicLong seq = new AtomicLong(0);
-            com.sched.core.interfaces.Policy pol = new RoundRobin(new AtomicInteger(0));
+            double thresholdT = manifest.config() != null && manifest.config().containsKey("threshold_t") ? ((Number) manifest.config().get("threshold_t")).doubleValue() : 0.0;
+            Policy pol = Policies.fromName(manifest.policy(), new AtomicInteger(0), thresholdT);
 
             for (TraceRequest rq : reqs) {
                 long arr = (long) (rq.arrivalOffsetS() * 1_000_000_000L);
-
-                // RequestArrivalEvent is in this same package, so no import needed.
                 RequestArrivalEvent ev = new RequestArrivalEvent(
-                        arr, rq, pol, vl, flt, des, rng, smp, st, log, rId, "RoundRobin", 0.0, seq);
+                        arr, rq, pol, vl, flt, des, rng, smp, st, log, rId, manifest.policy(), stalenessS, seq);
                 des.scheduleEvent(ev);
             }
 
             des.run();
             log.close();
+            wLog.close();
+            cLog.close();
 
-            // Move the generated log to the required F-23 output directory
-            File defaultLog = new File("scheduler_" + rId + ".jsonl");
-            if (!defaultLog.exists()) {
-                defaultLog = new File(rId + ".jsonl");
-            }
-            if (defaultLog.exists()) {
-                File dest = new File(dir, "scheduler_" + rId + ".jsonl");
-                Files.move(defaultLog.toPath(), dest.toPath(), StandardCopyOption.REPLACE_EXISTING);
-            }
-            System.out.println("Validation Run Completed: " + rId + " | Decisions: " + seq.get());
+            // Emit Manifest
+            ObjectMapper mapper = new ObjectMapper();
+            mapper.writeValue(new File(dir, "manifest.json"), manifest);
 
         } catch (Exception e) {
             System.err.println("Error during simulation: " + e.getMessage());
@@ -107,26 +147,18 @@ public class SimApp {
         }
     }
 
-    private static File findSnapshotFile(String fileName) {
-        File root = new File("../contracts/cost_models");
-        if (!root.exists())
-            return new File(fileName);
-        return searchFile(root, fileName);
-    }
-
-    private static File searchFile(File dir, String fileName) {
-        File[] files = dir.listFiles();
-        if (files != null) {
-            for (File f : files) {
-                if (f.isDirectory()) {
-                    File found = searchFile(f, fileName);
-                    if (found != null)
-                        return found;
-                } else if (f.getName().equals(fileName)) {
-                    return f;
-                }
+    private static double referenceTokensPerS(CostModelSnapshot snap) {
+        int minPrompt = Integer.MAX_VALUE;
+        int minOutput = Integer.MAX_VALUE;
+        for (CostModelSnapshot.CostEntry e : snap.entries()) {
+            if (e.promptBucket().get(0) < minPrompt) minPrompt = e.promptBucket().get(0);
+            if (e.outputBucket().get(0) < minOutput) minOutput = e.outputBucket().get(0);
+        }
+        for (CostModelSnapshot.CostEntry e : snap.entries()) {
+            if (e.promptBucket().get(0) == minPrompt && e.outputBucket().get(0) == minOutput && e.concurrency() == 1) {
+                return e.tokensPerS();
             }
         }
-        return null;
+        throw new IllegalArgumentException("Cost model snapshot " + snap.snapshotId() + " has no cell for lowest bucket at concurrency 1.");
     }
 }

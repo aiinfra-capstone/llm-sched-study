@@ -8,10 +8,15 @@ import java.util.Random;
 public class ServiceSampler {
     private final Map<String, CostModelSnapshot> snaps;
     private final Random rng;
+    private boolean deterministic = false;
 
     public ServiceSampler(Map<String, CostModelSnapshot> snaps, Random rng) {
         this.snaps = snaps;
         this.rng = rng;
+    }
+
+    public void setDeterministic(boolean deterministic) {
+        this.deterministic = deterministic;
     }
 
     public long sampleServiceNs(String nId, int pLen, int oLen, int conc) {
@@ -24,11 +29,9 @@ public class ServiceSampler {
         int minDistance = Integer.MAX_VALUE;
 
         for (CostEntry e : snap.entries()) {
-            // 1. Must match the token length buckets exactly
             if (pLen >= e.promptBucket().get(0) && pLen <= e.promptBucket().get(1) &&
                     oLen >= e.outputBucket().get(0) && oLen <= e.outputBucket().get(1)) {
 
-                // 2. Concurrency Snapping: find the calibrated point closest to reality
                 int distance = Math.abs(e.concurrency() - conc);
                 if (distance < minDistance) {
                     minDistance = distance;
@@ -38,15 +41,16 @@ public class ServiceSampler {
         }
 
         if (bestMatch == null) {
-            return -1; // Still return -1 if prompt/output lengths are totally off-grid
+            return -1;
         }
 
         double meanMs = bestMatch.serviceMsMean();
-        double sig = snap.stochastic().sigma();
-
-        // MPR-1 Lognormal variance injection
-        double noise = Math.exp(rng.nextGaussian() * sig - (sig * sig) / 2.0);
-        double finMs = meanMs * noise;
+        double finMs = meanMs;
+        if (!deterministic) {
+            double sig = snap.stochastic().sigma();
+            double noise = Math.exp(rng.nextGaussian() * sig - (sig * sig) / 2.0);
+            finMs = meanMs * noise;
+        }
 
         return (long) (finMs * 1_000_000L);
     }

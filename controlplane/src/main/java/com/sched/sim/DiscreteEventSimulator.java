@@ -1,15 +1,38 @@
 package com.sched.sim;
 
 import java.util.PriorityQueue;
+import java.util.Map;
+import java.util.HashMap;
+import com.sched.core.WorkerLogger;
+import com.sched.core.ClientLogger;
 
 public class DiscreteEventSimulator {
     private final SimClock clock;
     private final PriorityQueue<SimulationEvent> eventQueue;
+    private final Map<String, SimNodeServer> servers = new HashMap<>();
+    private WorkerLogger workerLogger;
+    private ClientLogger clientLogger;
 
     public DiscreteEventSimulator(SimClock clock) {
         this.clock = clock;
         this.eventQueue = new PriorityQueue<>();
     }
+
+    public void addServer(SimNodeServer server) {
+        servers.put(server.getNodeId(), server);
+    }
+
+    public SimNodeServer getServer(String nodeId) {
+        return servers.get(nodeId);
+    }
+
+    public void setLoggers(WorkerLogger workerLogger, ClientLogger clientLogger) {
+        this.workerLogger = workerLogger;
+        this.clientLogger = clientLogger;
+    }
+
+    public WorkerLogger getWorkerLogger() { return workerLogger; }
+    public ClientLogger getClientLogger() { return clientLogger; }
 
     public void scheduleEvent(SimulationEvent event) {
         eventQueue.add(event);
@@ -19,13 +42,8 @@ public class DiscreteEventSimulator {
         System.out.println("Starting Discrete Event Simulator...");
 
         while (!eventQueue.isEmpty()) {
-            // 1. Pop the next chronological event
             SimulationEvent nextEvent = eventQueue.poll();
-
-            // 2. Advance the simulated clock to that exact moment
             clock.advanceTo(nextEvent.getScheduledTimeNs());
-
-            // 3. Process the event
             nextEvent.execute();
         }
 

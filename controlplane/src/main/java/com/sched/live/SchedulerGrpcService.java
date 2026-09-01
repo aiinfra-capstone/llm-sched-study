@@ -19,6 +19,7 @@ import java.util.Optional;
 import java.util.Random;
 import java.util.stream.Collectors;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.Set;
 
 public class SchedulerGrpcService extends SchedulerGrpc.SchedulerImplBase {
     private final InMemoryStateStore store;
@@ -35,12 +36,12 @@ public class SchedulerGrpcService extends SchedulerGrpc.SchedulerImplBase {
     public SchedulerGrpcService(InMemoryStateStore store, StalenessVeil veil,
             AdmissionFilter filter, Policy policy,
             DecisionLogger logger, String runId,
-            String policyName, double stalenessParamS) {
+            String policyName, double stalenessParamS, int rngSeed) {
         this.store = store;
         this.veil = veil;
         this.filter = filter;
         this.policy = policy;
-        this.rng = new Random(42);
+        this.rng = new Random(rngSeed);
         this.logger = logger;
         this.decisionSeq = new AtomicLong(0);
         this.runId = runId;
@@ -53,11 +54,9 @@ public class SchedulerGrpcService extends SchedulerGrpc.SchedulerImplBase {
         return new StreamObserver<Heartbeat>() {
             @Override
             public void onNext(Heartbeat beat) {
-                System.out.println("Heartbeat | Node: " + beat.getNodeId() + " | Q: " + beat.getQueueDepth());
                 NodeView nv = new NodeView(
                         beat.getNodeId(), beat.getQueueDepth(), beat.getInflightCount(),
                         beat.getRecentTokensPerS(), 0L, true);
-                // Update ground truth and historical veil
                 store.updateNode(nv);
                 veil.updateNode(nv);
             }
@@ -78,34 +77,32 @@ public class SchedulerGrpcService extends SchedulerGrpc.SchedulerImplBase {
     public void dispatch(DispatchRequest req, StreamObserver<DispatchAck> responseObserver) {
         long startNs = System.nanoTime();
 
-        // 1. Fetch F-8 stale state and filter for F-14 admissibility
         List<NodeView> allNodes = veil.getAllNodes();
         List<NodeView> admissibleNodes = filter.filterAdmissible(allNodes, req);
+        Set<String> admIds = admissibleNodes.stream().map(NodeView::nodeId).collect(Collectors.toSet());
 
-        // 2. Execute the exact same F-21 policy logic used in the simulator
-        Optional<String> chosenNodeOpt = policy.choose(req, admissibleNodes, System.nanoTime(), rng);
+        Policy.Choice choice = policy.choose(req, admissibleNodes, System.nanoTime(), rng);
         long durationNs = System.nanoTime() - startNs;
 
-        String chosenNode = chosenNodeOpt.orElse("DROP");
+        String chosenNode = choice.chosen().orElse(null);
 
-        // 3. Log the C-4 decision record
         if (logger != null) {
             List<Candidate> candidates = allNodes.stream().map(nv -> {
-                boolean isAdm = admissibleNodes.contains(nv);
+                boolean isAdm = admIds.contains(nv.nodeId());
+                Double score = choice.scores().get(nv.nodeId());
                 return new Candidate(nv.nodeId(), nv.queueDepth(), nv.inflight(),
-                        nv.capabilityTokS(), nv.estimateAgeMs(), isAdm, null);
+                        nv.capabilityTokS(), nv.estimateAgeMs(), isAdm, score);
             }).collect(Collectors.toList());
 
             DecisionRecord rec = new DecisionRecord(
                     "decision", runId, req.getReqId(), decisionSeq.getAndIncrement(),
-                    policyName, stalenessParamS, durationNs, chosenNode, 0.0, candidates);
+                    policyName, stalenessParamS, durationNs, chosenNode, choice.tieBreakDraw(), candidates);
             logger.logRecord(rec);
         }
 
-        // 4. Return F-1 wire schema acknowledgment
         DispatchAck.Builder ackBuilder = DispatchAck.newBuilder().setReqId(req.getReqId());
-        if (chosenNodeOpt.isPresent()) {
-            ackBuilder.setChosenNode(chosenNodeOpt.get());
+        if (chosenNode != null) {
+            ackBuilder.setChosenNode(chosenNode);
             ackBuilder.setAccepted(true);
         } else {
             ackBuilder.setAccepted(false);

@@ -1,6 +1,8 @@
 package com.sched.core.policies;
 
 import java.util.List;
+import java.util.Map;
+import java.util.HashMap;
 import java.util.Optional;
 import java.util.Random;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -19,16 +21,36 @@ public class Threshold implements Policy {
     }
 
     @Override
-    public Optional<String> choose(DispatchRequest request, List<NodeView> admissibleNodes, long nowNs, Random rng) {
+    public Choice choose(DispatchRequest request, List<NodeView> admissibleNodes, long nowNs, Random rng) {
+        if (admissibleNodes.isEmpty()) {
+            return new Choice(Optional.empty(), new HashMap<>(), null);
+        }
+
+        Map<String, Double> scores = new HashMap<>();
         List<NodeView> strongNodes = admissibleNodes.stream()
-                .filter(n -> n.capabilityTokS() >= cutoffT)
+                .filter(n -> {
+                    boolean ok = n.capabilityTokS() >= cutoffT;
+                    scores.put(n.nodeId(), ok ? 1.0 : 0.0);
+                    return ok;
+                })
                 .collect(Collectors.toList());
 
         if (strongNodes.isEmpty()) {
-            return Optional.empty();
+            for (NodeView n : admissibleNodes) {
+                if (!scores.containsKey(n.nodeId())) {
+                    scores.put(n.nodeId(), 0.0);
+                }
+            }
+            return new Choice(Optional.empty(), scores, null);
+        }
+
+        for (NodeView n : admissibleNodes) {
+            if (!scores.containsKey(n.nodeId())) {
+                scores.put(n.nodeId(), 0.0);
+            }
         }
 
         int index = Math.abs(counter.getAndIncrement()) % strongNodes.size();
-        return Optional.of(strongNodes.get(index).nodeId());
+        return new Choice(Optional.of(strongNodes.get(index).nodeId()), scores, null);
     }
 }

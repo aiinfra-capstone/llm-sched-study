@@ -1,38 +1,41 @@
 package com.sched.core;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import java.io.BufferedWriter;
+import com.sched.core.models.SchedulerLogRecords.Record;
 import java.io.FileWriter;
+import java.io.PrintWriter;
 import java.io.IOException;
+import java.io.File;
 
 public class DecisionLogger {
-    private final ObjectMapper mapper;
-    private final BufferedWriter writer;
+    private PrintWriter pw;
+    private final ObjectMapper mapper = new ObjectMapper();
 
-    public DecisionLogger(String runId) throws IOException {
-        this.mapper = new ObjectMapper();
-        // File naming convention strictly defined by the spec
-        String fileName = "scheduler_" + runId + ".jsonl";
-
-        // The 'true' flag opens the FileWriter in append mode
-        this.writer = new BufferedWriter(new FileWriter(fileName, true));
-    }
-
-    /**
-     * Synchronized to prevent overlapping JSON writes if multiple gRPC threads
-     * make a dispatch decision at the exact same millisecond.
-     */
-    public synchronized void logRecord(Object record) {
+    public DecisionLogger(String outputDir, String runId) {
         try {
-            writer.write(mapper.writeValueAsString(record));
-            writer.newLine();
-            writer.flush(); // Flush immediately to prevent data loss on crash
+            File dir = new File(outputDir);
+            if (!dir.exists()) dir.mkdirs();
+            File f = new File(dir, "scheduler_" + runId + ".jsonl");
+            this.pw = new PrintWriter(new FileWriter(f, false)); // false = truncate
         } catch (IOException e) {
-            System.err.println("Failed to write to scheduler log: " + e.getMessage());
+            e.printStackTrace();
         }
     }
 
-    public void close() throws IOException {
-        writer.close();
+    public synchronized void logRecord(Record record) {
+        try {
+            if (pw != null) {
+                pw.println(mapper.writeValueAsString(record));
+                pw.flush();
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    public void close() {
+        if (pw != null) {
+            pw.close();
+        }
     }
 }

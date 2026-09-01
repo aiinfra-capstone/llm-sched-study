@@ -664,6 +664,45 @@ does not fail while the simulator's half is still to come.
 uv run figures runs/anchors/runset.parquet --out figures/
 ```
 
+### The hypothesis figures
+
+Four more, and these are what the study is for. Each one draws an estimator that was
+already here as arithmetic, and each refuses in the same case its estimator refuses.
+
+**H1** is an interaction plot, two lines: what calibration buys with a queue-blind policy
+(`round_robin` to `static_weighted`) against what it buys with a queue-aware one (`jsq` to
+`wjsq`). H1 is a claim about non-parallelism and nothing else, so non-parallelism is what
+the drawing shows. Grouped bars would carry the same four numbers and hide the only
+comparison that matters, because the eye compares heights within a group rather than
+slopes across one. A set holding three policies is refused: three can be ranked, not
+decomposed, and a ranking captioned "interaction" is the failure the whole 2×2 exists to
+avoid.
+
+**H2** is the advantage against *R*, on a log axis labelled at the values actually
+measured. The peak is marked, because "rises, peaks, falls" is the hypothesis and the
+peak's *R* is the number that reaches the abstract. A single-*R* set is refused: one point
+cannot be non-monotonic.
+
+**MPR-2** is H1's interaction evaluated at every *R*, drawn as a band. The interval is the
+deliverable rather than its midpoint, and the title says whether it holds one sign or
+straddles zero. Those are different results and they read alike in a table of numbers.
+
+**H3** is routing error rate against estimate age **divided by τ**. Raw seconds would make
+the finding a property of the heartbeat interval configured on the day; divided by the
+measured autocorrelation time it is a property of the process, which is why τ was measured
+in Week 2 rather than assumed. It is a `--tau-s` argument rather than a default, and the
+figure is skipped without it. Routing error rate rather than latency, because H3 is about
+decision quality given the information available and latency also moves with load. A set
+whose scheduler wrote no decision record reports `None` and is refused rather than drawn
+as perfect routing.
+
+The unit of every one of them is a **run**, not a request. A run replayed one trace under
+one policy at one *R* and one staleness, so its requests are correlated with each other
+rather than independent samples of the condition. Pooling requests and grouping afterwards
+lets a long run outvote a short one inside a cell that is meant to be one observation, and
+the suite pins the difference: 204.5 ms per run against 266.3 ms pooled, on the same two
+runs.
+
 ## Why the harness and the figures sit on this side of the seam
 
 The trace generator, the prompt materializer and the replay client all have to agree exactly

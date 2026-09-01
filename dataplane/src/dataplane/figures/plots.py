@@ -63,13 +63,18 @@ __all__ = [
     "bootstrap_halfwidth",
     "by_offered_load",
     "caption",
+    "drawable",
     "eligible",
     "example_frame",
     "example_sweep",
+    "h1_decomposition",
     "h1_interaction",
+    "h2_advantage",
     "h2_advantage_curve",
     "h3_axis",
+    "h3_staleness",
     "mpr2_interaction_range",
+    "mpr2_range",
     "per_node_utilization",
     "percentile",
     "render",
@@ -78,6 +83,7 @@ __all__ = [
     "routing_error_rate",
     "stamp",
     "stamp_text",
+    "sweep_from",
     "validation_error",
     "vehicle_of",
 ]
@@ -544,13 +550,6 @@ def validation(frame: pd.DataFrame, out_dir: Path, *, tolerance: float = F23_TOL
     return _finish(fig, frame, out_dir, "validation")
 
 
-FIGURES = {
-    "latency-vs-load": latency_vs_load,
-    "throughput-vs-load": throughput_vs_load,
-    "validation": validation,
-}
-
-
 # --------------------------------------------------------------------------------------
 # The hypothesis estimators. Each is the claim, stated as arithmetic.
 # --------------------------------------------------------------------------------------
@@ -682,6 +681,288 @@ def h3_axis(sweep: pd.DataFrame, *, autocorr_time_s: float) -> pd.Series:
     axis = sweep["staleness_s"].astype(float) / autocorr_time_s
     axis.name = "estimate_age_over_tau"
     return axis
+
+
+# --------------------------------------------------------------------------------------
+# The hypothesis figures. The estimators above, drawn.
+# --------------------------------------------------------------------------------------
+
+
+def sweep_from(frame: pd.DataFrame) -> pd.DataFrame:
+    """A run set reduced to the shape the hypothesis estimators read: one row per run.
+
+    The estimators take `R`, `policy`, `staleness_s` and `mean_latency_ms`, and they take
+    them per *run* rather than per request. That unit is not a convenience: every run
+    replayed one trace under one policy at one R and one staleness, so its requests are
+    correlated with each other and are not independent samples of the condition. Pooling
+    requests across runs and grouping afterwards would let a long run outvote a short one
+    inside a cell that is supposed to be one observation.
+
+    `mean_latency_ms` rather than a percentile because H1's interaction is a difference of
+    differences, and differences of percentiles do not decompose: the p95 of a mixture is
+    not a function of the p95s of its parts. The percentile is carried alongside for the
+    figures that report distribution shape rather than decompose it.
+    """
+    out = []
+    for run_id, rows in analysable(frame).groupby("run_id", sort=False):
+        e2e = rows["e2e_ms"].astype(float)
+        out.append(
+            {
+                # tau is carried through when the caller injected it, because it belongs
+                # to the node class rather than the run and H3 has nowhere else to read
+                # it from once the frame has been reduced to one row per run.
+                **({"tau_s": float(rows["tau_s"].iloc[0])} if "tau_s" in rows else {}),
+                "run_id": run_id,
+                "vehicle": rows["vehicle"].iloc[0],
+                "policy": rows["policy"].iloc[0],
+                "R": float(rows["R"].iloc[0]),
+                "staleness_s": float(rows["staleness_s"].iloc[0]),
+                "lambda": float(rows["lambda"].iloc[0]),
+                "n": len(rows),
+                "mean_latency_ms": float(e2e.mean()),
+                "p95_ms": percentile(e2e.tolist(), 0.95),
+                "routing_error_rate": routing_error_rate(rows),
+            }
+        )
+    if not out:
+        raise ValueError(
+            "no analysable rows in this run set: every request was warmup, failed, or "
+            "carried no worker record, so there is nothing to decompose"
+        )
+    return pd.DataFrame(out)
+
+
+def _cells_at(sweep: pd.DataFrame) -> dict[str, float]:
+    """The 2x2's four cells, averaged over whatever else the sweep holds."""
+    return {
+        policy: float(sweep[sweep["policy"] == policy]["mean_latency_ms"].mean())
+        for policy in CELLS
+        if not sweep[sweep["policy"] == policy].empty
+    }
+
+
+def _r_axis(ax: Any, r_values: list[float]) -> None:
+    """Label the R axis at the values actually measured, as plain ratios.
+
+    Log scale because the claim is about a range that spans multiples rather than
+    increments, and because consumer heterogeneity is quoted as a ratio. Matplotlib's
+    default log ticks render that as "2 x 10^0", which is a worse way of writing 2 and
+    puts minor ticks where no run exists. The measured values are the only meaningful
+    positions on this axis, so they are the only ones labelled.
+    """
+    ax.set_xscale("log")
+    ax.set_xticks(r_values)
+    ax.set_xticklabels([f"{r:g}" for r in r_values])
+    ax.minorticks_off()
+    ax.set_xlabel("heterogeneity ratio R")
+
+
+def h1_decomposition(frame: pd.DataFrame, out_dir: Path) -> Path:
+    """H1 as an interaction plot: two lines, and whether they are parallel.
+
+    This is the standard drawing of a 2x2 and it is the right one here, because H1 is a
+    claim about *non-parallelism* and nothing else. Each line is what calibration buys:
+    the upper one with a queue-blind policy (round_robin to static_weighted), the lower
+    one with a queue-aware policy (jsq to wjsq). Parallel lines say calibration buys the
+    same amount either way. A flatter queue-aware line is H1 confirmed, and it is legible
+    without reading the number off the axis.
+
+    Grouped bars would show the same four values and hide the only comparison that
+    matters, because the eye compares heights within a group rather than slopes across
+    one.
+    """
+    sweep = sweep_from(frame)
+    cells = _cells_at(sweep)
+    interaction = h1_interaction(cells)  # raises if the 2x2 is incomplete
+
+    fig, ax = plt.subplots(figsize=(6.5, 4.2))
+    x = [0, 1]
+    ax.plot(
+        x,
+        [cells["round_robin"], cells["static_weighted"]],
+        marker="o",
+        label="queue-blind (round_robin \u2192 static_weighted)",
+    )
+    ax.plot(
+        x,
+        [cells["jsq"], cells["wjsq"]],
+        marker="s",
+        label="queue-aware (jsq \u2192 wjsq)",
+    )
+    ax.set_xticks(x)
+    ax.set_xticklabels(["hardware-blind", "hardware-aware"])
+    ax.set_ylabel("mean end-to-end latency (ms)")
+    ax.set_title("H1: what calibration buys, with and without queue-awareness")
+    # The sign is the finding, so it is spelled out rather than left to the reader to
+    # infer from two line slopes they have to eyeball.
+    verdict = "redundant" if interaction > 0 else "independent signal"
+    ax.annotate(
+        f"interaction = {interaction:+.1f} ms  ({verdict})",
+        xy=(0.5, 0.02),
+        xycoords="axes fraction",
+        ha="center",
+        fontsize=9,
+    )
+    ax.legend()
+    ax.grid(alpha=0.3)
+    return _finish(fig, frame, out_dir, "h1_decomposition")
+
+
+def h2_advantage(frame: pd.DataFrame, out_dir: Path) -> Path:
+    """H2: the advantage of hardware-awareness against R, and whether it turns over.
+
+    R is on a log axis because the claim is about a shape across a range that spans
+    multiples, not increments, and because consumer heterogeneity is quoted as a ratio.
+    The peak is marked rather than left to be read off, since "it rises, peaks, then
+    falls" is the entire hypothesis and the peak's R is the number that goes in the
+    abstract.
+    """
+    curve = h2_advantage_curve(sweep_from(frame))  # raises on a single-R sweep
+    r_values = [point["R"] for point in curve]
+    advantage = [point["advantage_ms"] for point in curve]
+
+    fig, ax = plt.subplots(figsize=(6.5, 4.2))
+    ax.plot(r_values, advantage, marker="o")
+    ax.axhline(0.0, linestyle="--", color="#999999", linewidth=1)
+    peak = max(range(len(advantage)), key=lambda i: advantage[i])
+    # Below and to the right of the marker: above it collides with the title, which is
+    # exactly where a peak near the top of the range puts it.
+    ax.annotate(
+        f"peak {advantage[peak]:.0f} ms at R = {r_values[peak]:g}",
+        xy=(r_values[peak], advantage[peak]),
+        xytext=(8, -14),
+        textcoords="offset points",
+        fontsize=9,
+    )
+    _r_axis(ax, r_values)
+    ax.set_ylabel("best aware minus best blind (ms)")
+    ax.set_title("H2: the advantage of hardware-aware routing against R")
+    ax.margins(y=0.15)
+    ax.grid(alpha=0.3)
+    return _finish(fig, frame, out_dir, "h2_advantage")
+
+
+def mpr2_range(frame: pd.DataFrame, out_dir: Path) -> Path:
+    """MPR-2: H1's interaction at every R, reported as a range rather than a figure.
+
+    The deliverable is the interval, so the interval is what the figure draws: a shaded
+    band between the extremes with the R values that produced them labelled. An interval
+    straddling zero is a different result from a mean interaction near zero, and the two
+    are easy to confuse in a table of numbers, so the zero line is drawn and the band's
+    relationship to it is stated in the title.
+    """
+    result = mpr2_interaction_range(sweep_from(frame))
+    by_r = result["interaction_by_r"]
+    r_values = sorted(by_r)
+    values = [by_r[r] for r in r_values]
+
+    fig, ax = plt.subplots(figsize=(6.5, 4.2))
+    ax.fill_between(
+        r_values, min(values), max(values), alpha=0.12, color="#4477aa", label="reported range"
+    )
+    ax.plot(r_values, values, marker="o", color="#4477aa")
+    ax.axhline(0.0, linestyle="--", color="#999999", linewidth=1)
+    for label, key in (("low", "low"), ("high", "high")):
+        ax.annotate(
+            f"{result[key]:+.1f} at R = {result[f'{key}_at_r']:g}",
+            xy=(result[f"{key}_at_r"], result[key]),
+            xytext=(6, -12 if label == "low" else 6),
+            textcoords="offset points",
+            fontsize=9,
+        )
+    _r_axis(ax, r_values)
+    ax.set_ylabel("H1 interaction (ms)")
+    held = "one sign throughout" if result["sign_consistent"] else "straddles zero"
+    ax.set_title(f"MPR-2: the H1 interaction across the R range ({held})")
+    ax.margins(y=0.2)
+    ax.legend()
+    ax.grid(alpha=0.3)
+    return _finish(fig, frame, out_dir, "mpr2_range")
+
+
+def h3_staleness(frame: pd.DataFrame, out_dir: Path) -> Path:
+    """H3: routing quality against estimate age, in units of the node's own tau.
+
+    The x-axis is age over tau rather than age in seconds, which is what makes the result
+    a property of the process instead of a property of the heartbeat interval configured
+    on the day. `x = 1` is drawn because that is where the hypothesis says degradation
+    should already be underway: an estimate as old as the autocorrelation time carries
+    little information about the node's present state.
+
+    Routing error rate is the dependent variable rather than latency, because H3 is a
+    claim about decision quality given the information available, and latency also moves
+    with load. Runs whose scheduler wrote no decision record report `None` and are absent
+    here rather than plotted as perfect routing.
+    """
+    sweep = sweep_from(frame)
+    if "tau_s" not in sweep.columns:
+        raise ValueError(
+            "an H3 figure needs the measured autocorrelation time: pass "
+            "`autocorr_time_s` to render_set, or --tau-s on the command line. Take it "
+            "from the C-3 snapshot for the node class this set ran on, and do not "
+            "substitute the heartbeat interval, which is a setting rather than a "
+            "measurement"
+        )
+    tau = float(sweep["tau_s"].iloc[0])
+    sweep = sweep.assign(estimate_age_over_tau=h3_axis(sweep, autocorr_time_s=tau))
+
+    plotted = sweep[sweep["routing_error_rate"].notna()]
+    if plotted.empty:
+        raise ValueError(
+            "no run in this set carries a scheduler decision record, so routing error "
+            "rate is unobserved rather than zero. A run driven by the fixture scheduler "
+            "cannot answer H3"
+        )
+
+    # One point per (policy, age), averaged over whatever else the sweep crossed. A set
+    # that also swept R holds several runs at each age, and drawing a line through them
+    # in x-order would connect points that differ in R while implying they differ in
+    # staleness. H3 is a claim about the age axis alone, so the other axes are collapsed
+    # here rather than smuggled into the line.
+    points = (
+        plotted.groupby(["policy", "estimate_age_over_tau"], as_index=False)["routing_error_rate"]
+        .mean()
+        .sort_values("estimate_age_over_tau")
+    )
+
+    fig, ax = plt.subplots(figsize=(6.5, 4.2))
+    for policy, rows in points.groupby("policy", sort=True):
+        ax.plot(
+            rows["estimate_age_over_tau"],
+            rows["routing_error_rate"],
+            marker="o",
+            label=str(policy),
+        )
+    ax.axvline(1.0, linestyle="--", color="#999999", linewidth=1)
+    ax.annotate(
+        "age = \u03c4",
+        xy=(1.0, 0.98),
+        xycoords=("data", "axes fraction"),
+        ha="left",
+        va="top",
+        fontsize=9,
+    )
+    ax.set_xlabel(f"estimate age / \u03c4    (\u03c4 = {tau:g} s, measured)")
+    ax.set_ylabel("routing error rate")
+    ax.set_title("H3: routing quality against the age of the estimate")
+    ax.legend()
+    ax.grid(alpha=0.3)
+    return _finish(fig, frame, out_dir, "h3_staleness")
+
+
+# Every figure the pipeline can draw, keyed by the name `--only` takes. Defined here
+# rather than beside the first one because the hypothesis figures below it are the
+# study's actual output, and a registry that lists three characterisation plots reads
+# like the whole set.
+FIGURES = {
+    "latency-vs-load": latency_vs_load,
+    "throughput-vs-load": throughput_vs_load,
+    "validation": validation,
+    "h1-decomposition": h1_decomposition,
+    "h2-advantage": h2_advantage,
+    "mpr2-range": mpr2_range,
+    "h3-staleness": h3_staleness,
+}
 
 
 # --------------------------------------------------------------------------------------
@@ -874,25 +1155,51 @@ def example_sweep() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def drawable(frame: pd.DataFrame) -> list[str]:
+    """The figures whose inputs this run set actually holds.
+
+    Each rule is the condition under which the figure's estimator would refuse anyway.
+    Naming them here means the default run draws what it can instead of failing on the
+    first thing it cannot, while asking for one of them BY NAME still raises and says
+    why. Silence and refusal are both correct; which one you get should depend on
+    whether you asked.
+    """
+    names = ["latency-vs-load", "throughput-vs-load"]
+    if set(frame["vehicle"]) == {"hardware", "simulator"}:
+        names.append("validation")
+    policies = set(frame["policy"])
+    if set(CELLS) <= policies:
+        names.append("h1-decomposition")
+        if frame["R"].nunique() > 1:
+            names += ["h2-advantage", "mpr2-range"]
+    if "tau_s" in frame.columns and frame["staleness_s"].nunique() > 1:
+        names.append("h3-staleness")
+    return names
+
+
 def render_set(
     source: str | Path | pd.DataFrame,
     out_dir: str | Path,
     which: list[str] | None = None,
+    *,
+    autocorr_time_s: float | None = None,
 ) -> list[Path]:
     """Draw the named figures from a run set, and return what was written.
 
     `source` is the Parquet a run set was written to, or the frame itself. `which`
-    defaults to the figures whose inputs are present: `validation` is skipped unless the
-    set actually holds both vehicles, so the default run does not fail on a hardware-only
-    set while still refusing loudly when asked for it by name.
+    defaults to `drawable(frame)`, so a hardware-only set at one R draws the
+    characterisation plots and skips the hypothesis figures rather than failing on them.
+
+    `autocorr_time_s` is tau, and it is a parameter rather than a column because it is
+    measured once per node class in Week 2 and belongs to the hardware, not to the run.
+    It is injected here so that exactly one place knows where it came from, and H3 refuses
+    without it rather than defaulting to a number that would silently rescale its axis.
     """
     frame = source if isinstance(source, pd.DataFrame) else pd.read_parquet(Path(source))
+    if autocorr_time_s is not None:
+        frame = frame.assign(tau_s=float(autocorr_time_s))
     if which is None:
-        which = [
-            name
-            for name in FIGURES
-            if name != "validation" or set(frame["vehicle"]) == {"hardware", "simulator"}
-        ]
+        which = drawable(frame)
 
     unknown = [name for name in which if name not in FIGURES]
     if unknown:
@@ -912,9 +1219,17 @@ def main(argv: list[str] | None = None) -> int:
         metavar="NAME",
         help=f"render just this figure; repeatable. One of {sorted(FIGURES)}",
     )
+    ap.add_argument(
+        "--tau-s",
+        type=float,
+        metavar="SECONDS",
+        help="the measured autocorrelation time for this set's node class, from its C-3 "
+        "snapshot. H3's axis is estimate age divided by it, and without it the H3 figure "
+        "is skipped rather than drawn against a guess",
+    )
     args = ap.parse_args(argv)
 
-    for path in render_set(args.parquet, args.out, args.only):
+    for path in render_set(args.parquet, args.out, args.only, autocorr_time_s=args.tau_s):
         print(path)
     return 0
 

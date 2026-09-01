@@ -306,11 +306,20 @@ network, no engine, and it runs on a laptop.
 uv run pipeline  runs/exp/jsq_r1 --trace runs/traces/t_lam1.2.jsonl
 uv run costcheck runs/exp                                     # before blaming the simulator
 uv run runset    runs/exp --out runs/exp/runset.parquet
-uv run figures   runs/exp/runset.parquet --out figures/
+uv run figures   runs/exp/runset.parquet --out figures/ --tau-s 69.5
 ```
 
 Nothing changes between runs except the policy and the `-ngl` setting. That is the entire
 reason the results are comparable.
+
+`figures` draws what the set can support and skips the rest, so a hardware-only set at one
+*R* renders the load characterisation and nothing else. The full set draws all four
+hypothesis figures: H1's interaction plot, H2's advantage curve against *R*, MPR-2's
+interaction range, and H3 against estimate age. `--tau-s` is the measured autocorrelation
+time from the C-3 snapshot for that node class. Without it the H3 figure is skipped rather
+than drawn against a guess, because age over τ is the only axis H3 is a claim about, and
+substituting the heartbeat interval would turn a property of the process into a property
+of a setting.
 
 **Read the manifest before reading any figure.** Four fields decide whether a run is a data
 point at all:
@@ -417,7 +426,7 @@ Week 1.
 | 2 | Calibration campaign, τ and the variance envelope, the synthesizable *R* range. **MPR-1.** | ✅ |
 | 3 | All five policies behind one config value, admissible set, load band. **Feature freeze.** | ✅ |
 | 4 | Pipeline and figures; simulator sharing policy code, validated against hardware. | data plane ✅ |
-| 5 | Sweeps: *R* × load × staleness × policy. Hypotheses tested. | |
+| 5 | Sweeps: *R* × load × staleness × policy. Hypotheses tested. | figures ✅ |
 | 6 | Analysis, threats to validity, positioning, writeup. Engine-gap measurement. | |
 
 ## Team

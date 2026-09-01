@@ -875,6 +875,51 @@ reader that ignores it, and the simulator has one host and one clock and nothing
 
 ---
 
+## Week 5 — the hypothesis figures, built ahead of the data
+
+The four estimators had been here since Week 4, tested as arithmetic and drawn by nothing.
+`FIGURES` held three characterisation plots and none of them called an estimator, so
+`uv run figures` could render the load band and the F-23 validation but not one of the
+three results the study exists to report. That is now closed: H1, H2, MPR-2 and H3 all
+render, and they render from `example_sweep`-shaped fixtures rather than waiting on the
+pool, so the day the LAN comes up the sweep output has somewhere to go.
+
+Four decisions in there worth keeping.
+
+**H1 is an interaction plot, not bars.** H1 is a claim about two lines being non-parallel.
+Grouped bars carry the same four numbers and hide it, because the eye compares heights
+within a group rather than slopes across one.
+
+**The unit is a run.** Every estimator takes one row per run, and `sweep_from` is what
+reduces the frame. A run replayed one trace under one condition, so its requests are
+correlated rather than independent samples of that condition, and pooling requests would
+weight each cell by run length. The suite pins the size of that: on two runs of the same
+policy at the same *R*, per-run gives 204.5 ms and pooled per-request gives 266.3 ms.
+
+**τ is an argument, never a default.** H3's axis is estimate age over the measured
+autocorrelation time, and that is the whole reason the axis transfers to other hardware.
+Defaulting it to anything, including the heartbeat interval, would silently rescale the
+only axis the hypothesis is about, so the figure is skipped without `--tau-s` rather than
+drawn against a guess.
+
+**Skipped by default, refused by name.** `drawable()` names the conditions under which
+each figure's estimator would refuse anyway, so a partial set renders what it can instead
+of failing on the first gap. Asking for a skipped figure explicitly still raises and says
+why. Silence and refusal are both correct; which one you get should depend on whether you
+asked.
+
+One thing the fixture had to fight: an H2 fixture that rose monotonically in *R* would let
+an estimator reporting the wrong shape pass anyway, so the test data rises and falls, and
+the test asserts the recovered curve does too.
+
+That leaves nothing unbuilt on my side. F-9b is scheduled into Week 6 and wants vLLM and
+the 8 GB node; `fig03`'s deployment note is corrected in source but its committed PDF is
+stale because rendering needs graphviz, which is not installed here; and the C-5
+`served_by` amendment is still raised rather than made, which is correct for a contract
+change.
+
+---
+
 ## Failure modes at the seam — the standing watch list
 
 These are not one-time checks. They are the things that will go wrong quietly.

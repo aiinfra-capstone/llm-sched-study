@@ -1,0 +1,101 @@
+syntax = "proto3";
+package sched.v1;
+
+option java_multiple_files = true;
+option java_package = "com.sched.v1";
+option java_outer_classname = "SchedulingProto";
+
+// Client -> Scheduler
+message DispatchRequest {
+    string run_id = 1;
+    string req_id = 2; // from the trace, e.g. "r000417"
+    repeated uint32 prompt_token_ids = 3;
+    uint32 output_len = 4; // forced; ignore_eos on the worker
+    uint32 priority = 5; // 0=interactive, 1=background
+    string bucket_id = 6; // e.g. "p512_0128"
+    string client_endpoint = 7; // where the worker returns the response
+    uint64 client_send_mono_ns = 8; // A's clock. Informational only; never subtracted cross-host.
+}
+
+message DispatchAck {
+    string req_id = 1;
+    string chosen_node = 2;
+    bool accepted = 3;
+    string reject_reason = 4; // "no_admissible_node" | "run_not_started" | ""
+}
+
+// Scheduler -> Worker
+message ExecuteRequest {
+    string run_id = 1;
+    string req_id = 2;
+    repeated uint32 prompt_token_ids = 3;
+    uint32 output_len = 4;
+    uint32 priority = 5;
+    string bucket_id = 6;
+    string client_endpoint = 7;
+    uint32 decision_seq = 8; // joins to the scheduler's decision record
+}
+
+message ExecuteAck { 
+    string req_id = 1; 
+    bool queued = 2; 
+}
+
+// Worker -> Client (direct; F-11)
+message ResponseDelivery {
+    string run_id = 1;
+    string req_id = 2;
+    string node_id = 3;
+    uint32 output_tokens = 4;
+    string status = 5; // "ok" | "timeout" | "oom" | "engine_error"
+    uint64 worker_service_ns = 6; // worker-local duration
+    uint64 worker_queue_wait_ns = 7; // worker-local duration
+}
+
+// Worker -> Scheduler
+message Heartbeat {
+    string run_id = 1;
+    string node_id = 2;
+    uint64 seq = 3; // monotonic per node; gap detection
+    uint32 queue_depth = 4; // admitted, not yet started
+    uint32 inflight_count = 5; // in the engine's running batch
+    double recent_tokens_per_s = 6; // EWMA over a stated window
+    double kv_occupancy_frac = 7; // -1.0 if the engine does not expose it
+    uint64 worker_mono_ns = 8;
+    string engine_state = 9; // "ready" | "warming" | "degraded"
+}
+
+message Completion {
+    string run_id = 1;
+    string node_id = 2;
+    string req_id = 3;
+    string status = 4;
+    uint64 service_ns = 5;
+}
+
+// Run control
+message BeginRun { 
+    string run_id = 1; 
+    string config_hash = 2; 
+    string trace_sha256 = 3; 
+}
+
+message EndRun { 
+    string run_id = 1; 
+}
+
+service Scheduler {
+    rpc Dispatch (DispatchRequest) returns (DispatchAck);
+    rpc StreamHeartbeat (stream Heartbeat) returns (stream BeginRun);
+    rpc ReportCompletion (Completion) returns (ExecuteAck);
+}
+
+service Worker {
+    rpc Execute (ExecuteRequest) returns (ExecuteAck);
+    rpc Begin (BeginRun) returns (ExecuteAck);
+    rpc End (EndRun) returns (ExecuteAck);
+}
+
+service Client {
+    rpc Deliver (ResponseDelivery) returns (ExecuteAck);
+}

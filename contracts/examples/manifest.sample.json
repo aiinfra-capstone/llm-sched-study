@@ -33,6 +33,20 @@
      "engine_config": {"ngl": 0, "threads": 16, "parallel": 2},
      "prefix_caching": false, "max_batch": 2}
   ],
+  "_comment_clock_sync": "Measured at LAN setup, one reading per host, folded together by `clocksync --combine`. box-a is the client host and so the reference. NOTE what this does NOT do: offset_ms is subtracted from nothing, because every duration in C-4 and C-5 is single-host and a constant offset cancels in their difference. It is here as evidence that the clocks were disciplined at all. rate_error_ppm is the field that touches a number: box-c's clock ticks 6.5 ppm faster than box-a's, so the pipeline divides n3's worker-local durations by 1.0000065 before taking the residual, which on a two-second service time is 13 microseconds. Absent means NOT MEASURED, never zero.",
+  "clock_sync": {"reference": "box-a", "measured_unix": 1777399100,
+    "hosts": {
+      "box-a": {"method": "chrony", "synchronised": true, "offset_ms": -0.412,
+                "dispersion_ms": 0.94, "rate_error_ppm": -0.031, "skew_ppm": 1.101,
+                "source": "box-a.lan", "stratum": 3, "measured_unix": 1777399100},
+      "box-b": {"method": "chrony", "synchronised": true, "offset_ms": 0.207,
+                "dispersion_ms": 1.06, "rate_error_ppm": 1.284, "skew_ppm": 1.339,
+                "source": "box-a.lan", "stratum": 4, "measured_unix": 1777399102},
+      "box-c": {"method": "chrony", "synchronised": true, "offset_ms": 1.933,
+                "dispersion_ms": 1.21, "rate_error_ppm": 6.472, "skew_ppm": 2.004,
+                "source": "box-a.lan", "stratum": 4, "measured_unix": 1777399104}},
+    "max_abs_offset_ms": 2.345, "max_rate_error_ppm": 6.503, "ok": true},
+
   "git_shas": {"worker": "a3f1c09", "scheduler": "77bd120",
                "harness": "a3f1c09", "sim": "77bd120"},
   "f18_status": "full",

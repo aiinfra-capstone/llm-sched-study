@@ -290,6 +290,8 @@ is_warmup                                                        # derived
 
 This is the important admission. F-18 asks for `transport_in` and `transport_out` as separate stages. Without clock synchronisation across machines you cannot measure them separately — you can only measure the *sum of everything not accounted for by single-host durations*. Report it as one residual, state why, and note that on a LAN it is small enough that its decomposition doesn't affect any hypothesis. Do not install PTP to fix this; it is a week you don't have, for a number you don't need.
 
+Measuring the offset does not change this, and it is worth being precise about why, because "we synchronised the clocks, so now we can split the residual" is the tempting next step and it is wrong. The two timestamps that cross the wire, `client_send_mono_ns` and `worker_mono_ns`, are `CLOCK_MONOTONIC` reads whose zero is each machine's boot. An NTP offset is a statement about wall clocks and says nothing about the gap between two boot times, so it cannot be applied to them at all. Splitting the residual would need the wire timestamps moved to a synchronised wall clock, which is a C-1 change, and C-1 is frozen.
+
 `is_warmup` is computed by `intended_offset_s < manifest.warmup_s`, from the trace, not from wall-clock — so warmup discard is identical in hardware and simulator runs.
 
 ---
@@ -313,6 +315,21 @@ One JSON per run, written by the launcher before the run and finalised after.
 ```
 
 `vehicle` is `"hardware"` or `"simulator"`, and F-24 requires every simulated figure to be labelled. Make the figure scripts read this field and stamp the plot automatically — labelling by hand fails exactly once, in the final report.
+
+**`clock_sync` — added post-freeze, optional, additive.** Recorded at LAN setup by `clocksync`, one entry per host, on one stated reference host. It weakens no rule in §2.3: nothing in C-4 or C-5 subtracts across hosts, and the recorded `offset_ms` is subtracted from nothing, because every duration is single-host and a constant offset cancels exactly in `transport_residual_ms`. It is there so the claim that the clocks were disciplined can be checked instead of taken.
+
+The one field the pipeline acts on is `rate_error_ppm`. A host whose clock ticks r ppm faster than the reference inflates every duration measured on it by r ppm, multiplicatively, so unlike an offset it does not cancel; `join` divides it out before taking the residual and reports the size of the correction. On disciplined hardware that is single-digit microseconds on a two-second service time, which is the point: it turns "the clocks did not matter" into a measured number.
+
+Absent means **not measured**, never zero. B's `Manifest.java` is a lenient reader and ignores the block, which is correct for the simulator: a DES runs on one host, has one clock, and has nothing to correct.
+
+```json
+"clock_sync":{"reference":"box-a","measured_unix":1777399100,
+  "hosts":{"box-a":{"method":"chrony","synchronised":true,"offset_ms":-0.412,
+                    "dispersion_ms":0.94,"rate_error_ppm":-0.031,"skew_ppm":1.101},
+           "box-c":{"method":"chrony","synchronised":true,"offset_ms":1.933,
+                    "dispersion_ms":1.21,"rate_error_ppm":6.472,"skew_ppm":2.004}},
+  "max_abs_offset_ms":2.345,"max_rate_error_ppm":6.503,"ok":true}
+```
 
 ---
 
@@ -455,7 +472,7 @@ The fixture-first pattern in Week 1 is what buys the parallelism. Neither person
 
 1. **Silent policy drift** between live scheduler and DES. Mitigation: the cross-environment determinism test (build step L) — same trace, same seed, deterministic service times injected into the DES, assert the *dispatch sequence* is identical. Run it in CI, not by hand.
 2. **Cost model schema evolution mid-project.** A learns something in Week 2 and wants another field. That breaks B's DES. Mitigation: `cost_model_schema` version field, and B's loader rejects unknown versions loudly rather than defaulting.
-3. **Clock discipline erosion.** Someone will, at some point, compute a duration by subtracting a worker timestamp from a client timestamp because it's convenient. Mitigation: the joined schema has no cross-host subtraction in it, and `transport_residual_ms` is named "residual" precisely so nobody mistakes it for a measurement.
+3. **Clock discipline erosion.** Someone will, at some point, compute a duration by subtracting a worker timestamp from a client timestamp because it's convenient. Mitigation: the joined schema has no cross-host subtraction in it, and `transport_residual_ms` is named "residual" precisely so nobody mistakes it for a measurement. C-6's `clock_sync` is the second half of the mitigation and not a relaxation of the first: it records an offset that nothing subtracts, and corrects only the clock *rate*, which is the one error that survives a difference of single-host durations. A reviewer who wants to know whether the clocks were good enough now has the number rather than our word.
 4. **Heartbeat gaps treated as zero load.** If a node stops heartbeating, a naive StateStore shows stale-but-plausible state and the policy keeps routing to it. Mitigation: `estimate_age_ms` is already in the decision record — add an explicit staleness ceiling above which a node is treated as unavailable, and log when it fires.
 5. **Warmup discarded differently in the two vehicles.** Mitigation: `is_warmup` computed from the trace's `intended_offset_s` in both, never from run wall-clock.
 

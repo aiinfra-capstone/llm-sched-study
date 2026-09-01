@@ -386,13 +386,40 @@ up exercises that direction. Blocked, it is not loud: the dispatch succeeds, the
 serves the request, the record says `timeout`, and a firewall is indistinguishable from a
 saturated pool. Hence `--serve` on the client and `--probe` from each worker.
 
-Two things it deliberately does not check. **Bandwidth**, because a five-node pool at the
+One thing it deliberately does not check: **bandwidth**, because a five-node pool at the
 measured load band runs at about **0.08 Mbit/s** — a `Dispatch` averages 754 bytes, a
 `Deliver` is 33, a heartbeat 47 — and even a 30 ms hop is roughly 2% of the fastest
-end-to-end latency measured here. And **clock synchronisation**, because no duration in this
-study is computed by subtracting stamps taken on different hosts, and heartbeat gaps are
-found through `Heartbeat.seq` rather than through time. NTP is not needed, and that is a
-property the design paid for deliberately.
+end-to-end latency measured here.
+
+It does now read the local **clock discipline**, and reports it without failing on it. A
+preflight sees one machine, so an undisciplined clock here is a reason to fix this host
+before a two-machine run, not evidence about the pool; failing the check would conflate
+"the LAN is misconfigured" with "chronyd is not installed on the box we ran this from". The
+teeth live where a reading of every host exists, in `clocksync --combine` and again in the
+join summary.
+
+### `clocksync.py`
+
+Measures how far apart the machines' clocks are, at LAN setup, and folds the readings into
+the C-6 `clock_sync` block. Run `--measure` on each host and `--combine` once.
+
+The rule that no duration crosses a host boundary has not changed, so the **offset** we
+record corrects nothing: it cancels exactly in `transport_residual_ms`, which is a
+difference of single-host durations. We record it as evidence that the clocks were being
+disciplined. It could not correct the two on-wire timestamps either, because
+`client_send_mono_ns` and `worker_mono_ns` are `CLOCK_MONOTONIC` reads whose zero is each
+machine's boot, and an NTP offset says nothing about the gap between two boot times.
+
+What does touch a number is **rate**. A worker clock ticking r ppm fast inflates every
+worker-local duration by r ppm relative to the client's `e2e_ms`, multiplicatively, so it
+does not cancel. `join` divides it out for each node whose host was measured, leaves the
+scheduler alone (C-6 does not record its host, and a ppm correction on tens of microseconds
+is picoseconds), and prints the size of the correction against the longest service time in
+the set. With no `clock_sync` block nothing is scaled at all, so every run joined before
+this existed joins to the same numbers.
+
+A host with no time daemon comes back marked unsynchronised, never as offset zero. Zero
+would read as agreement, and agreement is the one claim nobody made.
 
 ### Running it
 

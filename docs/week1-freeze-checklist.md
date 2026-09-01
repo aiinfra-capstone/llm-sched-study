@@ -813,6 +813,68 @@ of them exists in the committed run set.
 
 ---
 
+## Ahead of the LAN — the clock measurement, and what it does not buy
+
+MPR-2 is still blocked on a second machine, but one piece of the two-machine setup could be
+built and reasoned out now rather than in the hour the second box arrives: measuring how far
+apart the machines' clocks are, recording it, and correcting what it licenses correcting.
+
+The prompt for this was an argument about whether the LAN needed better hardware. It did
+not, and working the numbers is what settled it: a request on this hardware is 600 ms to
+2.3 s (prefill 174/343/698 ms at prompt 128/256/512, plus 64 output tokens at 143 tok/s
+single-slot down to 39 tok/s at four), while a clean 5 GHz link adds a few ms typical with a
+20 to 50 ms tail. That is 0.3% of a request at the median. Network latency is not the
+problem, and I had earlier said scheduling effects here live at millisecond scale, which is
+wrong: queueing delay at four slots with service times in the hundreds of ms is itself
+hundreds of ms.
+
+What survives that is not about jitter at all.
+
+**Offset is not a fraction of anything.** It is a systematic bias on every cross-host
+interval and does not shrink because the requests are slow. But this study has no cross-host
+interval. `e2e_ms` is client-local, `queue_wait_ms` and `service_ms` are worker-local,
+`decide_us` is scheduler-local, and `transport_residual_ms` is a difference of those, in
+which a constant offset cancels exactly. So the offset corrects nothing, and I record it
+anyway, because "the clocks were disciplined" should be checkable rather than assumed.
+
+**The offset could not correct the wire timestamps even in principle.** `client_send_mono_ns`
+and `worker_mono_ns` are `CLOCK_MONOTONIC` reads whose zero is each machine's boot. An NTP
+offset is about wall clocks and says nothing about the gap between two boot times. This is
+the sharpest reason F-18's transport decomposition stays out of reach, sharper than the one
+in the split doc, and it means no amount of clock work reopens that question. Splitting the
+residual would need the wire timestamps moved onto a synchronised wall clock, which is a C-1
+change, and C-1 is closed on both sides.
+
+**Rate is the one that touches a number, and chrony's real value is rate discipline.** A
+worker clock ticking r ppm faster inflates every worker-local duration by r ppm relative to
+`e2e_ms`, multiplicatively, so it does not cancel. Linux slews `CLOCK_MONOTONIC` along with
+the system clock, so a disciplined host's monotonic clock ticks at the reference's rate,
+which is what makes two machines' durations comparable in the first place. `join` divides
+the difference out and prints its size. This host's chrony reports a 1.1 ppm skew and a
+−0.031 ppm residual frequency, so on a two-second service time the correction is about 2 µs,
+against a residual quoted in milliseconds. That is the point: the conclusion is unchanged and
+is now a measured number in the run summary rather than a claim in a README.
+
+**On the F-23 headroom.** Tolerance is ±25% and the recalibrated model sits at 20.8%
+weighted, so 4 points of headroom. If the measured path carried network latency the simulator
+does not, that asymmetry would eat into what is left. At the numbers above it does not come
+close to mattering, and it belongs in the caveats rather than in a hardware decision.
+
+What went in: `clocksync` (measure per host, combine on one), an optional C-6 `clock_sync`
+block, the rate correction in `join`, and a clock reading in `preflight`. Two deliberate
+restraints. Preflight reports an undisciplined clock but does **not** fail on it, because a
+preflight sees one machine and failing there would conflate "the LAN is misconfigured" with
+"chronyd is not installed on the box I ran this from"; the teeth are in
+`clocksync --combine` and in the join summary, both of which see every host. And an
+unmeasured host is recorded as unsynchronised, never as offset zero, because zero reads as
+agreement and agreement is the one claim nobody made.
+
+Aditya needs to know about the C-6 addition, which is why it went to him as an issue rather
+than only into this file. It is additive and optional, his `Manifest.java` is a lenient
+reader that ignores it, and the simulator has one host and one clock and nothing to correct.
+
+---
+
 ## Failure modes at the seam — the standing watch list
 
 These are not one-time checks. They are the things that will go wrong quietly.
@@ -829,7 +891,12 @@ These are not one-time checks. They are the things that will go wrong quietly.
    subtracting a worker timestamp from a client timestamp because it is convenient.
    *Mitigation:* the joined schema contains no cross-host subtraction, and
    `transport_residual_ms` is named "residual" precisely so nobody mistakes it for a
-   measurement.
+   measurement. C-6's `clock_sync` is the second half of this and not a relaxation of the
+   first: the offset it records is subtracted from nothing, and the only field the pipeline
+   acts on is the clock *rate*, which is the one error that survives a difference of
+   single-host durations. The new way to get this wrong is to see a measured offset in a
+   manifest and conclude the residual can now be decomposed. It cannot: the wire timestamps
+   are monotonic and have no shared epoch.
 4. **Heartbeat gaps treated as zero load.** If a node stops heartbeating, a naive
    StateStore shows stale-but-plausible state and the policy keeps routing to it.
    *Mitigation:* `estimate_age_ms` is already in the decision record — add an explicit

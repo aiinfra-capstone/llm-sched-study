@@ -19,11 +19,17 @@ roughly 0.08 Mbit/s. Service times are seconds and the wire is microseconds; eve
 hop is about 2% of the fastest end-to-end latency measured. What actually bites is
 addressing, firewalls, and a node running a different engine build.
 
-**Clock synchronisation is deliberately not checked, because it is deliberately not
-needed.** No duration in this study is computed by subtracting timestamps taken on
-different hosts, and heartbeat gaps are found through `Heartbeat.seq`, not through time. A
-preflight that demanded NTP would be asking for a property the design spent effort not
-depending on.
+**Clock synchronisation is checked, but not for the reason people expect.** No duration in
+this study is computed by subtracting timestamps taken on different hosts, and heartbeat
+gaps are found through `Heartbeat.seq` rather than through time, so the *offset* between
+two machines corrupts nothing and this preflight does not demand that it be small. What it
+does check is that a time daemon is disciplining the clock at all, because Linux slews
+`CLOCK_MONOTONIC` along with the system clock: a disciplined host's monotonic clock ticks
+at the reference's *rate*, and that rate is what makes one host's `service_ms` comparable
+with another host's `e2e_ms`. An undisciplined crystal sits tens of ppm off, which is
+microseconds on a request and still nothing, but it is nothing that has been measured
+rather than nothing that has been assumed. `clocksync` does the reading; this reports it
+here so a two-machine pool cannot be brought up without the question being asked once.
 
 What this refuses to do is guess. It reports what it measured and names what it could not
 reach; deciding whether a 40 ms link is acceptable is a judgement about the experiment, not
@@ -44,6 +50,7 @@ from typing import Any
 
 import grpc
 
+from dataplane.harness.clocksync import HostClock, measure
 from dataplane.harness.launch import build_nodes, colocated_count
 from dataplane.proto import sched_grpc
 
@@ -125,6 +132,26 @@ class PreflightReport:
     pool_problems: list[str]
     hosts: list[str]
     colocated: int
+    clock: HostClock | None = None
+
+    @property
+    def clock_warning(self) -> str:
+        """Said out loud, and deliberately kept out of `ok`.
+
+        A preflight sees one machine. An undisciplined clock here is a reason to fix this
+        host before a two-machine run, but it is not evidence about the pool, and failing
+        the check would conflate "the LAN is misconfigured" with "chronyd is not installed
+        on the box I happened to run this from". The teeth live where a measurement of
+        *every* host exists: `clocksync --combine` exits non-zero on the same condition,
+        and `join` says so again over the rows.
+        """
+        if self.clock is None or self.clock.synchronised or len(self.hosts) < 2:
+            return ""
+        return (
+            f"this host's clock is not disciplined ({self.clock.note}), so its monotonic "
+            "clock ticks at its crystal's rate rather than a shared one, and its durations "
+            "are not comparable with the other hosts'"
+        )
 
     @property
     def ok(self) -> bool:
@@ -138,6 +165,7 @@ class PreflightReport:
             "colocated_nodes": self.colocated,
             "pool_problems": self.pool_problems,
             "peers": [p.to_dict() for p in self.peers],
+            **({"clock": {"host": self.clock.host} | self.clock.to_dict()} if self.clock else {}),
         }
 
     def summary(self) -> str:
@@ -152,6 +180,9 @@ class PreflightReport:
             head += "; single host, so nothing crossed a wire — this proves only that the "
             head += "services are up"
         return head
+
+    def clock_line(self) -> str:
+        return self.clock.line() if self.clock else ""
 
 
 def _tcp_connect_ms(host: str, port: int, timeout_s: float) -> float:
@@ -205,8 +236,18 @@ def check_peer(
     return check
 
 
-def run_preflight(config: dict[str, Any], *, samples: int = DEFAULT_SAMPLES) -> PreflightReport:
-    """Check every endpoint the config declares, and the pool description behind them."""
+def run_preflight(
+    config: dict[str, Any],
+    *,
+    samples: int = DEFAULT_SAMPLES,
+    clock: bool = True,
+) -> PreflightReport:
+    """Check every endpoint the config declares, the pool behind them, and this clock.
+
+    The clock reading is local by construction: a preflight run on the client host can say
+    whether *this* machine is disciplined and nothing about the workers'. That is why it is
+    run on each host during setup, and why `clocksync --combine` is a separate step.
+    """
     peers: list[PeerCheck] = []
     for role, key in (("scheduler", "scheduler"), ("client", "client_endpoint")):
         if config.get(key):
@@ -238,7 +279,13 @@ def run_preflight(config: dict[str, Any], *, samples: int = DEFAULT_SAMPLES) -> 
                 problems.append(f"pool node(s) with no endpoint to check: {missing}")
         except ValueError as exc:
             problems.append(str(exc))
-    return PreflightReport(peers=peers, pool_problems=problems, hosts=hosts, colocated=colocated)
+    return PreflightReport(
+        peers=peers,
+        pool_problems=problems,
+        hosts=hosts,
+        colocated=colocated,
+        clock=measure() if clock else None,
+    )
 
 
 async def serve_probe(bind: str, *, stop: asyncio.Event) -> int:
@@ -277,6 +324,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     ap.add_argument("--probe", metavar="HOST:PORT", help="check one endpoint and exit")
     ap.add_argument("--samples", type=int, default=DEFAULT_SAMPLES)
+    ap.add_argument(
+        "--no-clock",
+        action="store_true",
+        help="skip the local clock-discipline reading (it shells out to chronyc)",
+    )
     ap.add_argument("--out", type=Path, help="write the report as JSON here as well")
     args = ap.parse_args(argv)
 
@@ -291,12 +343,18 @@ def main(argv: list[str] | None = None) -> int:
     if args.config is None:
         ap.error("give a config, or --probe HOST:PORT, or --serve BIND")
 
-    report = run_preflight(json.loads(args.config.read_text()), samples=args.samples)
+    report = run_preflight(
+        json.loads(args.config.read_text()), samples=args.samples, clock=not args.no_clock
+    )
     print(report.summary())
     for peer in report.peers:
         print(peer.line())
     for problem in report.pool_problems:
         print(f"  POOL {problem}")
+    if report.clock_line():
+        print(report.clock_line())
+    if report.clock_warning:
+        print(f"  CLOCK {report.clock_warning}")
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_text(json.dumps(report.to_dict(), indent=2) + "\n")

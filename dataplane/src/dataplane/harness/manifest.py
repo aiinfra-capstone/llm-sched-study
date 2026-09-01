@@ -133,6 +133,7 @@ def build(
     policy: str = "round_robin",
     f18_status: str | None = None,
     cost_model_snapshots: dict[str, Any] | None = None,
+    clock_sync: dict[str, Any] | None = None,
     started_unix: int | None = None,
 ) -> dict[str, Any]:
     """Assemble a C-6 manifest. Validated against the schema by `contracts/check.py`.
@@ -146,6 +147,10 @@ def build(
     the engine version each node actually ran), and it is the launcher that knows those. A
     manifest with an empty pool describes no run, so this refuses to build one rather than
     emitting a file that fails `contracts/check.py` afterwards.
+
+    `clock_sync` is omitted when it was not measured, and that absence is the honest
+    record: a zeroed block would read as "the clocks agreed" when what happened is that
+    nobody looked. Single-host runs leave it out for exactly that reason.
     """
     if not nodes:
         raise ValueError(
@@ -169,6 +174,7 @@ def build(
         "duration_s": float(config["duration_s"]),
         "cost_model_snapshots": cost_model_snapshots or {},
         "nodes": nodes,
+        **({"clock_sync": clock_sync} if clock_sync else {}),
         "git_shas": git_shas(),
         **({"f18_status": f18_status} if f18_status else {}),
         "validity": validity.to_dict(),

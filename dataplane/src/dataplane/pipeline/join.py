@@ -17,9 +17,21 @@ Two rules the join exists to enforce, both easy to violate by accident:
 `service_ms` and the F-18 split are entirely worker-local. `decide_us` is entirely
 scheduler-local. Whatever is left over is `transport_residual_ms` — one honest residual,
 reported as a single number rather than decomposed into invented stages. It can come out
-negative when the three hosts' clocks drift or when a request is rejected before it ever
-reaches a worker, and that is *information*: a systematically negative residual means the
-durations do not add up and the run should be looked at, not averaged.
+negative when a request is rejected before it ever reaches a worker, and that is
+*information*: a systematically negative residual means the durations do not add up and
+the run should be looked at, not averaged.
+
+**One clock correction, and it is not the offset.** When the manifest carries a
+`clock_sync` block, the worker-local durations are divided by that host's measured clock
+*rate* error relative to the reference host, which puts them on the same timebase as
+`e2e_ms` before the residual is taken. The offset is not subtracted from anything, because
+there is nothing here to subtract it from: every term above is a single-host duration, and
+a constant offset cancels in their difference exactly. What does not cancel is rate, since
+it scales each duration by its own length. On disciplined hardware the correction is
+microseconds on a duration quoted in milliseconds; `summarize` prints its size so that
+"the clocks did not matter" is a measured statement rather than an assumed one. With no
+`clock_sync` block nothing is scaled at all, so a run joined before this existed joins to
+the same numbers.
 
 **The engine-gap probe is not a pool member.** A node with `role: "engine_gap_probe"`
 (F-9b) participates in no policy comparison, so its rows are dropped here rather than
@@ -35,6 +47,12 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+
+# Reaching into `harness` from the pipeline, on purpose. `clock_sync` is a C-6 field, C-6
+# is written by the harness, and the code that decodes the field belongs beside the code
+# that writes it: two copies of "what rate_error_ppm means" is one more than can stay in
+# agreement. Nothing heavy comes with it, so the pipeline is still laptop-runnable.
+from dataplane.harness.clocksync import rate_factors
 
 __all__ = ["join", "load_jsonl", "summarize", "to_frame", "write_parquet"]
 
@@ -109,6 +127,55 @@ def summarize(rows: list[dict[str, Any]], manifest: dict[str, Any]) -> list[str]
         out.append(
             f"excluded {probes} engine-gap-probe node(s) (F-9b): they are a measured "
             "condition, not pool members"
+        )
+    out.extend(_clock_lines(rows, manifest))
+    return out
+
+
+def _clock_lines(rows: list[dict[str, Any]], manifest: dict[str, Any]) -> list[str]:
+    """What the clock measurement says about these rows, in words. Silent when absent.
+
+    The size of the correction is quoted against the longest worker-local duration in the
+    set, because that is where a rate error is largest: the error is a fraction of the
+    duration, so the worst case is the slowest request, not the average one. Quoting it
+    against the mean would understate the thing the line exists to bound.
+    """
+    sync = manifest.get("clock_sync")
+    if not sync:
+        hosts = {n.get("host") for n in manifest.get("nodes", [])}
+        if len(hosts) > 1:
+            return [
+                (
+                    f"no clock_sync block, and this run spans {len(hosts)} hosts: nothing "
+                    "here is wrong, but the claim that the hosts' clocks ticked at the "
+                    "same rate is now unevidenced rather than measured"
+                )
+            ]
+        return []
+
+    out = [
+        (
+            f"clock_sync on reference {sync.get('reference')!r}: worst pair offset "
+            f"{float(sync.get('max_abs_offset_ms', 0.0)):.3f} ms (subtracted from nothing; "
+            f"every duration here is single-host), worst pair rate difference "
+            f"{float(sync.get('max_rate_error_ppm', 0.0)):.3f} ppm"
+        )
+    ]
+    hosts_block = sync.get("hosts") or {}
+    unsync = sorted(h for h, c in hosts_block.items() if not c.get("synchronised"))
+    if unsync:
+        out.append(
+            f"host(s) {unsync} were not synchronised, so their worker-local durations are "
+            "on an undisciplined clock and were left uncorrected"
+        )
+    factors = _node_rate_factors(manifest)
+    if factors:
+        worst_ms = max((r["service_ms"] for r in rows if r["chosen_node"] in factors), default=0.0)
+        worst_factor = max(abs(1.0 - 1.0 / f) for f in factors.values())
+        out.append(
+            f"rate correction applied to {len(factors)} node(s): at most "
+            f"{worst_ms * worst_factor:.4f} ms on the longest service time in this set "
+            f"({worst_ms:.1f} ms), which is the whole of what the clocks could have cost"
         )
     return out
 
@@ -215,6 +282,25 @@ def _candidate_view(decision: dict[str, Any], output_len: int) -> dict[str, Any]
     }
 
 
+def _node_rate_factors(manifest: dict[str, Any]) -> dict[str, float]:
+    """node_id -> the factor its worker-local durations are divided by. Usually empty.
+
+    Empty means "nothing to correct", which is the case for every single-host run and for
+    every run measured before `clock_sync` existed, so the default path does no arithmetic
+    at all rather than multiplying by a 1.0 that a reader then has to convince themselves
+    is exactly 1.0.
+
+    The scheduler is deliberately left out. C-6 does not record which host it ran on, and
+    `decide_us` is tens of microseconds, so the largest rate error this study would accept
+    (100 ppm) moves it by a few picoseconds. Correcting it would be arithmetic performed
+    to look thorough.
+    """
+    factors = rate_factors(manifest.get("clock_sync"))
+    if not factors:
+        return {}
+    return {n["node_id"]: factors[n["host"]] for n in manifest["nodes"] if n.get("host") in factors}
+
+
 def join(
     *,
     manifest: dict[str, Any],
@@ -253,6 +339,7 @@ def join(
     workers = {w["req_id"]: w for w in worker if w["node_id"] in pool_ids}
 
     warmup_s = float(manifest.get("warmup_s", 0.0))
+    node_rate = _node_rate_factors(manifest)
     rows: list[dict[str, Any]] = []
 
     for c in client:
@@ -280,8 +367,11 @@ def join(
 
         e2e_ms = c["e2e_duration_ns"] / 1e6
         decide_us = (d["decide_duration_ns"] / 1e3) if d else None
-        queue_wait_ms = (w["queue_wait_ns"] / 1e6) if w else 0.0
-        service_ms = (w["service_ns"] / 1e6) if w else 0.0
+        # Worker-local durations onto the client's timebase. 1.0 unless the manifest
+        # measured this node's host as ticking at a different rate from the reference.
+        rate = node_rate.get(w["node_id"], 1.0) if w else 1.0
+        queue_wait_ms = (w["queue_wait_ns"] / 1e6 / rate) if w else 0.0
+        service_ms = (w["service_ns"] / 1e6 / rate) if w else 0.0
 
         rows.append(
             {
@@ -304,8 +394,8 @@ def join(
                 "decide_us": decide_us,
                 **cand,
                 "queue_wait_ms": queue_wait_ms,
-                "prefill_ms": (w["prefill_ns"] / 1e6) if w and "prefill_ns" in w else None,
-                "decode_ms": (w["decode_ns"] / 1e6) if w and "decode_ns" in w else None,
+                "prefill_ms": (w["prefill_ns"] / 1e6 / rate) if w and "prefill_ns" in w else None,
+                "decode_ms": (w["decode_ns"] / 1e6 / rate) if w and "decode_ns" in w else None,
                 "service_ms": service_ms,
                 # The one honest residual: everything the three hosts did not account for.
                 "transport_residual_ms": e2e_ms

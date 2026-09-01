@@ -98,6 +98,24 @@ def trace(tmp_path: Path) -> tuple[Path, str]:
     return path, gen_trace.generate(CONFIG, path)
 
 
+# The production threshold is 50 ms, and it is calibrated for the thing it guards: a
+# dedicated host driving a LAN pool at around 1 req/s, where the timing loop is idle
+# between sends. This file is a different animal. It runs CONFIG at 40 req/s with the
+# client, the scheduler and up to two workers sharing one event loop in one process, which
+# `replay`'s own docstring calls the edge of what asyncio holds. On a two-core CI runner
+# with a noisy neighbour that has produced 59 to 64 ms of lag and failed the run as a bad
+# load generator, when nothing about the load generator was wrong.
+#
+# Loosening it here costs no coverage, because this is not where open-loop discipline is
+# guarded. `test_a_client_that_falls_behind_reports_it_rather_than_absorbing_it` drives 400
+# requests into one second and asserts the client reports the lag instead of absorbing it,
+# and `test_send_lag_breach_invalidates_the_run` pins the threshold logic on synthetic
+# values. Neither depends on how fast the machine is. What this file asserts is that the
+# fake scheduler distributes and delivers, and the rest of `validity` stays strict: a
+# dropped request or a colocation breach still fails, at any speed.
+FIXTURE_SEND_LAG_MS = 250.0
+
+
 async def _replay_against(scheduler_servicer, trace_path: Path, sha: str):
     server, endpoint = await _serve(scheduler_servicer, sched_grpc.add_SchedulerServicer_to_server)
     try:
@@ -108,6 +126,7 @@ async def _replay_against(scheduler_servicer, trace_path: Path, sha: str):
             expect_sha256=sha,
             bind="127.0.0.1:0",
             advertise_host="127.0.0.1",
+            send_lag_threshold_ms=FIXTURE_SEND_LAG_MS,
         )
     finally:
         await server.stop(grace=1.0)

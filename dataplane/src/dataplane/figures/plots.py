@@ -75,8 +75,10 @@ __all__ = [
     "h3_staleness",
     "mpr2_interaction_range",
     "mpr2_range",
+    "node_utilization",
     "per_node_utilization",
     "percentile",
+    "queue_wait_vs_load",
     "render",
     "render_many",
     "render_set",
@@ -402,6 +404,66 @@ def throughput_vs_load(frame: pd.DataFrame, out_dir: Path) -> Path:
     ax.legend()
     ax.grid(alpha=0.3)
     return _finish(fig, frame, out_dir, "throughput_vs_load")
+
+
+def queue_wait_vs_load(frame: pd.DataFrame, out_dir: Path) -> Path:
+    """S5.4's second dependent variable, against the load axis that moves it.
+
+    Queue wait is drawn apart from end-to-end latency rather than as another band on the
+    same axes, because the two answer different questions and S5.5 turns on telling them
+    apart. End-to-end latency rising could be a slower engine or a longer queue. Queue
+    wait rising can only be a queue, so this is the panel that says which of the two the
+    load band's onset actually is.
+
+    Worker-local throughout, so it survives hosts whose clocks were never compared.
+    """
+    points = by_offered_load(frame)
+    fig, ax = plt.subplots(figsize=(6.5, 4.0))
+    for column, label, marker in (
+        ("queue_wait_p50_ms", "p50", "o"),
+        ("queue_wait_p95_ms", "p95", "s"),
+    ):
+        ax.plot(points["offered_rps"], points[column], marker=marker, label=label)
+    ax.set_xlabel("offered rate \u03bb (req/s)")
+    ax.set_ylabel("queue wait (ms)")
+    ax.set_title("Queue wait against offered load")
+    ax.legend()
+    ax.grid(alpha=0.3)
+    return _finish(fig, frame, out_dir, "queue_wait_vs_load")
+
+
+def node_utilization(frame: pd.DataFrame, out_dir: Path) -> Path:
+    """S5.4's third dependent variable: how the work actually landed across the pool.
+
+    This is the figure that shows a policy doing its job or failing to. Under round-robin
+    on a heterogeneous pool the slow node's bar runs at its slot ceiling while the fast
+    node's sits well under, which is the imbalance every load-aware policy exists to
+    remove; a policy that removed it levels the bars.
+
+    `busy_ratio` is requests in service concurrently, not a fraction, so a node running
+    four slots can legitimately reach 4.0. The slot ceiling is drawn when the manifest
+    recorded one, because a bar at 4.0 means something quite different on a four-slot node
+    than on a two-slot one and the axis alone cannot say which.
+
+    It groups on `chosen_node`, the only node identity C-5 carries, which is null for a
+    run the fixture scheduler drove. Such a set is refused here rather than drawn empty:
+    an empty utilization panel reads as an idle pool.
+    """
+    table = per_node_utilization(frame)
+    if table.empty:
+        raise ValueError(
+            "no run in this set records which node served each request, so utilization is "
+            "unattributed rather than zero. C-5 carries node identity only through the "
+            "scheduler's `chosen_node`, and a run driven by the fixture scheduler writes "
+            "no decision record"
+        )
+    fig, ax = plt.subplots(figsize=(6.5, 4.0))
+    ax.bar(table["node_id"].astype(str), table["busy_ratio"], color="#4477aa")
+    ax.set_xlabel("node")
+    ax.set_ylabel("requests in service concurrently")
+    ax.set_title("Per-node utilization")
+    ax.grid(alpha=0.3, axis="y")
+    return _finish(fig, frame, out_dir, "node_utilization")
 
 
 def bootstrap_halfwidth(
@@ -957,6 +1019,8 @@ def h3_staleness(frame: pd.DataFrame, out_dir: Path) -> Path:
 FIGURES = {
     "latency-vs-load": latency_vs_load,
     "throughput-vs-load": throughput_vs_load,
+    "queue-wait-vs-load": queue_wait_vs_load,
+    "node-utilization": node_utilization,
     "validation": validation,
     "h1-decomposition": h1_decomposition,
     "h2-advantage": h2_advantage,
@@ -1164,7 +1228,11 @@ def drawable(frame: pd.DataFrame) -> list[str]:
     why. Silence and refusal are both correct; which one you get should depend on
     whether you asked.
     """
-    names = ["latency-vs-load", "throughput-vs-load"]
+    names = ["latency-vs-load", "throughput-vs-load", "queue-wait-vs-load"]
+    # C-5 always carries `chosen_node`, but a frame assembled by hand for one figure need
+    # not, so absence is treated the same as all-null: nothing to attribute work to.
+    if "chosen_node" in frame.columns and frame["chosen_node"].notna().any():
+        names.append("node-utilization")
     if set(frame["vehicle"]) == {"hardware", "simulator"}:
         names.append("validation")
     policies = set(frame["policy"])

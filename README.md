@@ -313,8 +313,9 @@ Nothing changes between runs except the policy and the `-ngl` setting. That is t
 reason the results are comparable.
 
 `figures` draws what the set can support and skips the rest, so a hardware-only set at one
-*R* renders the load characterisation and nothing else. The full set draws all four
-hypothesis figures: H1's interaction plot, H2's advantage curve against *R*, MPR-2's
+*R* renders the load characterisation and nothing else. That characterisation is all four
+of the study's dependent variables: latency percentiles, queue wait, per-node utilization,
+and routing-error rate. The full set adds the four hypothesis figures: H1's interaction plot, H2's advantage curve against *R*, MPR-2's
 interaction range, and H3 against estimate age. `--tau-s` is the measured autocorrelation
 time from the C-3 snapshot for that node class. Without it the H3 figure is skipped rather
 than drawn against a guess, because age over τ is the only axis H3 is a claim about, and

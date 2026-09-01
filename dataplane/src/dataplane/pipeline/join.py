@@ -232,6 +232,38 @@ def _check_inputs(
             f"run {run_id!r} is marked invalid in its manifest and is not a data point "
             "about scheduling; pass allow_invalid=True to look at it anyway"
         )
+    _check_policy_agreement(manifest, scheduler)
+
+
+def _check_policy_agreement(manifest: dict[str, Any], scheduler: list[dict[str, Any]]) -> None:
+    """The scheduler must have run the policy the manifest says the run was.
+
+    Every C-5 row takes its `policy` label from the manifest, because that is the field
+    the launcher wrote and the one F-1 makes the single configuration value. Nothing was
+    checking that the scheduler agreed, and the failure that gap admits is the worst kind
+    available here: a scheduler that dispatches round-robin while writing a different name
+    into its own log produces a run set where every row is labelled with a policy that
+    never ran. Nothing downstream can detect it, because the numbers are real and the
+    label is plausible, and a policy comparison built from it compares one policy against
+    itself under four names.
+
+    Checked against the decision records rather than trusted, because the two labels have
+    two authors: the launcher writes the manifest and the scheduler writes the log. Two
+    sources for one fact is exactly where they diverge.
+
+    A run with no decision records says nothing about its policy and is left alone. That is
+    the fixture scheduler, which is honest about writing none.
+    """
+    declared = manifest.get("policy")
+    claimed = {d.get("policy") for d in scheduler if d.get("type") == "decision"}
+    claimed.discard(None)
+    if not claimed or claimed == {declared}:
+        return
+    raise ValueError(
+        f"manifest says this run used policy {declared!r} but its scheduler log records "
+        f"{sorted(claimed)}. Every joined row would be labelled {declared!r} regardless, "
+        "so this is a run set that describes a comparison nobody ran (F-1)"
+    )
 
 
 def _candidate_view(decision: dict[str, Any], output_len: int) -> dict[str, Any]:

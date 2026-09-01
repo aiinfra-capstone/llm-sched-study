@@ -57,6 +57,9 @@ def _requests(
             "service_ms": 400.0,
             "queue_wait_ms": 5.0,
             "intended_offset_s": float(i),
+            # Two nodes, so the utilization figure has work to attribute. C-5 carries node
+            # identity only here, through the scheduler's choice.
+            "chosen_node": "n1" if i % 3 else "n2",
             # Materiality is 10% of service time, so 60 ms against 400 ms is not an
             # error and 200 ms is. A quarter of requests are made errors, and the share
             # rises with staleness, which is the shape H3 predicts.
@@ -338,6 +341,55 @@ def test_every_registered_figure_name_resolves(tmp_path: Path) -> None:
     """A name in the registry that nothing can draw is a broken --only flag."""
     frame = _sweep_frame().assign(tau_s=TAU_S)
     for name in plots.FIGURES:
-        if name == "validation":
+        if name == "validation":  # needs both vehicles, which this set does not hold
             continue
         assert plots.render_set(frame, tmp_path, [name])
+
+
+# --------------------------------------------------------------------------------------
+# §5.4's other two dependent variables
+# --------------------------------------------------------------------------------------
+
+
+def test_queue_wait_is_drawn_apart_from_end_to_end_latency(tmp_path: Path) -> None:
+    """Two panels, because they answer different questions.
+
+    End-to-end latency rising could be a slower engine or a longer queue. Queue wait
+    rising can only be a queue, which is what makes it the panel that says which of the
+    two §5.5's onset actually is.
+    """
+    path = plots.queue_wait_vs_load(_sweep_frame(), tmp_path)
+    assert path.name == "queue_wait_vs_load.png" and path.stat().st_size > 0
+
+
+def test_utilization_is_drawn_per_node(tmp_path: Path) -> None:
+    path = plots.node_utilization(_sweep_frame(), tmp_path)
+    assert path.name == "node_utilization.png" and path.stat().st_size > 0
+
+
+def test_utilization_refuses_a_set_that_cannot_say_which_node_served_what(
+    tmp_path: Path,
+) -> None:
+    """An empty utilization panel reads as an idle pool, which is the opposite claim.
+
+    C-5 carries node identity only through the scheduler's `chosen_node`, so a run the
+    fixture scheduler drove has none. That is unattributed work, not zero work.
+    """
+    frame = _sweep_frame().assign(chosen_node=None)
+    with pytest.raises(ValueError, match="unattributed rather than zero"):
+        plots.node_utilization(frame, tmp_path)
+
+
+def test_a_frame_without_the_node_column_at_all_simply_offers_no_utilization() -> None:
+    """A frame assembled by hand for one figure need not carry every C-5 column."""
+    frame = _sweep_frame().drop(columns=["chosen_node"])
+    assert "node-utilization" in plots.drawable(_sweep_frame())
+    assert "node-utilization" not in plots.drawable(frame)
+
+
+def test_all_four_of_the_specs_dependent_variables_are_drawable() -> None:
+    """§5.4 names four. Latency, queue wait, utilization, routing-error rate."""
+    names = plots.drawable(_sweep_frame().assign(tau_s=TAU_S))
+    assert {"latency-vs-load", "queue-wait-vs-load", "node-utilization", "h3-staleness"} <= set(
+        names
+    )

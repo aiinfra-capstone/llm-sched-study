@@ -227,7 +227,16 @@ def test_the_default_render_skips_validation_on_a_hardware_only_set(tmp_path) ->
     """A hardware-only set is the normal case until the DES lands, and the default run
     must not fail on it — while still refusing loudly when validation is asked for."""
     written = figures.render_set(_set(), tmp_path)
-    assert [p.name for p in written] == ["latency_vs_load.png", "throughput_vs_load.png"]
+    # The exhaustive list, not a subset: what the default draws is a decision, and a
+    # figure appearing in or vanishing from it should have to be stated here. These four
+    # are S5.4's dependent variables plus the throughput axis; `validation` is the one
+    # the default withholds, which is what this test is named for.
+    assert [p.name for p in written] == [
+        "latency_vs_load.png",
+        "throughput_vs_load.png",
+        "queue_wait_vs_load.png",
+        "node_utilization.png",
+    ]
     assert all(p.stat().st_size > 0 for p in written)
 
 

@@ -1,7 +1,6 @@
 package com.sched.core;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.sched.core.models.SchedulerLogRecords.Record;
 import java.io.FileWriter;
 import java.io.PrintWriter;
 import java.io.IOException;
@@ -16,13 +15,13 @@ public class DecisionLogger {
             File dir = new File(outputDir);
             if (!dir.exists()) dir.mkdirs();
             File f = new File(dir, "scheduler_" + runId + ".jsonl");
-            this.pw = new PrintWriter(new FileWriter(f, false)); // false = truncate
+            this.pw = new PrintWriter(new FileWriter(f, false));
         } catch (IOException e) {
             e.printStackTrace();
         }
     }
 
-    public synchronized void logRecord(Record record) {
+    public synchronized void logRecord(Object record) {
         try {
             if (pw != null) {
                 pw.println(mapper.writeValueAsString(record));

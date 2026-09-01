@@ -16,6 +16,10 @@
 syntax = "proto3";
 package sched.v1;
 
+option java_multiple_files = true;
+option java_package = "com.sched.v1";
+option java_outer_classname = "SchedulingProto";
+
 // ---------- Client → Scheduler ----------
 // The scheduler IS in the request path (payload is small; LAN).
 // The scheduler is NOT in the response path (F-11).

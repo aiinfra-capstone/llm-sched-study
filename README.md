@@ -1021,7 +1021,18 @@ also excludes an invalid run **with its reason printed** instead of either poiso
 set or stopping it, and says out loud when a set cannot answer the question being asked of
 it (every anchor run is R = 1.00×, so that set cannot speak to H2 at all).
 
-Before the pool spans more than one machine, `preflight` checks the network the run will
+Before any of that, `tools/survey.sh` reads one machine and says what it is allowed to be:
+which models fit at the study's slot count, what `-ngl`/`--threads`/`--parallel` range it
+can produce (which is where *R* comes from), whether it has the RAM to host the scheduler
+and client instead of an engine, and whether its clock and firewall are ready. It reads
+only, needs no root, and runs on a bare install.
+
+```bash
+./tools/survey.sh                            # inventory
+./tools/survey.sh --bench models/llama-3.2-1b-q4km.gguf   # plus the measured -ngl sweep
+```
+
+Once the pool spans more than one machine, `preflight` checks the network the run will
 actually use — and in particular the direction nothing else exercises:
 
 ```bash

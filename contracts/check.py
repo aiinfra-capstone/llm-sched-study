@@ -30,11 +30,21 @@ Runs in CI on every PR. Four jobs:
      failed — that is a bug in the reader, not a non-conforming artifact.
      Name-level rather than a type checker, which is enough for both.
 
-Usage:  uv run contracts/check.py
+There is also a fifth thing it will do on request, which is not part of the CI gate:
+validate an arbitrary file against the contract it claims to be. That exists because the
+seam has two sides and only one of them runs this repository's test suite. Handing
+somebody "your 42 records are invalid" is worth much less than handing them the command
+that says so before they push.
+
+Usage:
+    uv run contracts/check.py                          # the four jobs above
+    uv run contracts/check.py --validate FILE [FILE…]  # one file against its contract
+    uv run contracts/check.py --validate FILE --schema log_scheduler.schema.json
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import re
 import sys
@@ -269,7 +279,150 @@ def check_java_bindings() -> list[str]:
     return failures
 
 
-def main() -> int:
+# --------------------------------------------------------------------------------------
+# --validate: one arbitrary file against the contract it claims to be
+# --------------------------------------------------------------------------------------
+
+# Filename to schema. The C-4 log names are fixed by the contract itself
+# (`scheduler_{run_id}.jsonl` and so on), so detection is reliable for exactly the files
+# people most often need to check, and `--schema` covers the rest. Order matters: the
+# first pattern that matches wins, so the specific ones come before `*trace*`. Both
+# the contract's own naming (`scheduler_{run_id}.jsonl`) and the sample files
+# (`scheduler.sample.jsonl`) match, since people check both.
+SCHEMA_BY_PATTERN: list[tuple[str, str]] = [
+    (r"^scheduler[_.].*\.jsonl$", "log_scheduler.schema.json"),
+    (r"^worker[_.].*\.jsonl$", "log_worker.schema.json"),
+    (r"^client[_.].*\.jsonl$", "log_client.schema.json"),
+    (r"^manifest.*\.json$", "manifest.schema.json"),
+    (r"^(cost_model|cm_).*\.json$", "cost_model.schema.json"),
+    (r".*trace.*\.jsonl$", "trace.schema.json"),
+]
+
+
+def detect_schema(path: Path) -> str | None:
+    """Which contract a file is claiming to be, from its name. None when unguessable."""
+    for pattern, schema in SCHEMA_BY_PATTERN:
+        if re.match(pattern, path.name):
+            return schema
+    return None
+
+
+def _records(path: Path) -> list[tuple[int, object]]:
+    """(line number, record) for a JSON or JSONL file. Blank lines skipped."""
+    if path.suffix == ".jsonl":
+        return [
+            (n, json.loads(line))
+            for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1)
+            if line.strip()
+        ]
+    return [(1, json.loads(path.read_text(encoding="utf-8")))]
+
+
+def _messages(validator: Draft202012Validator, record: object) -> list[str]:
+    """Readable errors for one record, including through a `oneOf`.
+
+    Two of the six schemas are a `oneOf` over record types: C-2 discriminates header from
+    request from admissibility, and C-4's scheduler log discriminates decision from
+    completion. jsonschema reports a failure there by printing the whole instance and
+    saying it "is not valid under any of the given schemas", which tells a reader nothing
+    about which branch they were aiming at or what was wrong with it.
+
+    So when a `oneOf` fails, group the sub-errors by branch and report only the branch
+    that came closest. That branch is almost always the one intended: a record that meant
+    to be a decision fails the completion branch on `type` alone and fails the decision
+    branch on the fields actually wrong. Fewest errors is the better guess, and reporting
+    every branch would bury the real problem under the alternatives nobody meant.
+    """
+    out: list[str] = []
+    for err in validator.iter_errors(record):
+        if not err.context:
+            where = "/".join(str(p) for p in err.absolute_path) or "<root>"
+            out.append(f"at {where}: {err.message}")
+            continue
+        branches: dict[object, list[str]] = {}
+        for sub in err.context:
+            key = sub.schema_path[0] if sub.schema_path else 0
+            where = "/".join(str(p) for p in sub.absolute_path) or "<root>"
+            branches.setdefault(key, []).append(f"at {where}: {sub.message}")
+        best = min(branches.values(), key=len)
+        out.extend(best)
+    return out
+
+
+def validate_file(path: Path, schema_name: str | None = None) -> list[str]:
+    """Validate one file, printing a per-file report. Returns its failures."""
+    schema_name = schema_name or detect_schema(path)
+    if schema_name is None:
+        print(f"  {path.name}: cannot tell which contract this is; pass --schema")
+        return [f"{path.name}: no schema given and none could be inferred from the name"]
+
+    schema_path = SCHEMAS / schema_name
+    if not schema_path.exists():
+        print(f"  {path.name}: no such schema {schema_name}")
+        return [f"{path.name}: unknown schema {schema_name!r}"]
+
+    validator = Draft202012Validator(json.loads(schema_path.read_text(encoding="utf-8")))
+    try:
+        records = _records(path)
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"  {path.name}: {type(exc).__name__}: {exc}")
+        return [f"{path.name}: {exc}"]
+
+    # Grouped by message rather than listed per record: 42 records failing the same way
+    # is one problem, and printing it 42 times hides the second problem underneath it.
+    seen: dict[str, tuple[int, int]] = {}
+    failures: list[str] = []
+    for lineno, record in records:
+        msgs = _messages(validator, record)
+        for m in msgs:
+            count, first = seen.get(m, (0, lineno))
+            seen[m] = (count + 1, first)
+        failures.extend(f"{path.name}:{lineno} {m}" for m in msgs)
+
+    bad = len({ln for ln, rec in records if _messages(validator, rec)})
+    status = "ok" if not seen else f"{bad}/{len(records)} record(s) fail"
+    print(f"  {path.name:34s} -> {schema_name:28s} {len(records):4d} record(s)  {status}")
+    for message, (count, first) in sorted(seen.items(), key=lambda kv: -kv[1][0]):
+        times = "1 record" if count == 1 else f"{count} records"
+        print(f"      [{times}, first at line {first}]  {message}")
+    return failures
+
+
+def validate_paths(paths: list[Path], schema_name: str | None = None) -> int:
+    print("Validating against the frozen contracts:")
+    failures: list[str] = []
+    for path in paths:
+        failures += validate_file(path, schema_name)
+    print()
+    if failures:
+        print(f"FAIL — {len(failures)} conformance error(s) across {len(paths)} file(s).")
+        return 1
+    print(f"OK — {len(paths)} file(s) conform.")
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(
+        description="Contract conformance check for the six frozen artifacts (C-1..C-6)"
+    )
+    ap.add_argument(
+        "--validate",
+        nargs="+",
+        type=Path,
+        metavar="FILE",
+        help="validate these files against the contract their names imply, and exit. "
+        "Not part of the CI gate: this is for checking output before it is pushed.",
+    )
+    ap.add_argument(
+        "--schema",
+        help="schema file name to validate against, overriding detection "
+        "(e.g. log_scheduler.schema.json)",
+    )
+    args = ap.parse_args(argv)
+
+    if args.validate:
+        return validate_paths(args.validate, args.schema)
+
     print("C-2..C-6 — examples against schemas:")
     failures = check_examples()
     print("\nC-1 — wire schema:")

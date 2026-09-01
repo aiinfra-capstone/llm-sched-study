@@ -389,6 +389,14 @@ uv run contracts/check.py                          # the six artifacts
 cd dataplane && uv sync --all-groups && uv run pytest
 ```
 
+`check.py` also validates an arbitrary file against the contract its name implies, which
+is how either side checks output before pushing it rather than after the other side's
+pipeline rejects it:
+
+```bash
+uv run contracts/check.py --validate runs/exp/jsq_r1/scheduler_jsq_r1.jsonl
+```
+
 ## Documentation
 
 | | |

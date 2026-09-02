@@ -1,0 +1,75 @@
+{
+  "run_id": "anchor1b_mid_1788376647",
+  "started_unix": 1788376647,
+  "vehicle": "hardware",
+  "config_hash": "aaf21aa6676cd8a0760847e902a93cbc0e8920ee17c206cf68472884e7f29085",
+  "config": {
+    "duration_s": 153.10344827586206,
+    "warmup_s": 10.0,
+    "rate_scale": 1.45,
+    "operating_point": "mid",
+    "arrival": {
+      "process": "poisson",
+      "lambda_base": 0.9
+    },
+    "length_dist": {
+      "buckets": [
+        "p128_o64",
+        "p256_o64",
+        "p512_o128"
+      ],
+      "weights": [
+        0.5,
+        0.3,
+        0.2
+      ]
+    },
+    "gen_seed": 20260830,
+    "lambda": 1.305
+  },
+  "trace_path": "runs/traces/anchor_1b.trace.jsonl",
+  "trace_sha256": "bea054628d197527a530f04dc95f4170686c3b7651941698558e145f02c540cf",
+  "policy": "round_robin",
+  "lambda": 1.305,
+  "staleness_s": 0.0,
+  "warmup_s": 10.0,
+  "duration_s": 153.10344827586206,
+  "cost_model_snapshots": {
+    "gtx1650ti": "cm_gtx1650ti_ngl99_p4_q4km_llama32_1b_20260831T153652Z_008"
+  },
+  "nodes": [
+    {
+      "role": "pool",
+      "node_id": "gtx1650ti",
+      "host": "fedora",
+      "engine": "llamacpp",
+      "engine_version": "b10569+p1+cuda13.2",
+      "model": "Llama-3.2-1B-Instruct",
+      "quant": "Q4_K_M",
+      "gpu": "NVIDIA GeForce GTX 1650 Ti",
+      "driver": "580.173.02",
+      "prefix_caching": false,
+      "max_batch": 4,
+      "engine_config": {
+        "ngl": 99,
+        "threads": 6,
+        "parallel": 4
+      }
+    }
+  ],
+  "git_shas": {
+    "worker": "20dcdeb",
+    "scheduler": "20dcdeb",
+    "harness": "20dcdeb",
+    "sim": "20dcdeb"
+  },
+  "validity": {
+    "max_send_lag_ms": 3.099,
+    "send_lag_violations": 0,
+    "dropped_requests": 0,
+    "heartbeat_gaps": 0,
+    "engine_restarts": 0,
+    "valid": true,
+    "colocated_nodes": 0
+  }
+}

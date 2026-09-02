@@ -151,11 +151,22 @@ diagnostic that asks whether the model a run was served by would have predicted 
 Two causes, both about grid placement rather than model form: bucket representatives were
 calibrated at prompt 64 / output 32 while the traces ran 128 to 512 / 64 to 128, and the
 concurrency grid held only {1, 4} while the anchors spent a quarter of their time at 2 slots.
-Recalibrating onto the trace's own lengths brought it to **20.8%** request-weighted and
-**9.9%** on medians, inside the ±25% tolerance the validation criterion asserts.
+Recalibrating onto the trace's own lengths brought it to **21.3%** request-weighted and
+**11.8%** on medians, inside the ±25% tolerance the validation criterion asserts. What
+remains is concentrated rather than spread: the model is accurate at four slots (2 to 6%
+low) and under-predicts by 50 to 63% at one and two, where the mean is dragged by a right
+tail a table of means cannot carry. That is the shape of the error, and it is worth saying
+because a scale correction cannot fix a shape.
 
 **The admissible envelope is `prompt ≤ 512, output ≤ 128`**, with the load band at
 **1.03 to 1.30 req/s** on a one-node pool.
+
+**The simulator agrees with the hardware at all four anchors.** F-23 asks for three or more
+operating points inside ±25% on p50 and p95, and the observed error is −17.2% to +16.3%
+across 0.72 to 1.98 req/s. Getting there took recollecting the anchors against the
+recalibrated cost model rather than the superseded one they were first served by: parameterised
+from the old table the same simulator ran −58.7% to −93.8%, which was a statement about our
+calibration grid and not about the simulator.
 
 *R* is currently **2.00× configured and 1.00× deployable**. That gap is the whole of what is
 left, and it is a hardware problem rather than a code one.
@@ -426,7 +437,7 @@ Week 1.
 | 1 | Worker, heartbeat, client, harness. One query routed and measured end to end. | ✅ |
 | 2 | Calibration campaign, τ and the variance envelope, the synthesizable *R* range. **MPR-1.** | ✅ |
 | 3 | All five policies behind one config value, admissible set, load band. **Feature freeze.** | ✅ |
-| 4 | Pipeline and figures; simulator sharing policy code, validated against hardware. | data plane ✅ |
+| 4 | Pipeline and figures; simulator sharing policy code, validated against hardware. | ✅ F-23 4/4 |
 | 5 | Sweeps: *R* × load × staleness × policy. Hypotheses tested. | figures ✅ |
 | 6 | Analysis, threats to validity, positioning, writeup. Engine-gap measurement. | |
 

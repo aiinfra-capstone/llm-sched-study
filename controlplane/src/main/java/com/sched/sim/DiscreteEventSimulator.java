@@ -43,6 +43,7 @@ public class DiscreteEventSimulator {
 
         while (!eventQueue.isEmpty()) {
             SimulationEvent nextEvent = eventQueue.poll();
+            if (nextEvent.isCancelled()) continue;
             clock.advanceTo(nextEvent.getScheduledTimeNs());
             nextEvent.execute();
         }

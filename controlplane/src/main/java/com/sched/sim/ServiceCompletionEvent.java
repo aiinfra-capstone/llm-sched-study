@@ -52,7 +52,7 @@ public class ServiceCompletionEvent extends SimulationEvent {
         WorkerLogger workerLogger = des.getWorkerLogger();
         if (workerLogger != null) {
             workerLogger.logRecord(new WorkerRecord(
-                runId, request.req().reqId(), server.getNodeId(), "llama.cpp", queueWaitNs, serviceNs,
+                runId, request.req().reqId(), server.getNodeId(), "llamacpp", queueWaitNs, serviceNs,
                 request.req().promptLen(), request.req().outputLen(), concurrencyAtStart,
                 request.inflightAtAdmit(),
                 kvOccupancy,

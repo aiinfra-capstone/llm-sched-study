@@ -76,9 +76,21 @@ public class SimApp {
                 admBounds.put(e.getKey(), snap.admissibility());
             }
 
-            List<TraceRequest> reqs = TraceParser.parse(trc);
+            List<TraceRequest> rawReqs = TraceParser.parse(trc);
+
+            // §5: anchors reach operating points by dividing offsets by rate_scale (1.15 for light)
+            double rsTmp = 1.0;
+            if (manifest.config() != null && manifest.config().containsKey("rate_scale")) {
+                Object v = manifest.config().get("rate_scale");
+                if (v instanceof Number n) rsTmp = n.doubleValue();
+            }
+            final double rateScale = rsTmp;
+            List<TraceRequest> reqs = rawReqs.stream()
+                .map(rq -> new TraceRequest(rq.record(), rq.reqId(), rq.arrivalOffsetS() / rateScale, rq.promptLen(), rq.outputLen(), rq.bucketId(), rq.priority()))
+                .toList();
             
-            String rId = manifest.runId();
+            String origRunId = manifest.runId();
+            String rId = origRunId + "_sim";
             File dir = new File(outputDir);
             if (!dir.exists()) dir.mkdirs();
 
@@ -138,9 +150,56 @@ public class SimApp {
             wLog.close();
             cLog.close();
 
-            // Emit Manifest
-            ObjectMapper mapper = new ObjectMapper();
-            mapper.writeValue(new File(dir, "manifest.json"), manifest);
+            // Emit sim manifest (vehicle: simulator, own run_id/git_shas/validity, no inherited hardware ids)
+            try {
+                String simSha = getGitSha();
+                Map<String, String> newGitShas = new HashMap<>();
+                if (manifest.gitShas() != null) newGitShas.putAll(manifest.gitShas());
+                // sim describe the sim vehicle; fallback to current sha
+                newGitShas.put("sim", simSha);
+                newGitShas.putIfAbsent("worker", simSha);
+                newGitShas.putIfAbsent("scheduler", simSha);
+                newGitShas.putIfAbsent("harness", simSha);
+
+                Map<String, Object> newValidity = new HashMap<>();
+                newValidity.put("max_send_lag_ms", 0.0);
+                newValidity.put("send_lag_violations", 0);
+                newValidity.put("dropped_requests", 0);
+                newValidity.put("heartbeat_gaps", 0);
+                newValidity.put("engine_restarts", 0);
+                newValidity.put("valid", true);
+                newValidity.put("colocated_nodes", 0);
+
+                Manifest simManifest = new Manifest(
+                    rId,
+                    System.currentTimeMillis() / 1000L,
+                    "simulator",
+                    manifest.configHash(),
+                    manifest.config(),
+                    manifest.tracePath(),
+                    manifest.traceSha256(),
+                    manifest.policy(),
+                    manifest.lambdaValue(),
+                    manifest.stalenessS(),
+                    manifest.warmupS(),
+                    manifest.durationS(),
+                    manifest.costModelSnapshots(),
+                    manifest.nodes(),
+                    newGitShas,
+                    newValidity,
+                    null
+                );
+                ObjectMapper mapper = new ObjectMapper();
+                mapper.setSerializationInclusion(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL);
+                mapper.writerWithDefaultPrettyPrinter().writeValue(new File(dir, "manifest.json"), simManifest);
+            } catch (Exception me) {
+                System.err.println("Failed to write sim manifest: " + me.getMessage());
+                me.printStackTrace();
+                // fallback: write original without extra keys via NON_NULL mapper
+                ObjectMapper mapper = new ObjectMapper();
+                mapper.setSerializationInclusion(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL);
+                mapper.writeValue(new File(dir, "manifest.json"), manifest);
+            }
 
         } catch (Exception e) {
             System.err.println("Error during simulation: " + e.getMessage());
@@ -161,5 +220,15 @@ public class SimApp {
             }
         }
         throw new IllegalArgumentException("Cost model snapshot " + snap.snapshotId() + " has no cell for lowest bucket at concurrency 1.");
+    }
+
+    private static String getGitSha() {
+        try {
+            Process p = new ProcessBuilder("git", "rev-parse", "HEAD").redirectErrorStream(true).start();
+            String out = new String(p.getInputStream().readAllBytes()).trim();
+            p.waitFor();
+            if (out.matches("[0-9a-f]{7,40}")) return out.substring(0, 7);
+        } catch (Exception ignored) {}
+        return "sim-unknown";
     }
 }

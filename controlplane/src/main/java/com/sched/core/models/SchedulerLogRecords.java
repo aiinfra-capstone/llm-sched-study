@@ -25,7 +25,7 @@ public interface SchedulerLogRecords {
             @JsonProperty("staleness_param_s") double stalenessParamS,
             @JsonProperty("decide_duration_ns") long decideDurationNs,
             @JsonProperty("chosen_node") String chosenNode,
-            @JsonProperty("tie_break_draw") double tieBreakDraw,
+            @JsonProperty("tie_break_draw") Double tieBreakDraw,
             @JsonProperty("candidates") List<Candidate> candidates) {
     }
 

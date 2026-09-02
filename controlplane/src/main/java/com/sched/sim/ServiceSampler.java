@@ -19,39 +19,42 @@ public class ServiceSampler {
         this.deterministic = deterministic;
     }
 
-    public long sampleServiceNs(String nId, int pLen, int oLen, int conc) {
+    public double getMeanMs(String nId, int pLen, int oLen, int conc) {
         CostModelSnapshot snap = snaps.get(nId);
-        if (snap == null) {
-            return -1;
-        }
-
-        CostEntry bestMatch = null;
-        int minDistance = Integer.MAX_VALUE;
-
+        if (snap == null) return -1;
+        java.util.List<CostEntry> candidates = new java.util.ArrayList<>();
         for (CostEntry e : snap.entries()) {
             if (pLen >= e.promptBucket().get(0) && pLen <= e.promptBucket().get(1) &&
                     oLen >= e.outputBucket().get(0) && oLen <= e.outputBucket().get(1)) {
-
-                int distance = Math.abs(e.concurrency() - conc);
-                if (distance < minDistance) {
-                    minDistance = distance;
-                    bestMatch = e;
-                }
+                candidates.add(e);
             }
         }
-
-        if (bestMatch == null) {
-            return -1;
+        if (candidates.isEmpty()) return -1;
+        candidates.sort(java.util.Comparator.comparingInt(CostEntry::concurrency));
+        for (CostEntry e : candidates) if (e.concurrency() == conc) return e.serviceMsMean();
+        if (conc <= candidates.get(0).concurrency()) return candidates.get(0).serviceMsMean();
+        if (conc >= candidates.get(candidates.size() - 1).concurrency()) return candidates.get(candidates.size() - 1).serviceMsMean();
+        CostEntry lower = null, upper = null;
+        for (int i = 0; i < candidates.size() - 1; i++) {
+            if (candidates.get(i).concurrency() < conc && conc < candidates.get(i + 1).concurrency()) {
+                lower = candidates.get(i); upper = candidates.get(i + 1); break;
+            }
         }
+        if (lower == null || upper == null) return candidates.get(0).serviceMsMean();
+        double fraction = (double)(conc - lower.concurrency()) / (double)(upper.concurrency() - lower.concurrency());
+        return lower.serviceMsMean() + fraction * (upper.serviceMsMean() - lower.serviceMsMean());
+    }
 
-        double meanMs = bestMatch.serviceMsMean();
+    public long sampleServiceNs(String nId, int pLen, int oLen, int conc) {
+        double meanMs = getMeanMs(nId, pLen, oLen, conc);
+        if (meanMs < 0) return -1;
+        CostModelSnapshot snap = snaps.get(nId);
         double finMs = meanMs;
         if (!deterministic) {
             double sig = snap.stochastic().sigma();
             double noise = Math.exp(rng.nextGaussian() * sig - (sig * sig) / 2.0);
             finMs = meanMs * noise;
         }
-
         return (long) (finMs * 1_000_000L);
     }
 }

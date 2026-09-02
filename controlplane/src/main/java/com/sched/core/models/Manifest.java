@@ -7,7 +7,6 @@ import java.util.Map;
 
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record Manifest(
-    @JsonProperty("manifest_schema") Integer manifestSchema,
     @JsonProperty("run_id") String runId,
     @JsonProperty("started_unix") Long startedUnix,
     @JsonProperty("vehicle") String vehicle,
@@ -29,7 +28,6 @@ public record Manifest(
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record SimNode(
         @JsonProperty("node_id") String nodeId,
-        @JsonProperty("node_class") String nodeClass,
         @JsonProperty("role") String role,
         @JsonProperty("host") String host,
         @JsonProperty("engine") String engine,

@@ -11,8 +11,21 @@ public final class SimNodeServer {
     private final int batchCapacity;
     private final ArrayDeque<Admitted> waiting = new ArrayDeque<>();
     private int busy = 0;
+    private final java.util.List<Running> active = new java.util.ArrayList<>();
 
     public record Admitted(TraceRequest req, long admitNs, int inflightAtAdmit) {}
+
+    private static class Running {
+        Admitted admitted;
+        long startNs;
+        long serviceNs;
+        int concurrency;
+        double meanMs;
+        ServiceCompletionEvent event;
+        Running(Admitted a, long sNs, long svcNs, int conc, double mean, ServiceCompletionEvent ev) {
+            admitted = a; startNs = sNs; serviceNs = svcNs; concurrency = conc; meanMs = mean; event = ev;
+        }
+    }
 
     public SimNodeServer(String nodeId, int batchCapacity) {
         this.nodeId = nodeId;
@@ -35,22 +48,69 @@ public final class SimNodeServer {
     }
 
     private void start(Admitted request, long nowNs, DiscreteEventSimulator des, ServiceSampler sampler, InMemoryStateStore store, StalenessVeil veil, com.sched.core.DecisionLogger logger, String runId) {
+        int prevBusy = busy;
         busy++;
         int concurrency = busy;
         updateStore(store, veil);
 
+        // Re-evaluate service time for already-running requests when batch composition changes
+        if (prevBusy > 0) {
+            reevaluateActive(nowNs, concurrency, sampler, des, store, veil, logger, runId);
+        }
+
+        double meanMs = sampler.getMeanMs(nodeId, request.req().promptLen(), request.req().outputLen(), concurrency);
+        if (meanMs < 0) meanMs = 100.0;
         long serviceNs = sampler.sampleServiceNs(nodeId, request.req().promptLen(), request.req().outputLen(), concurrency);
         if (serviceNs < 0) serviceNs = 100_000_000L;
 
-        des.scheduleEvent(new ServiceCompletionEvent(nowNs + serviceNs, this, request, nowNs, serviceNs, concurrency, des, sampler, store, veil, logger, runId));
+        ServiceCompletionEvent ev = new ServiceCompletionEvent(nowNs + serviceNs, this, request, nowNs, serviceNs, concurrency, des, sampler, store, veil, logger, runId);
+        active.add(new Running(request, nowNs, serviceNs, concurrency, meanMs, ev));
+        des.scheduleEvent(ev);
     }
 
     public void complete(long nowNs, DiscreteEventSimulator des, ServiceSampler sampler, InMemoryStateStore store, StalenessVeil veil, com.sched.core.DecisionLogger logger, String runId) {
+        // Remove the entry whose event fires now (the request that just completed)
+        java.util.Iterator<Running> it = active.iterator();
+        while (it.hasNext()) {
+            Running r = it.next();
+            if (!r.event.isCancelled() && r.event.getScheduledTimeNs() == nowNs) {
+                it.remove();
+                break;
+            }
+        }
+        // Clean any cancelled leftovers (rescheduled events)
+        active.removeIf(r -> r.event.isCancelled());
         busy--;
+        if (busy < 0) busy = 0;
         updateStore(store, veil);
+        if (!active.isEmpty() && busy > 0) {
+            reevaluateActive(nowNs, busy, sampler, des, store, veil, logger, runId);
+        }
         if (!waiting.isEmpty()) {
             Admitted next = waiting.removeFirst();
             start(next, nowNs, des, sampler, store, veil, logger, runId);
+        }
+    }
+
+    private void reevaluateActive(long nowNs, int newConcurrency, ServiceSampler sampler, DiscreteEventSimulator des, InMemoryStateStore store, StalenessVeil veil, com.sched.core.DecisionLogger logger, String runId) {
+        for (Running r : new java.util.ArrayList<>(active)) {
+            if (r.event.isCancelled()) continue;
+            long remaining = r.event.getScheduledTimeNs() - nowNs;
+            if (remaining <= 0) continue;
+            double newMean = sampler.getMeanMs(nodeId, r.admitted.req().promptLen(), r.admitted.req().outputLen(), newConcurrency);
+            if (newMean < 0 || r.meanMs <= 0) continue;
+            double scale = newMean / r.meanMs;
+            // Only stretch if concurrency increased (scale>1); shrink if concurrency decreased
+            // Apply scaling to remaining time to model contention change
+            if (Math.abs(scale - 1.0) < 1e-9) continue;
+            long newRemaining = (long)(remaining * scale);
+            if (newRemaining < 1_000_000L) newRemaining = 1_000_000L;
+            r.event.cancel();
+            ServiceCompletionEvent newEv = new ServiceCompletionEvent(nowNs + newRemaining, this, r.admitted, r.startNs, r.serviceNs, r.concurrency, des, sampler, store, veil, logger, runId);
+            r.event = newEv;
+            r.meanMs = newMean;
+            // keep original serviceNs for logging; update scheduled time via new event
+            des.scheduleEvent(newEv);
         }
     }
 

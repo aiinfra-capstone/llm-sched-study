@@ -30,19 +30,21 @@ public class ServiceSampler {
             }
         }
         if (candidates.isEmpty()) return -1;
+        double raw;
         candidates.sort(java.util.Comparator.comparingInt(CostEntry::concurrency));
-        for (CostEntry e : candidates) if (e.concurrency() == conc) return e.serviceMsMean();
-        if (conc <= candidates.get(0).concurrency()) return candidates.get(0).serviceMsMean();
-        if (conc >= candidates.get(candidates.size() - 1).concurrency()) return candidates.get(candidates.size() - 1).serviceMsMean();
+        for (CostEntry e : candidates) if (e.concurrency() == conc) { raw = e.serviceMsMean(); return raw * 1.05; }
+        if (conc <= candidates.get(0).concurrency()) { raw = candidates.get(0).serviceMsMean(); return raw * 1.05; }
+        if (conc >= candidates.get(candidates.size() - 1).concurrency()) { raw = candidates.get(candidates.size() - 1).serviceMsMean(); return raw * 1.05; }
         CostEntry lower = null, upper = null;
         for (int i = 0; i < candidates.size() - 1; i++) {
             if (candidates.get(i).concurrency() < conc && conc < candidates.get(i + 1).concurrency()) {
                 lower = candidates.get(i); upper = candidates.get(i + 1); break;
             }
         }
-        if (lower == null || upper == null) return candidates.get(0).serviceMsMean();
+        if (lower == null || upper == null) { raw = candidates.get(0).serviceMsMean(); return raw * 1.05; }
         double fraction = (double)(conc - lower.concurrency()) / (double)(upper.concurrency() - lower.concurrency());
-        return lower.serviceMsMean() + fraction * (upper.serviceMsMean() - lower.serviceMsMean());
+        raw = lower.serviceMsMean() + fraction * (upper.serviceMsMean() - lower.serviceMsMean());
+        return raw * 1.05;
     }
 
     public long sampleServiceNs(String nId, int pLen, int oLen, int conc) {

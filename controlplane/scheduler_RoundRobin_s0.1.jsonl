@@ -1,2 +1,0 @@
-{"type":"decision","run_id":"RoundRobin_s0.1","req_id":"req-001","decision_seq":0,"policy":"RoundRobin","staleness_param_s":0.1,"decide_duration_ns":2100,"chosen_node":"DROP","tie_break_draw":0.0,"candidates":[]}
-{"type":"decision","run_id":"RoundRobin_s0.1","req_id":"req-002","decision_seq":1,"policy":"RoundRobin","staleness_param_s":0.1,"decide_duration_ns":1600,"chosen_node":"DROP","tie_break_draw":0.0,"candidates":[]}

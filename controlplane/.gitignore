@@ -1,1 +1,7 @@
 target/
+# DES output — never commit run logs, keep runs/ for anchors only
+scheduler_*.jsonl
+client_*.jsonl
+worker_*.jsonl
+manifest.json
+*.log

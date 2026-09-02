@@ -1,2 +1,0 @@
-{"type":"decision","run_id":"WJSQ_s0.0","req_id":"req-001","decision_seq":0,"policy":"WJSQ","staleness_param_s":0.0,"decide_duration_ns":25900,"chosen_node":"DROP","tie_break_draw":0.0,"candidates":[]}
-{"type":"decision","run_id":"WJSQ_s0.0","req_id":"req-002","decision_seq":1,"policy":"WJSQ","staleness_param_s":0.0,"decide_duration_ns":1900,"chosen_node":"DROP","tie_break_draw":0.0,"candidates":[]}

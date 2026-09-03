@@ -48,6 +48,10 @@ jobs:
         with:
           java-version: "17"
           distribution: "temurin"
-      - name: Build Control Plane (Java)
+      - name: Build and test Control Plane (Java)
         working-directory: ./controlplane
-        run: mvn clean compile
+        # `test`, not `compile`. The policies decide where every request goes, and the four
+        # bugs fixed on 2026-09-03 all compiled cleanly, so compiling was never evidence of
+        # anything. The tests read contracts/ through a relative path, which resolves from
+        # this working directory.
+        run: mvn clean test

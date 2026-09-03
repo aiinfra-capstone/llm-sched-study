@@ -21,11 +21,10 @@ public class JSQ implements Policy {
             scores.put(n.nodeId(), (double) (n.queueDepth() + n.inflight()));
         }
 
+        // Queue depths are small integers, so ties are the common case rather than the
+        // exception, and how they are broken is most of what this policy does.
         double draw = rng.nextDouble();
-        String bestNode = admissibleNodes.stream()
-            .min(java.util.Comparator.comparingDouble((NodeView n) -> scores.get(n.nodeId()))
-            .thenComparing(n -> draw))
-            .map(NodeView::nodeId).get();
+        String bestNode = Policies.breakTie(admissibleNodes, scores, draw);
 
         return new Choice(Optional.of(bestNode), scores, draw);
     }

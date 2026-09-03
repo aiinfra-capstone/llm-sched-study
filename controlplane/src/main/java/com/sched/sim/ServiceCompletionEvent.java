@@ -62,7 +62,15 @@ public class ServiceCompletionEvent extends SimulationEvent {
 
         ClientLogger clientLogger = des.getClientLogger();
         if (clientLogger != null) {
-            long e2e = scheduledTimeNs - (long)(request.req().arrivalOffsetS() * 1_000_000_000L);
+            // The client sees the engine's span plus the hops around it: request in over
+            // gRPC, the decision, dispatch to the worker, and the F-11 direct return. The
+            // cost model is fitted on service_ns alone and contains none of that, so the
+            // measured per-request transport is added once, here, at the client boundary.
+            // It deliberately does not enter serviceNs: the hop overlaps other requests
+            // rather than occupying a batch slot, so charging it to the node would inflate
+            // queueing that the hardware does not have.
+            long overheadNs = des.getTransportOverhead().sampleNs();
+            long e2e = scheduledTimeNs + overheadNs - (long)(request.req().arrivalOffsetS() * 1_000_000_000L);
             clientLogger.logRecord(new ClientRecord(
                 runId, request.req().reqId(), request.req().arrivalOffsetS(), request.req().arrivalOffsetS(), 0.0, e2e, "ok",
                 request.req().outputLen(), server.getNodeId(), server.getNodeId(), 0L

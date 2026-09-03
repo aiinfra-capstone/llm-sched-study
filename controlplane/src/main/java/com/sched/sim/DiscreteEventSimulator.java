@@ -31,6 +31,14 @@ public class DiscreteEventSimulator {
         this.clientLogger = clientLogger;
     }
 
+    private TransportOverhead transportOverhead = TransportOverhead.NONE;
+
+    public void setTransportOverhead(TransportOverhead overhead) {
+        this.transportOverhead = overhead == null ? TransportOverhead.NONE : overhead;
+    }
+
+    public TransportOverhead getTransportOverhead() { return transportOverhead; }
+
     public WorkerLogger getWorkerLogger() { return workerLogger; }
     public ClientLogger getClientLogger() { return clientLogger; }
 

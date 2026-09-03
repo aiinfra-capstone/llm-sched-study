@@ -16,18 +16,22 @@ public class WJSQ implements Policy {
             return new Choice(Optional.empty(), new HashMap<>(), null);
         }
 
+        // (pending + 1) / capability, not pending / capability. The score has to answer
+        // "when would this request finish here", and the request being placed is the +1.
+        // Without it every idle node scores 0 no matter how fast it is, so a 100 tok/s GPU
+        // and a 1 tok/s CPU are indistinguishable exactly when the choice is free, and the
+        // capability weighting only starts working once the pool is already loaded. With
+        // it an idle GPU scores 0.01 against the idle CPU's 1.0 and wins, which is the
+        // whole point of a capability-weighted policy.
         Map<String, Double> scores = new HashMap<>();
-        double draw = rng.nextDouble();
+        for (NodeView n : admissibleNodes) {
+            double pending = n.queueDepth() + n.inflight();
+            double capability = Math.max(n.capabilityTokS(), 0.001);
+            scores.put(n.nodeId(), (pending + 1.0) / capability);
+        }
 
-        String bestNode = admissibleNodes.stream()
-            .min(java.util.Comparator.comparingDouble((NodeView n) -> {
-                double pending = n.queueDepth() + n.inflight();
-                double capability = Math.max(n.capabilityTokS(), 0.001);
-                double score = pending / capability;
-                scores.put(n.nodeId(), score);
-                return score;
-            }).thenComparing(n -> draw))
-            .map(NodeView::nodeId).get();
+        double draw = rng.nextDouble();
+        String bestNode = Policies.breakTie(admissibleNodes, scores, draw);
 
         return new Choice(Optional.of(bestNode), scores, draw);
     }

@@ -19,6 +19,12 @@ public class ServiceSampler {
         this.deterministic = deterministic;
     }
 
+    /**
+     * The C-3 cost model's own mean for this cell, interpolated across concurrency, and
+     * nothing else on top. Whatever the client observes beyond the engine's span is
+     * transport, and transport is added once at the client boundary in
+     * ServiceCompletionEvent, not folded into the service time that drives queueing here.
+     */
     public double getMeanMs(String nId, int pLen, int oLen, int conc) {
         CostModelSnapshot snap = snaps.get(nId);
         if (snap == null) return -1;
@@ -30,21 +36,19 @@ public class ServiceSampler {
             }
         }
         if (candidates.isEmpty()) return -1;
-        double raw;
         candidates.sort(java.util.Comparator.comparingInt(CostEntry::concurrency));
-        for (CostEntry e : candidates) if (e.concurrency() == conc) { raw = e.serviceMsMean(); return raw * 1.05; }
-        if (conc <= candidates.get(0).concurrency()) { raw = candidates.get(0).serviceMsMean(); return raw * 1.05; }
-        if (conc >= candidates.get(candidates.size() - 1).concurrency()) { raw = candidates.get(candidates.size() - 1).serviceMsMean(); return raw * 1.05; }
+        for (CostEntry e : candidates) if (e.concurrency() == conc) return e.serviceMsMean();
+        if (conc <= candidates.get(0).concurrency()) return candidates.get(0).serviceMsMean();
+        if (conc >= candidates.get(candidates.size() - 1).concurrency()) return candidates.get(candidates.size() - 1).serviceMsMean();
         CostEntry lower = null, upper = null;
         for (int i = 0; i < candidates.size() - 1; i++) {
             if (candidates.get(i).concurrency() < conc && conc < candidates.get(i + 1).concurrency()) {
                 lower = candidates.get(i); upper = candidates.get(i + 1); break;
             }
         }
-        if (lower == null || upper == null) { raw = candidates.get(0).serviceMsMean(); return raw * 1.05; }
+        if (lower == null || upper == null) return candidates.get(0).serviceMsMean();
         double fraction = (double)(conc - lower.concurrency()) / (double)(upper.concurrency() - lower.concurrency());
-        raw = lower.serviceMsMean() + fraction * (upper.serviceMsMean() - lower.serviceMsMean());
-        return raw * 1.05;
+        return lower.serviceMsMean() + fraction * (upper.serviceMsMean() - lower.serviceMsMean());
     }
 
     public long sampleServiceNs(String nId, int pLen, int oLen, int conc) {

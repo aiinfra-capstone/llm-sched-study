@@ -132,6 +132,22 @@ public class SimApp {
                 smp.setDeterministic(true);
             }
 
+            // Transport gets its own stream so that adding or removing it cannot shift the
+            // service draws and silently change a dispatch sequence F-20 is checking.
+            TransportOverhead overhead = TransportOverhead.NONE;
+            if (manifest.transportOverheadMeanMs() > 0.0) {
+                overhead = new TransportOverhead(
+                    manifest.transportOverheadMeanMs(),
+                    manifest.transportOverheadSdMs(),
+                    new Random(rngSeed + 1),
+                    deterministic);
+                System.out.printf("Transport overhead from manifest: %.2f +/- %.2f ms%n",
+                    overhead.meanMs(), overhead.sdMs());
+            } else {
+                System.out.println("Transport overhead: none recorded in manifest, applying 0 ms");
+            }
+            des.setTransportOverhead(overhead);
+
             DecisionLogger log = new DecisionLogger(outputDir, rId);
             WorkerLogger wLog = new WorkerLogger(outputDir, rId);
             ClientLogger cLog = new ClientLogger(outputDir, rId);
@@ -204,7 +220,8 @@ public class SimApp {
                     manifest.nodes(),
                     newGitShas,
                     newValidity,
-                    null
+                    null,
+                    manifest.transportOverhead()
                 );
                 ObjectMapper mapper = new ObjectMapper();
                 mapper.setSerializationInclusion(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL);

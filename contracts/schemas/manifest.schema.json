@@ -258,6 +258,43 @@
         }
       }
     },
+    "transport_overhead": {
+      "type": "object",
+      "description": "What a client observes on top of the engine's own span in this environment: the gRPC hop in, the decision, the dispatch to the worker, and the F-11 direct return.\n\nOptional, and absent means not measured. It is NOT a claim that the overhead was zero, and a consumer that finds it absent applies nothing rather than guessing a default.\n\nIt is a summary of C-5 `transport_residual_ms` over the warmed-up, status-ok rows of runs on this environment, so it inherits that field's honesty: a residual of single-host durations, never a cross-host subtraction. Pooling across operating points is the right shape because the quantity is a property of the wiring rather than of the load; on the 1B anchors it moves from 5.37 ms at quiet to 5.63 ms at heavy while service time moves by a factor of ten.\n\nWHY IT IS IN MILLISECONDS AND NOT A FRACTION. A simulator that reproduces service time from C-3 alone is short by exactly this, and the temptation is to close the gap with a percentage. A percentage would charge a 13-second request 650 ms of network where a 1-second request pays 50 ms, which is the opposite of what the wire does. The term is additive because the thing it models is additive.",
+      "required": [
+        "mean_ms",
+        "sd_ms",
+        "n_samples",
+        "source"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "mean_ms": {
+          "type": "number",
+          "minimum": 0
+        },
+        "sd_ms": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Population standard deviation over the same rows."
+        },
+        "n_samples": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "source": {
+          "type": "string",
+          "description": "How it was measured, in words, so the number can be argued with."
+        },
+        "measured_from": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "run_ids the summary was pooled over."
+        }
+      }
+    },
     "git_shas": {
       "type": "object",
       "required": [

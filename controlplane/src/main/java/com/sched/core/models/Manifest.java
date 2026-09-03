@@ -23,8 +23,26 @@ public record Manifest(
     @JsonProperty("nodes") List<SimNode> nodes,
     @JsonProperty("git_shas") Map<String, String> gitShas,
     @JsonProperty("validity") Map<String, Object> validity,
-    @JsonProperty("clock_sync") Map<String, Object> clockSync
+    @JsonProperty("clock_sync") Map<String, Object> clockSync,
+    /**
+     * C-6 optional. What the client observes on top of the engine's own span in this
+     * environment: {mean_ms, sd_ms, n_samples, source}. Measured per environment by the
+     * harness, never assumed, and absent on a manifest whose environment was never measured.
+     */
+    @JsonProperty("transport_overhead") Map<String, Object> transportOverhead
 ) {
+    /** Measured mean transport in ms, or 0 when this manifest carries no measurement. */
+    public double transportOverheadMeanMs() { return overheadField("mean_ms"); }
+
+    /** Measured transport standard deviation in ms, or 0 when unmeasured. */
+    public double transportOverheadSdMs() { return overheadField("sd_ms"); }
+
+    private double overheadField(String key) {
+        if (transportOverhead == null) return 0.0;
+        Object v = transportOverhead.get(key);
+        return v instanceof Number n ? n.doubleValue() : 0.0;
+    }
+
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record SimNode(
         @JsonProperty("node_id") String nodeId,

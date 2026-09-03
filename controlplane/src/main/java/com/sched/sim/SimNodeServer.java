@@ -59,9 +59,20 @@ public final class SimNodeServer {
         }
 
         double meanMs = sampler.getMeanMs(nodeId, request.req().promptLen(), request.req().outputLen(), concurrency);
-        if (meanMs < 0) meanMs = 100.0;
         long serviceNs = sampler.sampleServiceNs(nodeId, request.req().promptLen(), request.req().outputLen(), concurrency);
-        if (serviceNs < 0) serviceNs = 100_000_000L;
+        if (meanMs < 0 || serviceNs < 0) {
+            // The old behaviour here was to substitute 100 ms and carry on, which turns a
+            // hole in the cost model into a plausible-looking latency that no measurement
+            // supports. It is reachable whenever the snapshot's admissibility bounds are
+            // wider than the grid that was actually sampled: AdmissionFilter passes the
+            // request on max_prompt/max_output, then no bucket covers it. Say so instead.
+            throw new IllegalStateException(String.format(
+                "node %s has no cost model cell for prompt=%d output=%d concurrency=%d. "
+                + "The snapshot's admissibility bounds are wider than its calibrated grid, "
+                + "so the request was admitted and then had no measured service time. "
+                + "Calibrate the missing cell or narrow admissibility to what was sampled.",
+                nodeId, request.req().promptLen(), request.req().outputLen(), concurrency));
+        }
 
         ServiceCompletionEvent ev = new ServiceCompletionEvent(nowNs + serviceNs, this, request, nowNs, serviceNs, concurrency, des, sampler, store, veil, logger, runId);
         active.add(new Running(request, nowNs, serviceNs, concurrency, meanMs, ev));

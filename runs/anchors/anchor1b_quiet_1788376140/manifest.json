@@ -71,5 +71,17 @@
     "engine_restarts": 0,
     "valid": true,
     "colocated_nodes": 0
+  },
+  "transport_overhead": {
+    "mean_ms": 5.8598,
+    "sd_ms": 2.655,
+    "n_samples": 759,
+    "source": "C-5 transport_residual_ms, pooled over the warmed-up ok rows of 4 run(s) in runs/anchors/runset.parquet",
+    "measured_from": [
+      "anchor1b_heavy_1788376820",
+      "anchor1b_light_1788376435",
+      "anchor1b_mid_1788376647",
+      "anchor1b_quiet_1788376140"
+    ]
   }
 }

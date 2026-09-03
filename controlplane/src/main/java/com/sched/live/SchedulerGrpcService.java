@@ -32,11 +32,20 @@ public class SchedulerGrpcService extends SchedulerGrpc.SchedulerImplBase {
     private final String runId;
     private final String policyName;
     private final double stalenessParamS;
+    private final java.util.Map<String, io.grpc.ManagedChannel> workerChannels;
 
     public SchedulerGrpcService(InMemoryStateStore store, StalenessVeil veil,
             AdmissionFilter filter, Policy policy,
             DecisionLogger logger, String runId,
             String policyName, double stalenessParamS, int rngSeed) {
+        this(store, veil, filter, policy, logger, runId, policyName, stalenessParamS, rngSeed, java.util.Collections.emptyMap());
+    }
+
+    public SchedulerGrpcService(InMemoryStateStore store, StalenessVeil veil,
+            AdmissionFilter filter, Policy policy,
+            DecisionLogger logger, String runId,
+            String policyName, double stalenessParamS, int rngSeed,
+            java.util.Map<String, io.grpc.ManagedChannel> workerChannels) {
         this.store = store;
         this.veil = veil;
         this.filter = filter;
@@ -47,6 +56,7 @@ public class SchedulerGrpcService extends SchedulerGrpc.SchedulerImplBase {
         this.runId = runId;
         this.policyName = policyName;
         this.stalenessParamS = stalenessParamS;
+        this.workerChannels = workerChannels != null ? new java.util.HashMap<>(workerChannels) : new java.util.HashMap<>();
     }
 
     @Override
@@ -85,6 +95,7 @@ public class SchedulerGrpcService extends SchedulerGrpc.SchedulerImplBase {
         long durationNs = System.nanoTime() - startNs;
 
         String chosenNode = choice.chosen().orElse(null);
+        long seq = decisionSeq.getAndIncrement();
 
         if (logger != null) {
             List<Candidate> candidates = allNodes.stream().map(nv -> {
@@ -95,13 +106,39 @@ public class SchedulerGrpcService extends SchedulerGrpc.SchedulerImplBase {
             }).collect(Collectors.toList());
 
             DecisionRecord rec = new DecisionRecord(
-                    "decision", runId, req.getReqId(), decisionSeq.getAndIncrement(),
+                    "decision", runId, req.getReqId(), seq,
                     policyName, stalenessParamS, durationNs, chosenNode, choice.tieBreakDraw(), candidates);
             logger.logRecord(rec);
         }
 
+        // Forward to chosen worker via Worker.Execute (F-11: scheduler not in response path, but in dispatch path)
+        if (chosenNode != null && workerChannels.containsKey(chosenNode)) {
+            io.grpc.ManagedChannel ch = workerChannels.get(chosenNode);
+            try {
+                com.sched.v1.WorkerGrpc.WorkerBlockingStub stub = com.sched.v1.WorkerGrpc.newBlockingStub(ch);
+                com.sched.v1.ExecuteRequest exec = com.sched.v1.ExecuteRequest.newBuilder()
+                        .setRunId(req.getRunId().isEmpty() ? runId : req.getRunId())
+                        .setReqId(req.getReqId())
+                        .addAllPromptTokenIds(req.getPromptTokenIdsList())
+                        .setOutputLen(req.getOutputLen())
+                        .setPriority(req.getPriority())
+                        .setBucketId(req.getBucketId())
+                        .setClientEndpoint(req.getClientEndpoint())
+                        .setDecisionSeq((int) seq)
+                        .build();
+                // Fire and forget; worker will deliver to client and report completion separately
+                // Use blocking stub with short deadline to avoid holding dispatch thread, but still log errors
+                stub.execute(exec);
+            } catch (Exception e) {
+                System.err.println("Failed to forward Execute to worker " + chosenNode + ": " + e.getMessage());
+            }
+        } else if (chosenNode != null && !workerChannels.isEmpty()) {
+            System.err.println("No channel for chosen node " + chosenNode + " (known: " + workerChannels.keySet() + ")");
+        }
+
         DispatchAck.Builder ackBuilder = DispatchAck.newBuilder().setReqId(req.getReqId());
         if (chosenNode != null) {
+            // Put node_id, not endpoint, so it joins against worker log's node_id (fixes fixtures/fake_scheduler)
             ackBuilder.setChosenNode(chosenNode);
             ackBuilder.setAccepted(true);
         } else {

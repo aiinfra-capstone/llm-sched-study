@@ -19,22 +19,98 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class LiveSchedulerApp {
     public static void main(String[] args) throws Exception {
         if (args.length < 1) {
-            System.err.println("Usage: LiveSchedulerApp <manifest_file.json>");
+            System.err.println("Usage: LiveSchedulerApp <manifest_file.json> [--worker <node_id>=<host:port> ...] [--port <port>] [--cost-models <dir>]");
             return;
         }
 
-        Manifest manifest = ManifestParser.parse(args[0]);
+        String manifestPath = null;
+        int port = 50051;
+        String costModelDir = "../contracts/cost_models";
+        java.util.List<String> workerArgs = new java.util.ArrayList<>();
+
+        for (int i = 0; i < args.length; i++) {
+            if (args[i].equals("--worker") && i + 1 < args.length) {
+                workerArgs.add(args[++i]);
+            } else if (args[i].equals("--port") && i + 1 < args.length) {
+                port = Integer.parseInt(args[++i]);
+            } else if (args[i].equals("--cost-models") && i + 1 < args.length) {
+                costModelDir = args[++i];
+            } else if (!args[i].startsWith("--") && manifestPath == null) {
+                manifestPath = args[i];
+            } else if (args[i].equals("--help") || args[i].equals("-h")) {
+                System.out.println("Usage: LiveSchedulerApp <manifest> [--worker <node_id>=<host:port> ...] [--port <port>] [--cost-models <dir>]");
+                return;
+            }
+        }
+
+        if (manifestPath == null) {
+            System.err.println("Manifest file required");
+            return;
+        }
+
+        Manifest manifest = ManifestParser.parse(manifestPath);
         String runId = manifest.runId();
         double stalenessS = manifest.stalenessS() != null ? manifest.stalenessS() : 0.0;
         long stalenessNs = (long)(stalenessS * 1_000_000_000L);
         
-        Clock sysClock = () -> System.currentTimeMillis() * 1_000_000L;
+        Clock sysClock = () -> System.nanoTime();
         InMemoryStateStore store = new InMemoryStateStore();
         StalenessVeil veil = new StalenessVeil(stalenessNs, sysClock);
 
+        // Load admissibility bounds from C-3 snapshots named in the manifest (lifted from SimApp)
         Map<String, Admissibility> boundsMap = new HashMap<>();
-        boundsMap.put("fake-node-A", new Admissibility(4096, 2048, 10000));
+        Map<String, com.sched.core.models.CostModelSnapshot> loadedSnaps = new HashMap<>();
+        try {
+            java.io.File root = new java.io.File(costModelDir);
+            Map<String, com.sched.core.models.CostModelSnapshot> byId = new HashMap<>();
+            if (root.exists()) {
+                try (java.util.stream.Stream<java.nio.file.Path> paths = java.nio.file.Files.walk(root.toPath())) {
+                    for (java.nio.file.Path p : (Iterable<java.nio.file.Path>) paths.filter(f -> f.toString().endsWith(".json"))::iterator) {
+                        com.sched.core.models.CostModelSnapshot s = com.sched.core.models.CostModelParser.parse(p.toFile());
+                        byId.put(s.snapshotId(), s);
+                    }
+                }
+            }
+            for (Map.Entry<String, String> e : manifest.costModelSnapshots().entrySet()) {
+                com.sched.core.models.CostModelSnapshot snap = byId.get(e.getValue());
+                if (snap != null) {
+                    boundsMap.put(e.getKey(), snap.admissibility());
+                    loadedSnaps.put(e.getKey(), snap);
+                } else {
+                    System.err.println("Warning: snapshot " + e.getValue() + " for node " + e.getKey() + " not found in " + costModelDir + ", using permissive bounds");
+                    boundsMap.put(e.getKey(), new Admissibility(4096, 4096, 60000));
+                }
+            }
+            if (boundsMap.isEmpty()) {
+                System.err.println("No admissibility bounds loaded from C-3; using permissive fallback");
+                boundsMap.put("fallback", new Admissibility(4096, 4096, 60000));
+            }
+        } catch (Exception e) {
+            System.err.println("Failed to load C-3 admissibility, using permissive: " + e.getMessage());
+            boundsMap.put("fallback", new Admissibility(4096, 4096, 60000));
+        }
         AdmissionFilter filter = new AdmissionFilter(boundsMap);
+
+        // Seed store with pool nodes from manifest so dispatch works before first heartbeat
+        // (capability from C-3, like SimApp; heartbeat will update live state afterwards)
+        // Note: seed at now-staleness, not -staleness like SimApp, because live clock is nanoTime (large), not 0
+        long seedAt = sysClock.nowNs() - stalenessNs;
+        for (Manifest.SimNode n : manifest.nodes()) {
+            if (!"pool".equals(n.role())) continue;
+            com.sched.core.models.CostModelSnapshot snap = loadedSnaps.get(n.nodeId());
+            double cap = 0.0;
+            if (snap != null) {
+                try {
+                    cap = referenceTokensPerS(snap);
+                } catch (Exception ignored) {
+                    cap = 0.0;
+                }
+            }
+            com.sched.core.interfaces.StateStore.NodeView seed =
+                new com.sched.core.interfaces.StateStore.NodeView(n.nodeId(), 0, 0, cap, 0L, true);
+            store.updateNode(seed);
+            veil.seed(seed, seedAt);
+        }
 
         double thresholdT = manifest.config() != null && manifest.config().containsKey("threshold_t") ? ((Number) manifest.config().get("threshold_t")).doubleValue() : 0.0;
         Policy policy = Policies.fromName(manifest.policy(), new AtomicInteger(0), thresholdT);
@@ -46,15 +122,63 @@ public class LiveSchedulerApp {
             rngSeed = ((Number) manifest.config().get("seed")).intValue();
         }
 
-        SchedulerGrpcService service = new SchedulerGrpcService(
-                store, veil, filter, policy, logger, runId, manifest.policy(), stalenessS, rngSeed);
+        // Build worker channels: --worker node_id=host:port
+        Map<String, io.grpc.ManagedChannel> workerChannels = new HashMap<>();
+        for (String w : workerArgs) {
+            String[] parts = w.split("=", 2);
+            if (parts.length != 2) {
+                System.err.println("Invalid --worker arg, expected node_id=host:port: " + w);
+                continue;
+            }
+            String nodeId = parts[0];
+            String target = parts[1];
+            String host;
+            int wport;
+            int colon = target.lastIndexOf(':');
+            if (colon < 0) {
+                host = target;
+                wport = 50061;
+            } else {
+                host = target.substring(0, colon);
+                wport = Integer.parseInt(target.substring(colon + 1));
+            }
+            io.grpc.ManagedChannel ch = io.grpc.ManagedChannelBuilder.forAddress(host, wport).usePlaintext().build();
+            workerChannels.put(nodeId, ch);
+            System.out.println("Worker channel: " + nodeId + " -> " + host + ":" + wport);
+        }
+        if (workerArgs.isEmpty()) {
+            System.out.println("No --worker endpoints given; scheduler will log decisions but not forward Execute (fixture mode)");
+        }
 
-        Server server = ServerBuilder.forPort(50051)
+        SchedulerGrpcService service = new SchedulerGrpcService(
+                store, veil, filter, policy, logger, runId, manifest.policy(), stalenessS, rngSeed, workerChannels);
+
+        Server server = ServerBuilder.forPort(port)
                 .addService(service)
                 .build()
                 .start();
 
-        System.out.println("Live Control Plane active on port 50051 (Policy: " + manifest.policy() + ")");
+        System.out.println("Live Control Plane active on port " + port + " (Policy: " + manifest.policy() + ") with " + workerChannels.size() + " workers");
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            System.out.println("Shutting down scheduler");
+            server.shutdown();
+            for (io.grpc.ManagedChannel ch : workerChannels.values()) ch.shutdown();
+        }));
         server.awaitTermination();
+    }
+
+    private static double referenceTokensPerS(com.sched.core.models.CostModelSnapshot snap) {
+        int minPrompt = Integer.MAX_VALUE;
+        int minOutput = Integer.MAX_VALUE;
+        for (com.sched.core.models.CostModelSnapshot.CostEntry e : snap.entries()) {
+            if (e.promptBucket().get(0) < minPrompt) minPrompt = e.promptBucket().get(0);
+            if (e.outputBucket().get(0) < minOutput) minOutput = e.outputBucket().get(0);
+        }
+        for (com.sched.core.models.CostModelSnapshot.CostEntry e : snap.entries()) {
+            if (e.promptBucket().get(0) == minPrompt && e.outputBucket().get(0) == minOutput && e.concurrency() == 1) {
+                return e.tokensPerS();
+            }
+        }
+        return 0.0;
     }
 }

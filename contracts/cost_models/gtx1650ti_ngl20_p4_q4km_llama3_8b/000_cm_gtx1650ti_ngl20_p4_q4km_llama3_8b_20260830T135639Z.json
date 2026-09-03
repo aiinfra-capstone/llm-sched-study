@@ -22,7 +22,9 @@
       "service_ms_p50": 4502.694,
       "service_ms_p95": 4517.69,
       "tokens_per_s": 13.4409,
-      "n_samples": 4
+      "n_samples": 4,
+      "prefill_ms_mean": 913.704,
+      "decode_ms_mean": 3575.126
     },
     {
       "prompt_bucket": [
@@ -38,7 +40,9 @@
       "service_ms_p50": 5950.633,
       "service_ms_p95": 6356.778,
       "tokens_per_s": 7.488,
-      "n_samples": 808
+      "n_samples": 808,
+      "prefill_ms_mean": 2198.983,
+      "decode_ms_mean": 3760.773
     },
     {
       "prompt_bucket": [
@@ -54,7 +58,9 @@
       "service_ms_p50": 6438.7,
       "service_ms_p95": 6466.462,
       "tokens_per_s": 12.999,
-      "n_samples": 4
+      "n_samples": 4,
+      "prefill_ms_mean": 2709.357,
+      "decode_ms_mean": 3695.329
     },
     {
       "prompt_bucket": [
@@ -70,7 +76,9 @@
       "service_ms_p50": 13415.766,
       "service_ms_p95": 17343.061,
       "tokens_per_s": 8.9506,
-      "n_samples": 4
+      "n_samples": 4,
+      "prefill_ms_mean": 7648.673,
+      "decode_ms_mean": 5695.591
     }
   ],
   "stochastic": {

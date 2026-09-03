@@ -22,8 +22,21 @@ public record CostModelSnapshot(
                         @JsonProperty("service_ms_mean") double serviceMsMean,
                         @JsonProperty("service_ms_p50") double serviceMsP50,
                         @JsonProperty("service_ms_p95") double serviceMsP95,
+                        /**
+                         * Boxed on purpose: absent and zero are different answers. A
+                         * snapshot fitted before the split existed carries neither field,
+                         * and a consumer must be able to tell that from a cell whose
+                         * prefill really was measured at zero.
+                         */
+                        @JsonProperty("prefill_ms_mean") Double prefillMsMean,
+                        @JsonProperty("decode_ms_mean") Double decodeMsMean,
                         @JsonProperty("tokens_per_s") double tokensPerS,
                         @JsonProperty("n_samples") int nSamples) {
+
+                /** Whether this cell can say which part of its service time was prefill. */
+                public boolean hasPhaseSplit() {
+                        return prefillMsMean != null && decodeMsMean != null;
+                }
         }
 
         public record Stochastic(

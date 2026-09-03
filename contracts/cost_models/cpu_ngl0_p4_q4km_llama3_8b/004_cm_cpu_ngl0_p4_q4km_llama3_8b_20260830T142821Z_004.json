@@ -22,7 +22,9 @@
       "service_ms_p50": 7891.885,
       "service_ms_p95": 7906.388,
       "tokens_per_s": 7.3355,
-      "n_samples": 2
+      "n_samples": 2,
+      "prefill_ms_mean": 1336.381,
+      "decode_ms_mean": 6543.538
     },
     {
       "prompt_bucket": [
@@ -38,7 +40,9 @@
       "service_ms_p50": 9774.694,
       "service_ms_p95": 10134.76,
       "tokens_per_s": 3.6653,
-      "n_samples": 72
+      "n_samples": 72,
+      "prefill_ms_mean": 2584.411,
+      "decode_ms_mean": 7149.57
     }
   ],
   "stochastic": {

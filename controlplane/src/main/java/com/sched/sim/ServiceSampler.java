@@ -51,6 +51,35 @@ public class ServiceSampler {
         return lower.serviceMsMean() + fraction * (upper.serviceMsMean() - lower.serviceMsMean());
     }
 
+    /**
+     * The share of this cell's service time the engine attributed to prompt evaluation,
+     * or -1 when the snapshot does not carry a phase split.
+     *
+     * Nearest concurrency rather than interpolated: a ratio between two phases moves far
+     * less across the grid than the absolute time does, and interpolating it would suggest
+     * a precision the two-point measurement underneath does not have.
+     */
+    public double getPrefillShare(String nId, int pLen, int oLen, int conc) {
+        CostEntry e = nearestEntry(nId, pLen, oLen, conc);
+        if (e == null || !e.hasPhaseSplit() || e.serviceMsMean() <= 0) return -1;
+        return e.prefillMsMean() / e.serviceMsMean();
+    }
+
+    private CostEntry nearestEntry(String nId, int pLen, int oLen, int conc) {
+        CostModelSnapshot snap = snaps.get(nId);
+        if (snap == null) return null;
+        CostEntry best = null;
+        int bestGap = Integer.MAX_VALUE;
+        for (CostEntry e : snap.entries()) {
+            if (pLen >= e.promptBucket().get(0) && pLen <= e.promptBucket().get(1) &&
+                    oLen >= e.outputBucket().get(0) && oLen <= e.outputBucket().get(1)) {
+                int gap = Math.abs(e.concurrency() - conc);
+                if (gap < bestGap) { bestGap = gap; best = e; }
+            }
+        }
+        return best;
+    }
+
     public long sampleServiceNs(String nId, int pLen, int oLen, int conc) {
         double meanMs = getMeanMs(nId, pLen, oLen, conc);
         if (meanMs < 0) return -1;

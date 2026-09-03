@@ -93,6 +93,16 @@
           "service_ms_p95": {
             "type": "number"
           },
+          "prefill_ms_mean": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Mean of the engine-reported prefill span for this cell, in ms. Optional, and absent means the backend emitted no timings block for it.\n\nIt is here because prefill and decode do not respond to concurrency the same way, and a consumer that only has `service_ms_mean` cannot tell them apart. A simulator rescaling a request already in flight because the batch changed must not stretch the prompt evaluation: prefill is compute-bound and, under staggered arrivals, overlaps other requests' decode rather than their prefill.\n\nREAD THE CONCURRENCY COLUMN BEFORE USING THIS. The calibration grid holds `concurrency` requests in flight by firing them together, so at c>1 their prefills serialise against each other and this number carries that contention: 174 ms at c=1 against 592 ms at c=4 for the same 128-token prompt on the 1B GPU class. A Poisson workload does not synchronise arrivals that way and shows a flat ~180 ms at every batch size. The c=1 row is the uncontended prompt evaluation cost; the higher rows are a property of the calibration workload as much as of the hardware."
+          },
+          "decode_ms_mean": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Mean of the engine-reported decode span for this cell, in ms. Optional, on the same terms as `prefill_ms_mean`.\n\nUnlike prefill this one does behave across the grid: decode is memory-bound and per-request decode falls close to 1/c, so the value measured under synchronised arrivals matches what a staggered workload sees at the same batch size.\n\n`prefill_ms_mean + decode_ms_mean` is not `service_ms_mean`. The difference is the engine's unattributed residual, which is kept rather than distributed."
+          },
           "tokens_per_s": {
             "type": "number"
           },

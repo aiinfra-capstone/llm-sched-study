@@ -22,7 +22,9 @@
       "service_ms_p50": 310.975,
       "service_ms_p95": 311.373,
       "tokens_per_s": 151.2323,
-      "n_samples": 4
+      "n_samples": 4,
+      "prefill_ms_mean": 87.994,
+      "decode_ms_mean": 219.153
     },
     {
       "prompt_bucket": [
@@ -38,7 +40,9 @@
       "service_ms_p50": 812.486,
       "service_ms_p95": 820.275,
       "tokens_per_s": 71.5572,
-      "n_samples": 592
+      "n_samples": 592,
+      "prefill_ms_mean": 297.202,
+      "decode_ms_mean": 504.976
     },
     {
       "prompt_bucket": [
@@ -54,7 +58,9 @@
       "service_ms_p50": 972.529,
       "service_ms_p95": 973.766,
       "tokens_per_s": 147.029,
-      "n_samples": 4
+      "n_samples": 4,
+      "prefill_ms_mean": 160.056,
+      "decode_ms_mean": 803.455
     },
     {
       "prompt_bucket": [
@@ -70,7 +76,9 @@
       "service_ms_p50": 1720.814,
       "service_ms_p95": 2123.035,
       "tokens_per_s": 92.8146,
-      "n_samples": 4
+      "n_samples": 4,
+      "prefill_ms_mean": 448.453,
+      "decode_ms_mean": 1253.796
     },
     {
       "prompt_bucket": [
@@ -86,7 +94,9 @@
       "service_ms_p50": 563.597,
       "service_ms_p95": 567.292,
       "tokens_per_s": 149.0758,
-      "n_samples": 4
+      "n_samples": 4,
+      "prefill_ms_mean": 290.069,
+      "decode_ms_mean": 266.905
     },
     {
       "prompt_bucket": [
@@ -102,7 +112,9 @@
       "service_ms_p50": 1387.835,
       "service_ms_p95": 1798.549,
       "tokens_per_s": 92.6884,
-      "n_samples": 4
+      "n_samples": 4,
+      "prefill_ms_mean": 900.111,
+      "decode_ms_mean": 466.218
     },
     {
       "prompt_bucket": [
@@ -118,7 +130,9 @@
       "service_ms_p50": 1240.982,
       "service_ms_p95": 1241.901,
       "tokens_per_s": 144.3821,
-      "n_samples": 4
+      "n_samples": 4,
+      "prefill_ms_mean": 434.58,
+      "decode_ms_mean": 793.896
     },
     {
       "prompt_bucket": [
@@ -134,7 +148,9 @@
       "service_ms_p50": 2514.993,
       "service_ms_p95": 3169.187,
       "tokens_per_s": 90.0932,
-      "n_samples": 4
+      "n_samples": 4,
+      "prefill_ms_mean": 1226.979,
+      "decode_ms_mean": 1257.303
     }
   ],
   "stochastic": {

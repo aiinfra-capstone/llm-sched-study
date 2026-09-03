@@ -21,9 +21,20 @@ public final class SimNodeServer {
         long serviceNs;
         int concurrency;
         double meanMs;
+        /**
+         * How much of this request's service time is prompt evaluation. Held fixed for the
+         * life of the request: prefill is compute-bound and, under the staggered arrivals a
+         * trace actually produces, a new request's prefill overlaps the decode of the ones
+         * already running rather than their prefill. The anchor worker logs measure it flat
+         * at 179/267/280/189 ms across batch sizes 1 to 4 for prompts under 128 tokens.
+         * Zero when the snapshot carries no phase split, which reproduces the old behaviour
+         * of scaling the whole remaining span.
+         */
+        long prefillNs;
         ServiceCompletionEvent event;
-        Running(Admitted a, long sNs, long svcNs, int conc, double mean, ServiceCompletionEvent ev) {
-            admitted = a; startNs = sNs; serviceNs = svcNs; concurrency = conc; meanMs = mean; event = ev;
+        Running(Admitted a, long sNs, long svcNs, int conc, double mean, long preNs, ServiceCompletionEvent ev) {
+            admitted = a; startNs = sNs; serviceNs = svcNs; concurrency = conc; meanMs = mean;
+            prefillNs = preNs; event = ev;
         }
     }
 
@@ -74,8 +85,14 @@ public final class SimNodeServer {
                 nodeId, request.req().promptLen(), request.req().outputLen(), concurrency));
         }
 
+        // The share is taken from the same cell the service time came from, so the split
+        // survives the lognormal draw: a request that happened to draw long is long in both
+        // phases rather than growing an implausibly large prompt evaluation.
+        double prefillShare = sampler.getPrefillShare(nodeId, request.req().promptLen(), request.req().outputLen(), concurrency);
+        long prefillNs = prefillShare < 0 ? 0L : (long) (serviceNs * prefillShare);
+
         ServiceCompletionEvent ev = new ServiceCompletionEvent(nowNs + serviceNs, this, request, nowNs, serviceNs, concurrency, des, sampler, store, veil, logger, runId);
-        active.add(new Running(request, nowNs, serviceNs, concurrency, meanMs, ev));
+        active.add(new Running(request, nowNs, serviceNs, concurrency, meanMs, prefillNs, ev));
         des.scheduleEvent(ev);
     }
 
@@ -114,7 +131,18 @@ public final class SimNodeServer {
             // Only stretch if concurrency increased (scale>1); shrink if concurrency decreased
             // Apply scaling to remaining time to model contention change
             if (Math.abs(scale - 1.0) < 1e-9) continue;
-            long newRemaining = (long)(remaining * scale);
+
+            // Only the decode phase answers to a change in batch composition. Prompt
+            // evaluation is compute-bound and does not stretch because a neighbour arrived,
+            // so the part of `remaining` that is still prefill passes through untouched and
+            // only what is left gets scaled. Scaling the whole span, which is what this did
+            // before, inflates the prompt evaluation of every request that happens to be
+            // mid-prefill when someone else shows up, and the hardware does not do that.
+            long elapsed = nowNs - r.startNs;
+            long prefillRemaining = Math.max(0L, r.prefillNs - elapsed);
+            if (prefillRemaining > remaining) prefillRemaining = remaining;
+            long decodeRemaining = remaining - prefillRemaining;
+            long newRemaining = prefillRemaining + (long)(decodeRemaining * scale);
             if (newRemaining < 1_000_000L) newRemaining = 1_000_000L;
             r.event.cancel();
             ServiceCompletionEvent newEv = new ServiceCompletionEvent(nowNs + newRemaining, this, r.admitted, r.startNs, r.serviceNs, r.concurrency, des, sampler, store, veil, logger, runId);

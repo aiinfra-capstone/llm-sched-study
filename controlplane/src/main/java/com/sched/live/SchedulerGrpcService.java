@@ -6,6 +6,8 @@ import com.sched.v1.Heartbeat;
 import com.sched.v1.BeginRun;
 import com.sched.v1.DispatchRequest;
 import com.sched.v1.DispatchAck;
+import com.sched.v1.Completion;
+import com.sched.v1.ExecuteAck;
 import com.sched.core.InMemoryStateStore;
 import com.sched.core.StalenessVeil;
 import com.sched.core.AdmissionFilter;
@@ -14,12 +16,14 @@ import com.sched.core.interfaces.Policy;
 import com.sched.core.interfaces.StateStore.NodeView;
 import com.sched.core.models.SchedulerLogRecords.Candidate;
 import com.sched.core.models.SchedulerLogRecords.DecisionRecord;
+import com.sched.core.models.SchedulerLogRecords.CompletionObservedRecord;
 import java.util.List;
 import java.util.Optional;
 import java.util.Random;
 import java.util.stream.Collectors;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 
 public class SchedulerGrpcService extends SchedulerGrpc.SchedulerImplBase {
     private final InMemoryStateStore store;
@@ -33,12 +37,15 @@ public class SchedulerGrpcService extends SchedulerGrpc.SchedulerImplBase {
     private final String policyName;
     private final double stalenessParamS;
     private final java.util.Map<String, io.grpc.ManagedChannel> workerChannels;
+    private final java.util.Map<String, Integer> workerCapacity;
+    private final java.util.Map<String, AtomicLong> inflight;
 
     public SchedulerGrpcService(InMemoryStateStore store, StalenessVeil veil,
             AdmissionFilter filter, Policy policy,
             DecisionLogger logger, String runId,
             String policyName, double stalenessParamS, int rngSeed) {
-        this(store, veil, filter, policy, logger, runId, policyName, stalenessParamS, rngSeed, java.util.Collections.emptyMap());
+        this(store, veil, filter, policy, logger, runId, policyName, stalenessParamS, rngSeed,
+                java.util.Collections.emptyMap(), java.util.Collections.emptyMap());
     }
 
     public SchedulerGrpcService(InMemoryStateStore store, StalenessVeil veil,
@@ -46,6 +53,16 @@ public class SchedulerGrpcService extends SchedulerGrpc.SchedulerImplBase {
             DecisionLogger logger, String runId,
             String policyName, double stalenessParamS, int rngSeed,
             java.util.Map<String, io.grpc.ManagedChannel> workerChannels) {
+        this(store, veil, filter, policy, logger, runId, policyName, stalenessParamS, rngSeed,
+                workerChannels, java.util.Collections.emptyMap());
+    }
+
+    public SchedulerGrpcService(InMemoryStateStore store, StalenessVeil veil,
+            AdmissionFilter filter, Policy policy,
+            DecisionLogger logger, String runId,
+            String policyName, double stalenessParamS, int rngSeed,
+            java.util.Map<String, io.grpc.ManagedChannel> workerChannels,
+            java.util.Map<String, Integer> workerCapacity) {
         this.store = store;
         this.veil = veil;
         this.filter = filter;
@@ -57,6 +74,11 @@ public class SchedulerGrpcService extends SchedulerGrpc.SchedulerImplBase {
         this.policyName = policyName;
         this.stalenessParamS = stalenessParamS;
         this.workerChannels = workerChannels != null ? new java.util.HashMap<>(workerChannels) : new java.util.HashMap<>();
+        this.workerCapacity = workerCapacity != null ? new java.util.HashMap<>(workerCapacity) : new java.util.HashMap<>();
+        this.inflight = new java.util.HashMap<>();
+        for (String n : this.workerChannels.keySet()) {
+            this.inflight.put(n, new AtomicLong(0));
+        }
     }
 
     @Override
@@ -129,7 +151,7 @@ public class SchedulerGrpcService extends SchedulerGrpc.SchedulerImplBase {
             io.grpc.ManagedChannel ch = workerChannels.get(chosenNode);
             try {
                 com.sched.v1.WorkerGrpc.WorkerBlockingStub stub = com.sched.v1.WorkerGrpc.newBlockingStub(ch)
-                        .withDeadlineAfter(5, java.util.concurrent.TimeUnit.SECONDS);
+                        .withDeadlineAfter(5, TimeUnit.SECONDS);
                 com.sched.v1.ExecuteRequest exec = com.sched.v1.ExecuteRequest.newBuilder()
                         .setRunId(req.getRunId().isEmpty() ? runId : req.getRunId())
                         .setReqId(req.getReqId())
@@ -155,6 +177,17 @@ public class SchedulerGrpcService extends SchedulerGrpc.SchedulerImplBase {
             forwarded = true;
         }
 
+        // Bump state at dispatch time regardless of whether the worker answered.
+        // Without this, JSQ and WJSQ cannot see a burst landing on a node
+        // until the next heartbeat, and the live and simulated vehicles diverge
+        // as the arrival rate goes up. The DES does this in SimNodeServer.admit;
+        // this is the live side of the same invariant.
+        if (chosenNode != null && forwarded) {
+            int cap = workerCapacity.getOrDefault(chosenNode, 0);
+            store.admit(chosenNode, cap);
+            if (inflight.containsKey(chosenNode)) inflight.get(chosenNode).incrementAndGet();
+        }
+
         DispatchAck.Builder ackBuilder = DispatchAck.newBuilder().setReqId(req.getReqId());
         if (chosenNode != null && forwarded) {
             // Put node_id, not endpoint, so it joins against worker log's node_id
@@ -169,6 +202,26 @@ public class SchedulerGrpcService extends SchedulerGrpc.SchedulerImplBase {
         }
 
         responseObserver.onNext(ackBuilder.build());
+        responseObserver.onCompleted();
+    }
+
+    @Override
+    public void reportCompletion(Completion req, StreamObserver<ExecuteAck> responseObserver) {
+        // The worker calls this on every finished request. Without it, the
+        // scheduler learns about completions only at the next heartbeat tick,
+        // which is a second, uncontrolled staleness source sitting alongside
+        // the one H3 injects on purpose.
+        String nodeId = req.getNodeId();
+        int cap = workerCapacity.getOrDefault(nodeId, 0);
+        store.complete(nodeId, cap);
+        if (inflight.containsKey(nodeId)) {
+            inflight.get(nodeId).updateAndGet(v -> Math.max(0, v - 1));
+        }
+        if (logger != null) {
+            logger.logRecord(new CompletionObservedRecord(
+                    "completion_observed", runId, req.getReqId(), nodeId, "completion_rpc", 0L));
+        }
+        responseObserver.onNext(ExecuteAck.newBuilder().setReqId(req.getReqId()).setQueued(false).build());
         responseObserver.onCompleted();
     }
 }

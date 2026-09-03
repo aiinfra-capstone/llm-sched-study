@@ -137,6 +137,7 @@ public class LiveSchedulerApp {
 
         // Build worker channels: --worker node_id=host:port
         Map<String, io.grpc.ManagedChannel> workerChannels = new HashMap<>();
+        Map<String, Integer> workerCapacity = new HashMap<>();
         for (String w : workerArgs) {
             String[] parts = w.split("=", 2);
             if (parts.length != 2) {
@@ -157,14 +158,24 @@ public class LiveSchedulerApp {
             }
             io.grpc.ManagedChannel ch = io.grpc.ManagedChannelBuilder.forAddress(host, wport).usePlaintext().build();
             workerChannels.put(nodeId, ch);
-            System.out.println("Worker channel: " + nodeId + " -> " + host + ":" + wport);
+            // Pick up the per node parallel slot count from the manifest so the
+            // scheduler can keep state on admit (F-9a: --parallel is the per node
+            // batch capacity the DES reads in SimNode.batchCapacity).
+            for (Manifest.SimNode n : manifest.nodes()) {
+                if (n.nodeId().equals(nodeId)) {
+                    workerCapacity.put(nodeId, n.batchCapacity());
+                    break;
+                }
+            }
+            System.out.println("Worker channel: " + nodeId + " -> " + host + ":" + wport
+                + (workerCapacity.containsKey(nodeId) ? " (parallel=" + workerCapacity.get(nodeId) + ")" : " (parallel=unknown)"));
         }
         if (workerArgs.isEmpty()) {
             System.out.println("No --worker endpoints given; scheduler will log decisions but not forward Execute (fixture mode)");
         }
 
         SchedulerGrpcService service = new SchedulerGrpcService(
-                store, veil, filter, policy, logger, runId, manifest.policy(), stalenessS, rngSeed, workerChannels);
+                store, veil, filter, policy, logger, runId, manifest.policy(), stalenessS, rngSeed, workerChannels, workerCapacity);
 
         Server server = ServerBuilder.forPort(port)
                 .addService(service)

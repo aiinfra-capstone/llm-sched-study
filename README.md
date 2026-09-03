@@ -43,7 +43,7 @@ Three hypotheses. Each falsifiable, each with a negative result worth reporting.
 
 | | Claim | Why it matters |
 |---|---|---|
-| **H1** | Calibration is largely **redundant** given queue-awareness, and more so as load rises. Formally the interaction is negative: `(WJSQ − JSQ) < (StaticWeighted − RoundRobin)`. | If true, the honest headline contradicts the intuition that motivates hardware-aware schedulers. If false, calibration carries independent signal and we have to say where it comes from. |
+| **H1** | Calibration is largely **redundant** given queue-awareness, and more so as load rises. Formally the interaction term `(WJSQ − JSQ) − (StaticWeighted − RoundRobin)` is positive: both brackets are negative when calibration helps, and redundancy means the first is the shallower of the two. | If true, the honest headline contradicts the intuition that motivates hardware-aware schedulers. If false, calibration carries independent signal and we have to say where it comes from. |
 | **H2** | The advantage of hardware-aware routing is **non-monotonic** in the heterogeneity ratio *R*. It rises, peaks, and falls back toward zero. | As *R* grows the best policy converges to thresholding, which is round-robin over the strong nodes and is a one-line static rule. Hardware-awareness has a sweet spot, and outside it something trivial matches it. |
 | **H3** | Routing quality degrades as the age of a node's estimate approaches the **autocorrelation time τ** of that node's real throughput. | This turns non-stationarity from a threat to the method into the independent variable, and it gives an empirical basis for picking a heartbeat interval instead of guessing one. |
 

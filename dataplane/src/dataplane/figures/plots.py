@@ -1124,11 +1124,6 @@ def h3_staleness(frame: pd.DataFrame, out_dir: Path) -> Path:
 # rather than beside the first one because the hypothesis figures below it are the
 # study's actual output, and a registry that lists three characterisation plots reads
 # like the whole set.
-# `phase-advantage` is deliberately absent below. It is written and tested, and it needs
-# `prompt_len` / `output_len`, which every real C-5 runset carries and the generic sweep
-# fixture in the tests does not. Registering it therefore needs one line added to
-# `test_every_registered_figure_name_resolves`, next to the skip that `validation` already
-# has for the same reason, and that is a test change rather than a source change.
 FIGURES = {
     "latency-vs-load": latency_vs_load,
     "throughput-vs-load": throughput_vs_load,
@@ -1138,6 +1133,7 @@ FIGURES = {
     "h1-decomposition": h1_decomposition,
     "h2-advantage": h2_advantage,
     "mpr2-range": mpr2_range,
+    "phase-advantage": phase_advantage,
     "h3-staleness": h3_staleness,
 }
 
@@ -1353,6 +1349,14 @@ def drawable(frame: pd.DataFrame) -> list[str]:
         names.append("h1-decomposition")
         if frame["R"].nunique() > 1:
             names += ["h2-advantage", "mpr2-range"]
+        # Two workload shapes, not two R values: the phase figure varies the trace rather
+        # than the pool, so a single-R set can still draw it. The columns are guarded
+        # because a frame assembled by hand for one figure need not carry them, even
+        # though every real C-5 runset does.
+        if {"prompt_len", "output_len"} <= set(frame.columns):
+            shapes = (frame["prompt_len"] / frame["output_len"]).round(3).nunique()
+            if shapes > 1:
+                names.append("phase-advantage")
     if "tau_s" in frame.columns and frame["staleness_s"].nunique() > 1:
         names.append("h3-staleness")
     return names

@@ -139,10 +139,9 @@ offered load is held constant while the ratio swings 27x. Section 7 of
 `figures/plots.py` has the figure: `phase_advantage_curve` reduces a runset to one point
 per workload shape and reports what calibration buys on each, split into the queue-blind and
 queue-aware halves of the H1 2x2, and `phase_advantage` draws the two curves against rho on
-a log axis. It is written and tested but **not yet in the `FIGURES` registry**: it needs
-`prompt_len` and `output_len`, which every real C-5 runset carries and the generic sweep
-fixture in the tests does not, so registering it costs one line in
-`test_every_registered_figure_name_resolves` beside the skip `validation` already has.
+a log axis. It is registered as `phase-advantage`, so `uv run figures` offers it whenever a
+run set holds the 2x2 at two or more workload shapes, and `--only phase-advantage` on a set
+with one shape refuses and says why.
 
 `tools/phase_ratio.py` is the cost-model side of the same analysis. It reports R on service, on prefill and on decode
 per shared cost-model cell, and, given trace configs, the R each profile sees weighted by

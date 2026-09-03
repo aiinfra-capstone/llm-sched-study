@@ -507,9 +507,40 @@ def test_an_incomplete_2x2_is_dropped_rather_than_half_plotted() -> None:
     assert [round(point["rho"], 2) for point in curve] == [0.5, 2.0]
 
 
-def test_the_phase_figure_renders(tmp_path: Path) -> None:
-    out = plots.phase_advantage(_phase_frame(), tmp_path)
+def test_the_phase_figure_is_offered_when_shapes_vary_and_renders(tmp_path: Path) -> None:
+    frame = _phase_frame()
+    assert "phase-advantage" in plots.drawable(frame)
+    out = plots.phase_advantage(frame, tmp_path)
     assert out.exists() and out.stat().st_size > 0
+
+
+def test_the_phase_figure_is_not_offered_on_a_single_shape() -> None:
+    """One shape cannot show a relationship to shape, so the default run must not try."""
+    frame = _phase_frame({"balanced": SHAPES["balanced"]}, gain={"balanced": 20.0})
+    assert "phase-advantage" not in plots.drawable(frame)
+
+
+def test_a_frame_without_length_columns_does_not_offer_the_phase_figure() -> None:
+    """Every real C-5 runset carries prompt_len and output_len; a hand-built frame need not.
+
+    Same guard `node-utilization` has for `chosen_node`. A frame assembled for one figure
+    should not make the default run explode on a different one.
+    """
+    frame = _sweep_frame().drop(columns=["prompt_len", "output_len"])
+    offered = plots.drawable(frame)
+    assert "h1-decomposition" in offered
+    assert "phase-advantage" not in offered
+
+
+def test_asking_for_the_phase_figure_by_name_still_raises_and_says_why(tmp_path: Path) -> None:
+    """Silence and refusal are both correct; which one you get depends on whether you asked.
+
+    `drawable` leaves it out of the default set, but `--only phase-advantage` on a run set
+    with one workload shape has to fail loudly rather than draw a single point.
+    """
+    frame = _phase_frame({"balanced": SHAPES["balanced"]}, gain={"balanced": 20.0})
+    with pytest.raises(ValueError, match="two or more prompt-to-output ratios"):
+        plots.render_set(frame, tmp_path, ["phase-advantage"])
 
 
 def test_a_zero_output_length_is_refused_rather_than_dividing_by_it() -> None:

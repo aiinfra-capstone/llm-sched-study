@@ -139,12 +139,24 @@ five service times cannot show its own drift, and the GPU classes are too fast t
 theirs with this workload. That last part is the reusable half. It tells anyone repeating
 this what their hardware has to be able to do before the question is even askable.
 
-**Batching buys nothing on this card.** Prefill is flat in concurrency, at 174 / 343 / 698 ms
-for prompts of 128 / 256 / 512 tokens. Per-request decode falls almost exactly as 1/c:
+**Batching buys nothing on this card.** Per-request decode falls almost exactly as 1/c:
 143 / 71 / 58 / 39 tok/s at concurrency 1 through 4. Multiply those back out and aggregate
 decode throughput is constant. So on a 4 GB consumer GPU, concurrency does not buy
 throughput, and the effects the policies compete over here are queueing effects rather than
 throughput effects. That is a result about the hardware class the study is *about*.
+
+**Prefill is flat in concurrency, but only under arrivals that are not synchronised.** The
+anchors measure it at 179 / 267 / 280 / 189 ms across batch sizes 1 to 4 for prompts under
+128 tokens, and 702 / 751 / 756 / 707 ms for 257 to 512, while decode over the same rows
+roughly doubles. The reason is that a Poisson process almost never starts two prompts at
+once, so a new request's prefill overlaps its neighbours' decode rather than their prefill.
+Our own calibration grid does synchronise them, because it holds *c* requests in flight by
+firing them together, and there the same 128-token prompt goes 174 ms at one slot to 727 ms
+at four. Both numbers are real and they answer different questions. It matters because
+`service_ms_mean` at *c* > 1 inherits the synchronised figure, so the cost model carries
+contention that a trace-driven run never produces. We have recorded that caveat on the C-3
+field rather than refitting around it, because it has to be corrected together with the
+stochastic component and not before.
 
 **The deployed cost model missed its own hardware by 127%.** We found it with `costcheck`, a
 diagnostic that asks whether the model a run was served by would have predicted that run.
@@ -162,11 +174,24 @@ because a scale correction cannot fix a shape.
 **1.03 to 1.30 req/s** on a one-node pool.
 
 **The simulator agrees with the hardware at all four anchors.** F-23 asks for three or more
-operating points inside ±25% on p50 and p95, and the observed error is −17.2% to +16.3%
-across 0.72 to 1.98 req/s. Getting there took recollecting the anchors against the
-recalibrated cost model rather than the superseded one they were first served by: parameterised
-from the old table the same simulator ran −58.7% to −93.8%, which was a statement about our
-calibration grid and not about the simulator.
+operating points inside ±25% on p50 and p95, and the observed error is −7.8% to −19.4% on
+p50 across 0.72 to 1.98 req/s, with the worst of the eight p50 and p95 comparisons at 21.7%.
+Getting there took recollecting the anchors against the recalibrated cost model rather than
+the superseded one they were first served by: parameterised from the old table the same
+simulator ran −58.7% to −93.8%, which was a statement about our calibration grid and not
+about the simulator.
+
+Nothing in that figure is fitted to the tolerance. An earlier version of the simulator
+reached it partly through a hardcoded 5% inflation of every service time, which we removed.
+What stands in its place is measured: the client pays 5.86 ± 2.66 ms per request that the
+cost model cannot contain, because the cost model is fitted on the engine's own span while
+the client also pays for the gRPC hop, the decision, the dispatch, and the direct return.
+That number is flat from quiet to heavy, which is why it is added in milliseconds rather
+than applied as a percentage, and it travels on the run manifest so a different environment
+supplies its own. The remaining error is uniformly negative, and we know where it lives: the
+cost model carries one global σ = 0.1225 against a dispersion that runs from 0.675 at one
+slot to 0.198 at four, so the simulator is under-dispersed exactly where the error is
+largest.
 
 *R* is currently **2.00× configured and 1.00× deployable**. That gap is the whole of what is
 left, and it is a hardware problem rather than a code one.

@@ -1,0 +1,41 @@
+{
+  "node_class": "cpu_ngl0_p4_q4km_llama32_1b",
+  "model": "Llama-3.2-1B-Instruct",
+  "host": "REPLACE-WITH-HOSTNAME",
+  "endpoint": "http://127.0.0.1:18080",
+  "prompt_edges": [1, 128, 256, 512, 2048],
+  "output_edges": [1, 64, 128, 256],
+  "prompt_lens": [128, 256, 512],
+  "output_lens": [64, 128],
+  "concurrencies": [1, 2, 3, 4],
+  "samples_per_cell": 8,
+  "warmup_per_cell": 2,
+  "sustained": {
+    "prompt_len": 128,
+    "output_len": 64,
+    "concurrency": 4,
+    "duration_s": 600,
+    "window_s": 30.0
+  },
+  "snapshot_every_s": 60.0,
+  "snapshot_window_s": 180.0,
+  "vocab_size": 128000,
+  "seed": 20260903,
+  "provenance": {
+    "engine": "llamacpp",
+    "engine_version": "b10569+p1+cpu",
+    "quant": "Q4_K_M",
+    "gpu": "none",
+    "prefix_caching": false,
+    "engine_config": {
+      "ngl": 0,
+      "threads": 6,
+      "parallel": 4
+    }
+  },
+  "admissibility": {
+    "max_prompt": 512,
+    "max_output": 128,
+    "timeout_ceiling_ms": 300000
+  }
+}

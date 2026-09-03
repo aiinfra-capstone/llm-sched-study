@@ -1,10 +1,10 @@
 {
-  "_comment": "Fill in the LAN addresses before the first multi-host run. client_endpoint is the port the replay client binds for F-11 deliveries; it must be reachable INBOUND from every worker host, which is the check nothing else performs.",
-  "client_endpoint": "192.168.1.50:50071",
-  "scheduler": "192.168.1.50:50051",
+  "_comment": "Fill in the two hostnames before the first multi-host run; the addresses match the 10.42.0.0/24 subnet that tools/lan-up.sh and tools/pool-install.sh both assume, with the harness on .1 as the hotspot gateway. client_endpoint is the port the replay client binds for F-11 deliveries; it must be reachable INBOUND from every worker host, which is the check nothing else performs. The pool is the 1B model on both nodes because F-9 holds engine, model and quant constant across pool members, and pool-install.sh only fetches the 1B weights. Heterogeneity comes from ngl, which is F-9a.",
+  "client_endpoint": "10.42.0.1:50071",
+  "scheduler": "10.42.0.1:50051",
   "workers": {
-    "gtx1650ti": "192.168.1.50:50061",
-    "node2": "192.168.1.51:50061"
+    "gtx1650ti": "10.42.0.1:50061",
+    "cpu1": "10.42.0.2:50061"
   },
   "pool": [
     {
@@ -13,26 +13,26 @@
       "role": "pool",
       "engine": "llamacpp",
       "engine_version": "b10569+p1+cuda13.2",
-      "model": "Meta-Llama-3-8B-Instruct",
+      "model": "Llama-3.2-1B-Instruct",
       "quant": "Q4_K_M",
       "gpu": "NVIDIA GeForce GTX 1650 Ti",
       "driver": "580.173.02",
       "prefix_caching": false,
       "max_batch": 4,
-      "engine_config": { "ngl": 20, "threads": 6, "parallel": 4 }
+      "engine_config": { "ngl": 99, "threads": 6, "parallel": 4 }
     },
     {
-      "node_id": "node2",
-      "host": "REPLACE-ME",
+      "node_id": "cpu1",
+      "host": "REPLACE-WITH-HOSTNAME",
       "role": "pool",
       "engine": "llamacpp",
-      "engine_version": "b10569+p1+cuda13.2",
-      "model": "Meta-Llama-3-8B-Instruct",
+      "engine_version": "b10569+p1+cpu",
+      "model": "Llama-3.2-1B-Instruct",
       "quant": "Q4_K_M",
       "gpu": "none",
       "prefix_caching": false,
       "max_batch": 4,
-      "engine_config": { "ngl": 0, "threads": 4, "parallel": 4 }
+      "engine_config": { "ngl": 0, "threads": 6, "parallel": 4 }
     }
   ]
 }

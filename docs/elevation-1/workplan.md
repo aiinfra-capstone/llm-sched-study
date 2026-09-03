@@ -136,7 +136,15 @@ move; the comparison is paired. Mean predicted service time varies by 2.1% acros
 offered load is held constant while the ratio swings 27x. Section 7 of
 [`evidence.md`](evidence.md) has the construction.
 
-`tools/phase_ratio.py` is the analysis. It reports R on service, on prefill and on decode
+`figures/plots.py` has the figure: `phase_advantage_curve` reduces a runset to one point
+per workload shape and reports what calibration buys on each, split into the queue-blind and
+queue-aware halves of the H1 2x2, and `phase_advantage` draws the two curves against rho on
+a log axis. It is written and tested but **not yet in the `FIGURES` registry**: it needs
+`prompt_len` and `output_len`, which every real C-5 runset carries and the generic sweep
+fixture in the tests does not, so registering it costs one line in
+`test_every_registered_figure_name_resolves` beside the skip `validation` already has.
+
+`tools/phase_ratio.py` is the cost-model side of the same analysis. It reports R on service, on prefill and on decode
 per shared cost-model cell, and, given trace configs, the R each profile sees weighted by
 its bucket mix. It defaults to concurrency 1 and warns above it, because our calibration
 grid fires requests together and the measured prefill at higher concurrency carries harness
@@ -181,13 +189,20 @@ corrected record, which is the honest outcome and cost a morning rather than a w
 
 ---
 
-## W7. Run length
+## W7. Run length — decided, no code
 
-**Divyansh. Cheap.**
+**Divyansh. Closed.**
 
-Lengthen the trace for the saturated point so its p95 and p99 are defensible, or state that
-it is a transient observation and exclude it from steady-state claims. The load-band tool
-already flags it; the choice is which of the two honest options we take.
+The choice was to lengthen the saturated run or to exclude it from steady-state claims. We
+exclude it, and the reasoning is in section 6 of [`evidence.md`](evidence.md): being short is
+what makes the heavy point a saturation measurement rather than a defect in it, and
+lengthening the trace would change `trace_sha256` and force a recollection and an F-23
+revalidation for a number that would still need caveating.
+
+The instrument already carries `short`, `climbing` and `saturated` per point in
+`load_band.json` and prints them per point on the console, so this needs no code. It needs
+the writeup not to quote heavy's p95 and p99 alongside the other three as if they were the
+same kind of observation.
 
 ---
 

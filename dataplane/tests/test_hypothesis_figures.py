@@ -393,3 +393,108 @@ def test_all_four_of_the_specs_dependent_variables_are_drawable() -> None:
     assert {"latency-vs-load", "queue-wait-vs-load", "node-utilization", "h3-staleness"} <= set(
         names
     )
+
+
+# --------------------------------------------------------------------------------------
+# phase_advantage — what calibration buys, against workload shape
+
+
+# (prompt, output) pairs matching the committed profiles, so the ratios under test are the
+# ones the traces actually produce rather than round numbers chosen here.
+SHAPES = {"generation": (60, 120), "balanced": (192, 96), "summarisation": (512, 32)}
+
+
+def _phase_frame(
+    shapes: dict[str, tuple[int, int]] | None = None,
+    *,
+    gain: dict[str, float] | None = None,
+) -> pd.DataFrame:
+    """The 2x2 crossed with workload shape, one R.
+
+    Calibration is worth more on decode-heavy work by construction, because that is the
+    prediction the figure exists to show and a flat fixture would let a figure that reports
+    no relationship pass. The queue-aware gain is a fixed fraction of the queue-blind one,
+    so the substitution H1 is about is present at every shape and the figure has to show
+    the two curves separating rather than crossing.
+    """
+    shapes = shapes or SHAPES
+    gain = gain or {"generation": 60.0, "balanced": 20.0, "summarisation": 5.0}
+    rows: list[dict[str, Any]] = []
+    run = 0
+    for name, (prompt_len, output_len) in shapes.items():
+        g = gain[name]
+        latency = {
+            "round_robin": 200.0,
+            "static_weighted": 200.0 - g,
+            "jsq": 150.0,
+            "wjsq": 150.0 - 0.3 * g,
+        }
+        for policy in plots.CELLS:
+            run += 1
+            for row in _requests(
+                run_id=f"phase{run:03d}",
+                policy=policy,
+                r_value=4.0,
+                staleness_s=0.0,
+                latency_ms=latency[policy],
+            ):
+                rows.append({**row, "prompt_len": prompt_len, "output_len": output_len})
+    return pd.DataFrame(rows)
+
+
+def test_the_phase_curve_reports_a_point_per_workload_shape() -> None:
+    curve = plots.phase_advantage_curve(_phase_frame())
+    assert [round(point["rho"], 2) for point in curve] == [0.5, 2.0, 16.0]
+
+
+def test_calibration_buys_less_as_the_workload_gets_prompt_heavy() -> None:
+    """The elevation's claim, as arithmetic.
+
+    Prefill is compute-bound and decode is memory-bandwidth-bound, so a prompt-heavy
+    workload runs on a pool that is less heterogeneous than the same pool serving a
+    generation-heavy one. There is correspondingly less for calibration to exploit.
+    """
+    curve = plots.phase_advantage_curve(_phase_frame())
+    blind = [point["queue_blind_gain_ms"] for point in curve]
+    assert blind == sorted(blind, reverse=True), blind
+    assert blind[0] == pytest.approx(60.0)
+    assert blind[-1] == pytest.approx(5.0)
+
+
+def test_queue_depth_substitutes_for_calibration_at_every_shape() -> None:
+    """H1's substitution, which the two curves separating is the visual form of."""
+    for point in plots.phase_advantage_curve(_phase_frame()):
+        assert point["queue_aware_gain_ms"] < point["queue_blind_gain_ms"]
+        # The interaction is exactly the gap between the curves, and its sign is the
+        # hypothesis. Getting the subtraction backwards would produce the same magnitude.
+        assert point["interaction_ms"] == pytest.approx(
+            point["queue_blind_gain_ms"] - point["queue_aware_gain_ms"]
+        )
+
+
+def test_one_workload_shape_cannot_show_a_relationship_to_workload_shape() -> None:
+    frame = _phase_frame({"balanced": SHAPES["balanced"]}, gain={"balanced": 20.0})
+    with pytest.raises(ValueError, match="two or more prompt-to-output ratios"):
+        plots.phase_advantage_curve(frame)
+
+
+def test_an_incomplete_2x2_is_dropped_rather_than_half_plotted() -> None:
+    """A shape missing a policy cannot be decomposed, and three policies is a ranking."""
+    frame = _phase_frame()
+    frame = frame[~((frame["prompt_len"] == 512) & (frame["policy"] == "wjsq"))]
+    curve = plots.phase_advantage_curve(frame)
+    assert [round(point["rho"], 2) for point in curve] == [0.5, 2.0]
+
+
+def test_the_phase_figure_renders(tmp_path: Path) -> None:
+    out = plots.phase_advantage(_phase_frame(), tmp_path)
+    assert out.exists() and out.stat().st_size > 0
+
+
+def test_a_zero_output_length_is_refused_rather_than_dividing_by_it() -> None:
+    """F-16 forces output length, so a zero here means the trace is broken, not that the
+    request produced nothing."""
+    frame = _phase_frame()
+    frame.loc[frame.index[0], "output_len"] = 0
+    with pytest.raises(ValueError, match="output_len <= 0"):
+        plots.phase_advantage_curve(frame)

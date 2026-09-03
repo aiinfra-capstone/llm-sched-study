@@ -247,10 +247,24 @@ From `runs/anchors/load_band.json`:
 | heavy | 1.98 | 1.60 | 13421.7 | 23594.5 | +11688.3 | **yes** | **yes** |
 
 **What it decides.** Quiet, light and mid are steady state and their percentiles stand.
-Heavy is transient queue filling, achieving 1.60 requests per second against 1.98 offered
-with latency still climbing by 11.7 seconds across the window. Either lengthen that run or
-state plainly that it is a transient observation and keep it out of steady-state claims.
-Both are honest. Reporting its p99 without saying so is not.
+Heavy is transient queue filling: it achieves 1.60 requests per second against 1.98 offered,
+with latency still climbing by 11.7 seconds across the window.
+
+**We are not lengthening it, and the reason is not cost.** Being short is not a defect of the
+heavy run; it is the measurement. `short` is one of the two saturation tests, defined as the
+pool retiring less than the trace offered, so a heavy point that came back long and stable
+would mean we had not found saturation at all. Its job in the band is to bound it from above,
+and it does that correctly.
+
+Lengthening it would also change the trace, and therefore `trace_sha256`, which invalidates
+the anchor set and forces a recollection and an F-23 revalidation. That is a real cost paid
+for a number we would then have to caveat anyway.
+
+So the rule is: heavy establishes where saturation is, and its p95 and p99 are not quoted as
+steady-state percentiles. `load_band.json` already carries `short`, `climbing` and
+`saturated` per point, and the console prints "retired only 1.60/s" beside it, so nothing
+has to be remembered. What must not happen is a figure or a table lifting heavy's p99 next
+to the other three as though the four were the same kind of observation.
 
 ---
 

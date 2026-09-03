@@ -803,8 +803,8 @@ def _cells_at(sweep: pd.DataFrame) -> dict[str, float]:
     }
 
 
-def _r_axis(ax: Any, r_values: list[float]) -> None:
-    """Label the R axis at the values actually measured, as plain ratios.
+def _ratio_axis(ax: Any, values: list[float], label: str) -> None:
+    """Label a ratio axis at the values actually measured, as plain ratios.
 
     Log scale because the claim is about a range that spans multiples rather than
     increments, and because consumer heterogeneity is quoted as a ratio. Matplotlib's
@@ -813,10 +813,15 @@ def _r_axis(ax: Any, r_values: list[float]) -> None:
     positions on this axis, so they are the only ones labelled.
     """
     ax.set_xscale("log")
-    ax.set_xticks(r_values)
-    ax.set_xticklabels([f"{r:g}" for r in r_values])
+    ax.set_xticks(values)
+    ax.set_xticklabels([f"{v:g}" for v in values])
     ax.minorticks_off()
-    ax.set_xlabel("heterogeneity ratio R")
+    ax.set_xlabel(label)
+
+
+def _r_axis(ax: Any, r_values: list[float]) -> None:
+    """The R axis, which is the ratio axis every H2/MPR-2 figure shares."""
+    _ratio_axis(ax, r_values, "heterogeneity ratio R")
 
 
 def h1_decomposition(frame: pd.DataFrame, out_dir: Path) -> Path:
@@ -902,6 +907,109 @@ def h2_advantage(frame: pd.DataFrame, out_dir: Path) -> Path:
     ax.margins(y=0.15)
     ax.grid(alpha=0.3)
     return _finish(fig, frame, out_dir, "h2_advantage")
+
+
+def phase_advantage_curve(frame: pd.DataFrame) -> list[dict[str, float]]:
+    """What calibration buys, as a function of the workload's prompt-to-output ratio.
+
+    R is not one number. Prefill is compute-bound and decode is memory-bandwidth-bound, and
+    a machine does not lose those two capabilities at the same rate, so the heterogeneity a
+    scheduler faces depends on the shape of the request. On our own committed cost models,
+    same model and quant, R is 1.75x on service time but 1.46x on prefill and 1.83x on
+    decode. A prompt-heavy workload therefore runs on a pool that is *less* heterogeneous
+    than the same pool serving a generation-heavy one.
+
+    The prediction that follows is the LLM-native half of H1: queue depth substitutes for
+    calibration on prompt-heavy work, where there is little heterogeneity for calibration to
+    exploit, and fails on decode-heavy work, where misrouting causes head-of-line blocking
+    a queue counter cannot anticipate.
+
+    `rho` is computed per request and averaged per run rather than read from a config,
+    because the frame is the only thing the figures are allowed to depend on and a config
+    could disagree with the trace that actually ran.
+
+    This reduces per run and then groups runs, for the same reason `sweep_from` does: every
+    run replayed one trace under one policy, so its requests are correlated with each other
+    and pooling them across runs would let a long run outvote a short one inside a cell that
+    is supposed to be one observation.
+    """
+    rows = analysable(frame)
+    per_run = []
+    for run_id, group in rows.groupby("run_id", sort=False):
+        output_len = group["output_len"].astype(float)
+        if (output_len <= 0).any():
+            raise ValueError(
+                f"run {run_id} has a request with output_len <= 0, so its prompt-to-output "
+                "ratio is undefined; F-16 forces output length, so this is a broken trace"
+            )
+        per_run.append(
+            {
+                "rho": float((group["prompt_len"].astype(float) / output_len).mean()),
+                "policy": group["policy"].iloc[0],
+                "mean_latency_ms": float(group["e2e_ms"].astype(float).mean()),
+            }
+        )
+
+    reduced = pd.DataFrame(per_run)
+    out: list[dict[str, float]] = []
+    # Rounded because a profile's rho is a property of its bucket mix and lands on the same
+    # value every run, up to floating point. Runs of one profile must group together.
+    for rho, group in reduced.groupby(reduced["rho"].round(3)):
+        by_policy = group.groupby("policy")["mean_latency_ms"].mean().to_dict()
+        if not set(CELLS) <= set(by_policy):
+            continue
+        out.append(
+            {
+                "rho": float(rho),
+                # Positive when calibration helps: blind minus aware.
+                "queue_blind_gain_ms": by_policy["round_robin"] - by_policy["static_weighted"],
+                "queue_aware_gain_ms": by_policy["jsq"] - by_policy["wjsq"],
+                "interaction_ms": h1_interaction(by_policy),
+            }
+        )
+    if len(out) < 2:
+        raise ValueError(
+            "the phase figure needs the full 2x2 at two or more prompt-to-output ratios; "
+            f"this set has it at {len(out)}. Run the summarisation, balanced and generation "
+            "profiles rather than one workload shape"
+        )
+    return sorted(out, key=lambda point: point["rho"])
+
+
+def phase_advantage(frame: pd.DataFrame, out_dir: Path) -> Path:
+    """The elevation's headline: how the queue-versus-calibration trade moves with workload.
+
+    Two curves rather than the interaction term alone, because the interaction is a
+    difference of differences and a reader cannot see which side moved. The gap between the
+    curves at a given rho IS the interaction, so the claim stays readable.
+
+    rho is on a log axis for the same reason R is: the profiles span it as multiples, from
+    generation-heavy at 0.5 to summarisation-heavy at about 14.
+    """
+    curve = phase_advantage_curve(frame)
+    rho = [point["rho"] for point in curve]
+
+    fig, ax = plt.subplots(figsize=(6.5, 4.2))
+    ax.plot(
+        rho,
+        [point["queue_blind_gain_ms"] for point in curve],
+        marker="o",
+        label="queue-blind (round_robin \u2192 static_weighted)",
+    )
+    ax.plot(
+        rho,
+        [point["queue_aware_gain_ms"] for point in curve],
+        marker="s",
+        label="queue-aware (jsq \u2192 wjsq)",
+    )
+    ax.axhline(0.0, linestyle="--", color="#999999", linewidth=1)
+    _ratio_axis(ax, rho, "prompt-to-output ratio  (decode-heavy \u2190\u2192 prompt-heavy)")
+    ax.set_ylabel("latency saved by calibration (ms)")
+    ax.set_title("What calibration buys, against workload shape")
+    ax.legend(fontsize=9)
+    ax.margins(y=0.15)
+    ax.grid(alpha=0.3)
+    return _finish(fig, frame, out_dir, "phase_advantage")
 
 
 def mpr2_range(frame: pd.DataFrame, out_dir: Path) -> Path:
@@ -1016,6 +1124,11 @@ def h3_staleness(frame: pd.DataFrame, out_dir: Path) -> Path:
 # rather than beside the first one because the hypothesis figures below it are the
 # study's actual output, and a registry that lists three characterisation plots reads
 # like the whole set.
+# `phase-advantage` is deliberately absent below. It is written and tested, and it needs
+# `prompt_len` / `output_len`, which every real C-5 runset carries and the generic sweep
+# fixture in the tests does not. Registering it therefore needs one line added to
+# `test_every_registered_figure_name_resolves`, next to the skip that `validation` already
+# has for the same reason, and that is a test change rather than a source change.
 FIGURES = {
     "latency-vs-load": latency_vs_load,
     "throughput-vs-load": throughput_vs_load,

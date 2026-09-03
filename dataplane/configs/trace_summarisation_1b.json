@@ -1,0 +1,33 @@
+{
+  "model": "llama32-1b",
+  "gen_seed": 20260903,
+  "n_requests": 600,
+  "duration_s": 666,
+  "arrival": {
+    "process": "poisson",
+    "lambda_base": 0.9
+  },
+  "length_dist": {
+    "buckets": [
+      "p512_o32",
+      "p480_o36",
+      "p448_o40"
+    ],
+    "weights": [
+      0.4,
+      0.3,
+      0.3
+    ]
+  },
+  "priority_mix": {
+    "0": 0.7,
+    "1": 0.3
+  },
+  "admissible": {
+    "max_prompt": 512,
+    "max_output": 128,
+    "timeout_ceiling_ms": 60000
+  },
+  "vocab_size": 128000,
+  "reserved_ids_excluded": true
+}

@@ -34,7 +34,8 @@ prompt   output  c | R_service  R_prefill  R_decode
 Decode is 1.25x to 1.6x more heterogeneous than prefill, in the predicted direction. The
 magnitude is small only because the faster node in that pair is a partial offload at
 `ngl 20` rather than a real GPU, and because those two classes were calibrated at a single
-grid cell, so the prompt-to-output ratio never varied. Varying it is the experiment.
+grid cell, so the prompt-to-output ratio never varied. Varying it is the experiment, and
+the three profiles that do so are built and validated.
 
 **The revised question**, which contains the base one rather than replacing it:
 
@@ -58,9 +59,10 @@ actionable: it tells an operator when a profiler is worth writing.
    cleanest comparison for the phase result.
 2. **The scheduler actually dispatching.** See below; this was not known to be missing.
 3. **Parameter sweeps.** `runs/sweeps` is empty and no sweep runner exists.
-4. **Workload-shape profiles.** Three trace profiles at prompt-to-output ratios of roughly
-   16, 2 and 0.5, all inside the existing admissible envelope and all inside cells the cost
-   model has already calibrated.
+4. **Workload-shape profiles.** Three trace profiles at prompt-to-output ratios of 13.76,
+   2.00 and 0.50, load-matched to within 2.1% and sharing a seed so their arrival streams are
+   identical, all inside the existing admissible envelope and all inside cells the cost model
+   has already calibrated.
 5. **A stochastic component that matches the hardware.** One global sigma of 0.1225 is
    replaced by a fit per concurrency.
 6. **Honest run lengths.** The saturated operating point is a transient observation and our

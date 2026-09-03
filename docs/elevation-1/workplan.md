@@ -123,16 +123,35 @@ drawn from them has to say so.
 
 **Divyansh. The elevation. Needs W4.**
 
-Three trace profiles at prompt-to-output ratios of roughly 16, 2 and 0.5, run through the
-sweep across policies and R. No recalibration and no envelope change: bucket ids parse by
-convention into exact length pairs, so profiles are pure configuration, and all three land
-in cells the cost model has already measured.
+Three trace profiles at prompt-to-output ratios of 13.76, 2.00 and 0.50, run through the
+sweep across policies and R. Built and validated:
+
+- `dataplane/configs/trace_summarisation_1b.json`
+- `dataplane/configs/trace_balanced_1b.json`
+- `dataplane/configs/trace_generation_1b.json`
+
+600 requests over 666 s at lambda 0.9, the same as the anchors. They share a `gen_seed`, so
+arrival offsets and priorities are byte-identical across the three and only the lengths
+move; the comparison is paired. Mean predicted service time varies by 2.1% across them, so
+offered load is held constant while the ratio swings 27x. Section 7 of
+[`evidence.md`](evidence.md) has the construction.
+
+`tools/phase_ratio.py` is the analysis. It reports R on service, on prefill and on decode
+per shared cost-model cell, and, given trace configs, the R each profile sees weighted by
+its bucket mix. It defaults to concurrency 1 and warns above it, because our calibration
+grid fires requests together and the measured prefill at higher concurrency carries harness
+contention rather than hardware.
+
+Running it today against the two 8B classes returns one cell and no profile can be priced,
+because those classes were calibrated at a single grid point. That is the concrete reason
+W2 calibrates the CPU node on the full 24-cell grid: it is what makes this table exist.
 
 The prediction under test is that queue depth substitutes for calibration on prompt-heavy
 work and fails on decode-heavy work.
 
-Each generated trace's hash goes into its run config, because the generator's git sha sits
-inside the hashed header and the hash therefore moves with every commit.
+Trace identity comes from each run's manifest rather than from a number written down here,
+because the generator stamps its git sha inside the hashed header and the sha256 therefore
+moves with every commit.
 
 ---
 

@@ -106,7 +106,7 @@ Phase share of service time at concurrency 1:
 suppressed by two things we can fix. The faster node in that pair is a partial offload, not
 a real GPU, and both 8B classes were calibrated at one grid cell so the prompt-to-output
 ratio never varied. A CPU node running the 1B model gives a full-GPU-versus-full-CPU pair,
-and three workload profiles give the ratio a 32x swing.
+and three workload profiles give the ratio a 27x swing.
 
 The residual column is the engine's own unattributed time. It is kept rather than
 distributed across the two phases, because distributing it would invent an attribution the
@@ -188,15 +188,9 @@ censored. Widening costs a calibration grid pass rising from 3.8 to 21 minutes, 
 saturated node throughput from 2.55 requests per second at (128, 64) to 0.23 at (2048, 256),
 which lengthens every run in the sweep proportionally.
 
-We are not widening now, because the three workload profiles reach a 32x swing in the
-prompt-to-output ratio entirely inside the existing envelope, and every corner they touch is
-already calibrated:
-
-| profile | bucket | ratio | cost model cell |
-|---|---|---|---|
-| summarisation | `p512_o32` | 16 | (257,512) x (1,64), calibrated |
-| balanced | `p128_o64` | 2 | (1,128) x (1,64), calibrated |
-| generation | `p64_o128` | 0.5 | (1,128) x (65,128), calibrated |
+We are not widening now, because the three workload profiles reach a 27x swing in the
+prompt-to-output ratio entirely inside the existing envelope, and every bucket they use
+lands in a cell the cost model has already measured. Section 7 has their construction.
 
 One thing to fix if the envelope is ever widened: the 1B snapshot declares admissibility to
 2048 prompt and 256 output while only 512 and 128 were ever sampled. That gap used to be
@@ -226,7 +220,43 @@ Both are honest. Reporting its p99 without saying so is not.
 
 ---
 
-## 7. What the fixes did to F-23
+## 7. The workload-shape profiles are load-matched by construction
+
+**Why it matters.** If the three profiles differ in mean service time, then varying the
+prompt-to-output ratio also varies offered load, and the phase result is confounded with the
+thing it is supposed to be measured against.
+
+**Method.** The buckets were chosen against the cost model rather than picked for
+roundness. Each profile is three buckets that all land in a single C-3 cell, so the
+simulator prices the profile exactly, and the hardware-side cost was matched using the
+measured 1.36 ms per prompt token and 6.9 ms per output token.
+
+| profile | buckets | mean rho | C-3 cell | cell service | prefill share | predicted hardware |
+|---|---|---|---|---|---|---|
+| summarisation | p512_o32, p480_o36, p448_o40 | 13.76 | (257,512) x (1,64) | 1160.3 ms | 60.0% | 903 ms |
+| balanced | p192_o96, p176_o88, p208_o104 | 2.00 | (129,256) x (65,128) | 1248.1 ms | 27.3% | 922 ms |
+| generation | p60_o120, p64_o128, p56_o112 | 0.50 | (1,128) x (65,128) | 1064.0 ms | 16.5% | 911 ms |
+
+Mean predicted service time varies by 2.1% across the three while the ratio moves 27x and
+the prefill share moves 3.6x.
+
+**The comparison is paired.** All three configs carry the same `gen_seed`, and the generator
+draws arrivals and lengths from separate streams, so the three traces have byte-identical
+arrival offsets and byte-identical priority assignments. Verified over all 600 requests.
+Only the lengths differ, which is the whole point.
+
+**What it decides.** Offered load in requests per second means the same thing in all three
+profiles, so any difference in the queue-versus-calibration gap is attributable to workload
+shape. Every bucket also sits inside the existing 512 and 128 envelope and inside a cell the
+cost model has already measured, so no recalibration and no envelope change is needed.
+
+One caveat on identity: the generator stamps its git sha inside the hashed header, so a
+trace's sha256 moves with every commit even when the request stream does not. The identity
+that matters is the one each run manifest records, not one written down here.
+
+---
+
+## 8. What the fixes did to F-23
 
 Nothing below was fitted to the tolerance.
 

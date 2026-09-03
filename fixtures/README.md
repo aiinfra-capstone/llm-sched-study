@@ -18,6 +18,15 @@ Emit C-4-conformant records from both. `uv run contracts/check.py` validates the
 examples; point it at your fixture output too. If A's fake scheduler and B's fake worker
 both emit records that pass, the two halves will join when they meet for real.
 
+**What a run driven by the fake scheduler cannot tell you.** It writes no scheduler log, on
+purpose, so `chosen_node`, `decide_us`, `chosen_queue_depth`, `best_alt_node` and
+`routing_error_ms` are null in every joined record it produces, and the `chosen_node` in its
+ack is the worker's endpoint string rather than a node id. It also selects by blind rotation,
+so it cannot carry a policy comparison: MPR-2 is the four-policy decomposition, and a
+rotation has no policy to decompose. Every hardware run committed to date went through it,
+which is why the whole decision-derived half of C-5 is empty so far. The real scheduler
+replaces it and is tracked in issue #14.
+
 Delete these after Week 3. They are not part of the instrument, and a fake worker that
 survives into the measurement weeks is a fake worker somebody will eventually run a
 calibration against by accident.

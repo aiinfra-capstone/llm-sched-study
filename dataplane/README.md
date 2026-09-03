@@ -470,6 +470,42 @@ C-1 stubs are generated from `contracts/scheduling.proto` on first import of
 `dataplane.proto` and are never committed — the proto is the contract, the stubs are a build
 artifact, and a committed copy is a second thing that can disagree with it.
 
+### The config set
+
+Everything a determination needs is a committed config, so a run is reproducible from the
+repo rather than from a shell history. Four groups.
+
+**Calibration.** `calibration_1b*.json` and `calibration_8b*.json`, one per node class, plus
+`calibration_smoke.json` for timing a single cell before committing to a full grid.
+`calibration_1b_cpu.json` is the second pool node and its grid edges and sampled cells are
+byte-identical to `calibration_1b_anchorgrid.json`. That is deliberate and load-bearing:
+`r_range.synthesizable` refuses to compute a ratio between two classes that share no
+`(prompt_bucket, output_bucket, concurrency)` cell, and mismatched grids already cost this
+study 20% of its ratio once, when the fast node was calibrated at prompt 256 against the
+slow one at 64.
+
+**Pool topology.** `pool_1b.json` is the single-host pool; `pool_1b_lan.json` adds the
+second physical node. Both run the same model and quant, because F-9 holds those constant
+across a pool and `launch.build_nodes` refuses otherwise; heterogeneity comes from `ngl`,
+which is F-9a. `preflight_lan.json` carries the same two nodes plus the LAN addresses.
+
+**Traces.** `trace_anchor_1b.json` is the F-23 validation trace. The three workload-shape
+profiles are `trace_summarisation_1b.json`, `trace_balanced_1b.json` and
+`trace_generation_1b.json`, at prompt-to-output ratios of 13.76, 2.00 and 0.50.
+
+The three profiles are a controlled comparison, not three arbitrary mixes. Each is three
+buckets that all land in a single C-3 cell, so the simulator prices the profile exactly, and
+the buckets were chosen so mean predicted service time varies by 2.1% across the set while
+the ratio moves 27x. All three carry the same `gen_seed`, and `gen_trace` draws arrivals and
+lengths from separate streams, so the three traces have byte-identical arrival offsets and
+byte-identical priorities and only the lengths differ. Offered load therefore means the same
+thing in all three. `docs/elevation-1/evidence.md` section 7 has the construction.
+
+**Anchors.** `anchors_1b.json` names the trace, its sha256, the pool and the four rate
+scales. A trace's sha256 moves with every commit because `gen_trace` stamps its git sha
+inside the hashed header, so `tools/ensure_trace.py` regenerates and reports rather than
+failing CI on a hash that was always going to drift.
+
 ## `pipeline/` — F-19, §5.5
 
 A **pure function** of `(manifest, three log files)` → one Parquet file. No network, no

@@ -19,6 +19,33 @@ C-1 and C-3 are the only true *runtime* couplings. C-2 and C-4–C-6 are file fo
 which means they can be validated offline against fixture files — and should be, before
 either side is finished.
 
+## Additive changes since the freeze
+
+Three fields were added in September 2026, during elevation 1. All three are **optional**,
+all three are absent on every artifact written before them, and in every case absent means
+*not measured* rather than zero. A reader that does not know about them is unaffected, which
+is why these went in as additions rather than through the re-scoping ritual above. Anything
+that changes or removes an existing field still needs that ritual.
+
+| Contract | Field | Why |
+|---|---|---|
+| C-3 | `entries[].prefill_ms_mean`, `entries[].decode_ms_mean` | Prefill and decode do not answer to concurrency the same way, and a consumer holding only `service_ms_mean` cannot tell them apart. The simulator needs the split to avoid stretching a request's prompt evaluation when the batch changes around it. |
+| C-6 | `transport_overhead` | What a client pays on top of the engine's own span in this environment, as `{mean_ms, sd_ms, n_samples, source, measured_from}`. Measured per environment, never assumed. |
+
+Two things a reader of these fields has to know:
+
+* `prefill_ms_mean + decode_ms_mean` is deliberately **less than** `service_ms_mean`. The
+  difference is the engine's own unattributed residual, and splitting it across the two
+  phases would invent an attribution the backend never reported.
+* `prefill_ms_mean` at concurrency above 1 carries contention between simultaneous prefills
+  that the calibration harness creates by firing its requests together. A Poisson workload
+  does not synchronise arrivals that way. The `c = 1` row is the uncontended cost; the rest
+  describes the harness as much as the hardware. The field's own schema description says so.
+
+Both are documented where they are produced: C-3 in
+[`cost_models/README.md`](cost_models/README.md), C-6 in
+[`../docs/elevation-1/evidence.md`](../docs/elevation-1/evidence.md).
+
 ## Checking conformance
 
 ```bash

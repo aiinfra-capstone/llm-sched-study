@@ -170,6 +170,17 @@ low) and under-predicts by 50 to 63% at one and two, where the mean is dragged b
 tail a table of means cannot carry. That is the shape of the error, and it is worth saying
 because a scale correction cannot fix a shape.
 
+**The heterogeneity ratio is not one number.** Prefill is compute-bound and decode is
+memory-bandwidth-bound, and a machine does not lose those two capabilities at the same rate,
+so how heterogeneous a pool looks depends on the shape of the request. On the only
+same-model pair we currently own, CPU against a partially offloaded GPU, R is 1.75x on
+service time but 1.46x on prefill and 1.83x on decode, and the gap between the two phases
+widens with concurrency. That is what makes this a question about language-model serving
+rather than a queueing question with language models attached, and chasing it is the whole
+of [elevation 1](docs/elevation-1/). The magnitude here is small because that GPU node is a
+partial offload and because both classes were calibrated at a single grid cell, so the
+prompt-to-output ratio never varied. Varying it is the experiment.
+
 **The admissible envelope is `prompt ≤ 512, output ≤ 128`**, with the load band at
 **1.03 to 1.30 req/s** on a one-node pool.
 
@@ -392,7 +403,8 @@ contracts/     The interface between the two halves. Six frozen artifacts, plus 
                committed cost-model snapshot series the simulator reads.
 dataplane/     Workers, calibration campaign, harness, results pipeline.   (Python)
 controlplane/  Scheduler, the five policies, discrete-event simulator.     (Java)
-tools/         Machine survey, LAN bring-up, pool install.
+tools/         Machine survey, LAN bring-up, pool install; the cross-seam CI checks;
+               and the analyses that are not console entry points.
 fixtures/      Fake scheduler and fake worker, so neither half blocks on the other.
 docs/          Base-scope spec and record, the elevation-1 scope, UML figure set.
 patches/       Changes to the pinned engine, with the reasoning that justifies them.
@@ -464,8 +476,18 @@ Week 1.
 | 2 | Calibration campaign, τ and the variance envelope, the synthesizable *R* range. **MPR-1.** | ✅ |
 | 3 | All five policies behind one config value, admissible set, load band. **Feature freeze.** | ✅ |
 | 4 | Pipeline and figures; simulator sharing policy code, validated against hardware. | ✅ F-23 4/4 |
-| 5 | Sweeps: *R* × load × staleness × policy. Hypotheses tested. | figures ✅ |
+| 5 | Sweeps: *R* × load × staleness × policy. Hypotheses tested. | figure code ✅, no sweep data yet |
 | 6 | Analysis, threats to validity, positioning, writeup. Engine-gap measurement. | |
+
+Week 5 is marked deliberately. Every hypothesis figure is written and tested, and
+`runs/sweeps` is still empty, so the figures have never been drawn from a sweep. Saying
+"figures ✅" without that qualifier is the kind of claim a reviewer is right to check.
+
+After Week 4 we put the finished system through a hostile scrutiny pass, fixed what it found,
+and added scope on top. That work is [elevation 1](docs/elevation-1/): what we are adding,
+the measurements behind each decision, and who owns what through to October. The three open
+items are a second physical machine, the sweeps, and a live scheduler that dispatches, which
+turned out to be missing rather than merely untested.
 
 ## Team
 

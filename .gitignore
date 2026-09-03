@@ -24,7 +24,7 @@ traces/
 runs/**
 results/
 *.parquet
-figures/out/
+figures/
 
 # Two exceptions, and both are things another person has to be able to read.
 #

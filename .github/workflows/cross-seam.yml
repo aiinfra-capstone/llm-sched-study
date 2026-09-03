@@ -54,7 +54,7 @@ jobs:
         run: |
           echo "::notice title=determinism::Not implemented yet (due Week 3-4)."
           echo "Same trace + same seed + deterministic DES service times"
-          echo "=> assert identical dispatch sequence. See docs/week1-freeze-checklist.md."
+          echo "=> assert identical dispatch sequence. See docs/base_scope/week1-freeze-checklist.md."
 
   validation:
     name: "F-23 — simulator agrees with hardware"

@@ -394,7 +394,7 @@ dataplane/     Workers, calibration campaign, harness, results pipeline.   (Pyth
 controlplane/  Scheduler, the five policies, discrete-event simulator.     (Java)
 tools/         Machine survey, LAN bring-up, pool install.
 fixtures/      Fake scheduler and fake worker, so neither half blocks on the other.
-docs/          Spec, decision records, UML figure set.
+docs/          Base-scope spec and record, the elevation-1 scope, UML figure set.
 patches/       Changes to the pinned engine, with the reasoning that justifies them.
 runs/          Measurement output. Only manifests and determinations are versioned.
 ```
@@ -447,9 +447,10 @@ uv run contracts/check.py --validate runs/exp/jsq_r1/scheduler_jsq_r1.jsonl
 
 | | |
 |---|---|
-| [Requirements specification](docs/scheduling-requirements-spec.pdf) | Scope, hypotheses, F-1 to F-24, non-goals, threats to validity, the MPR ladder. The authority for everything else. |
-| [Split and interface contract](docs/two-person-split-and-interface-contract.md) | Where the seam is, the six artifacts across it, and the failure modes to watch. |
-| [Week-1 freeze checklist](docs/week1-freeze-checklist.md) | What had to be true before the contract froze, and the record of every week since. |
+| [Requirements specification](docs/base_scope/scheduling-requirements-spec.pdf) | Scope, hypotheses, F-1 to F-24, non-goals, threats to validity, the MPR ladder. The authority for everything else. |
+| [Split and interface contract](docs/base_scope/two-person-split-and-interface-contract.md) | Where the seam is, the six artifacts across it, and the failure modes to watch. |
+| [Week-1 freeze checklist](docs/base_scope/week1-freeze-checklist.md) | What had to be true before the contract froze, and the record of every week since. |
+| [Elevation 1](docs/elevation-1/) | What a scrutiny pass on the finished Week-4 system changed: the scope delta, the measurements behind it, and the workplan to October. |
 | [UML figure set](docs/uml/FIGURES.md) | Twelve figures with captions and the requirements each discharges. |
 
 ## Project status

@@ -1,6 +1,6 @@
 # UML Figure Set — Scheduling LLM Inference Under Uncalibrated Heterogeneity
 
-Twelve figures covering the [frozen specification](../scheduling-requirements-spec.pdf). Each entry
+Twelve figures covering the [frozen specification](../base_scope/scheduling-requirements-spec.pdf). Each entry
 gives a draft caption, the requirements it discharges, and the `\includegraphics` line
 for LaTeX.
 

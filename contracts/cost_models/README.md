@@ -84,4 +84,4 @@ non-stationarity lives on the CPU node**, which is the class its heterogeneity i
 Grid coverage differs per class and bounds what the admissible set can claim — the CPU class
 was calibrated on one `(prompt, output)` bucket, which is why the 8B pool intersects to
 `prompt ≤ 128, output ≤ 64`. See [`runs/admissible/`](../../runs/admissible) and
-`docs/week1-freeze-checklist.md`.
+`docs/base_scope/week1-freeze-checklist.md`.

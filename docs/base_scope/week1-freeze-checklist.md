@@ -483,7 +483,7 @@ with no slack, not on merit.
       that was correct.
 
       The 500 was a bug in llama.cpp's `/completion` path, not a fact about the workload
-      ([`patches/`](../patches)). With it fixed the anchor campaign returns **200/200 ok at
+      ([`patches/`](../../patches)). With it fixed the anchor campaign returns **200/200 ok at
       every operating point**, and the strict rule is the one that belongs: a replay runs
       *inside* the admissible set, where by construction nothing should fail, so a failure
       means the run is not measuring what it claims. The F-15 cliff is characterized from

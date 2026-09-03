@@ -53,5 +53,10 @@ docs/uml/out/png/
 docs/uml/out/pdf/
 docs/uml/.plantuml/
 
+# Text extractions of the spec PDF. The .docx is edited off-machine and the PDF is the
+# single authority; a committed text mirror went stale inside one cycle the last time.
+docs/spec_extracted.txt
+docs/*_extracted.txt
+
 # protoc output — regenerated from contracts/scheduling.proto on import
 dataplane/src/dataplane/_generated/

@@ -29,6 +29,14 @@ from dataplane.figures import plots
 
 TAU_S = 69.5  # the Week-2 measurement on the CPU class, used as a stated input
 
+# (prompt, output) pairs matching the committed profiles, so the ratios under test are the
+# ones the traces actually produce rather than round numbers chosen here.
+SHAPES = {"generation": (60, 120), "balanced": (192, 96), "summarisation": (512, 32)}
+
+# The same three, in the order the generic sweep rotates through them. One source of truth,
+# so a profile added to SHAPES cannot silently miss the fixture that exercises the registry.
+_SHAPE_ROTATION = tuple(SHAPES.values())
+
 
 def _requests(
     *,
@@ -41,8 +49,16 @@ def _requests(
     vehicle: str = "hardware",
     decided: bool = True,
     warmup: bool = False,
+    prompt_len: int = 192,
+    output_len: int = 96,
 ) -> list[dict[str, Any]]:
-    """One run's worth of C-5 rows, in the shape `runset` writes them."""
+    """One run's worth of C-5 rows, carrying the columns the figures read.
+
+    Not all 27 of C-5's columns: the ones no figure touches are left out so that a row
+    reads as the inputs under test. `prompt_len` and `output_len` are here because a
+    figure keyed on workload shape needs them and they default to the balanced profile,
+    which keeps every fixture that does not care about shape reading as it did.
+    """
     return [
         {
             "run_id": run_id,
@@ -57,6 +73,8 @@ def _requests(
             "service_ms": 400.0,
             "queue_wait_ms": 5.0,
             "intended_offset_s": float(i),
+            "prompt_len": prompt_len,
+            "output_len": output_len,
             # Two nodes, so the utilization figure has work to attribute. C-5 carries node
             # identity only here, through the scheduler's choice.
             "chosen_node": "n1" if i % 3 else "n2",
@@ -86,10 +104,16 @@ def _sweep_frame(
     advantage = {1.0: 1.0, 2.0: 25.0, 8.0: 5.0}
     rows: list[dict[str, Any]] = []
     run = 0
-    for r_value in r_values:
-        for stale in staleness:
+    for i, r_value in enumerate(r_values):
+        for j, stale in enumerate(staleness):
             blind = 100.0 + 10.0 * r_value
             aware = blind - advantage[r_value]
+            # Workload shape rotates on the diagonal so that it is balanced against both
+            # crossed factors: each shape appears once at every R and once at every
+            # staleness. Pinning it to one axis instead would let a figure keyed on shape
+            # pick up an R effect, and H2's R effect pick up a shape one, from a fixture
+            # that was only ever meant to vary two things.
+            prompt_len, output_len = _SHAPE_ROTATION[(i + j) % len(_SHAPE_ROTATION)]
             for policy in policies:
                 run += 1
                 base = aware if policy in plots.HARDWARE_AWARE else blind
@@ -102,6 +126,8 @@ def _sweep_frame(
                     staleness_s=stale,
                     latency_ms=base * (1.0 + stale / 500.0),
                     decided=decided,
+                    prompt_len=prompt_len,
+                    output_len=output_len,
                 )
     return pd.DataFrame(rows)
 
@@ -397,11 +423,6 @@ def test_all_four_of_the_specs_dependent_variables_are_drawable() -> None:
 
 # --------------------------------------------------------------------------------------
 # phase_advantage — what calibration buys, against workload shape
-
-
-# (prompt, output) pairs matching the committed profiles, so the ratios under test are the
-# ones the traces actually produce rather than round numbers chosen here.
-SHAPES = {"generation": (60, 120), "balanced": (192, 96), "summarisation": (512, 32)}
 
 
 def _phase_frame(

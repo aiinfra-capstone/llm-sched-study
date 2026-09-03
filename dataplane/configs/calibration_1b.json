@@ -57,7 +57,7 @@
   },
   "admissibility": {
     "max_prompt": 2048,
-    "max_output": 256,
+    "max_output": 128,
     "timeout_ceiling_ms": 60000
   }
 }

@@ -361,6 +361,11 @@
           "type": "integer",
           "minimum": 0,
           "description": "F-9a: throttling MUST be applied to distinct physical machines. Co-located logical nodes contend for PCIe, memory bandwidth and cache, which would reintroduce as contention the confound F-9 (single engine) removes. Count of nodes sharing a `host` with another node. MUST be 0 for a valid run."
+        },
+        "clock_unsynced_hosts": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Hosts in `clock_sync.hosts` whose time daemon reported no discipline. Optional, and absent means the run predates the field or had no clock block at all.\\n\\nReported, never fatal. The pipeline acts only on the rate error, since a constant offset cancels in a difference of single-host durations, and 100 ppm on a 900 ms request is 0.09 ms. An unsynchronised host costs the evidence that the durations were comparable, not the durations themselves."
         }
       }
     }

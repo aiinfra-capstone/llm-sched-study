@@ -342,3 +342,66 @@ def test_a_wrong_trace_hash_stops_the_run_before_t0(trace, tmp_path, monkeypatch
                 str(tmp_path),
             ],
         )
+
+
+def _colocated_nodes_file(tmp_path: Path) -> Path:
+    """The same pool, but with two of its members on one physical host.
+
+    F-9a exists because two logical nodes sharing a host contend for the same memory
+    bandwidth and the same GPU, which reintroduces exactly the confound the study is trying
+    to isolate. The launcher refuses to *start* such a pool; this is the case where someone
+    drove `replay --nodes` directly and the manifest has to say what actually ran.
+    """
+    sample = json.loads(
+        (
+            Path(__file__).resolve().parents[2] / "contracts/examples/manifest.sample.json"
+        ).read_text()
+    )
+    nodes = [n for n in sample["nodes"] if n.get("role", "pool") == "pool"][:2]
+    assert len(nodes) == 2, "the C-6 example needs two pool nodes for this test to mean anything"
+    for n in nodes:
+        n["host"] = "one-box"
+    path = tmp_path / "colocated.json"
+    path.write_text(json.dumps(nodes))
+    return path
+
+
+def test_a_colocated_pool_is_counted_and_fails_the_run(
+    trace, scheduler, tmp_path, monkeypatch, schema, capsys
+) -> None:
+    """`replay --nodes` used to write colocated_nodes: 0 for any pool at all.
+
+    Only `main()` ever sees the node block, so `replay()` cannot count this and the manifest
+    came out `valid: true` for a pool that was not admissible. The exit code has to agree
+    with the manifest it sits beside, because that is what a sweep script reads.
+    """
+    path, sha = trace
+    out = tmp_path / "runs"
+
+    rc = _main(
+        monkeypatch,
+        [
+            str(path),
+            "--scheduler",
+            scheduler(),
+            "--run-id",
+            "run_colo",
+            "--sha256",
+            sha,
+            "--bind",
+            "127.0.0.1:0",
+            "--advertise",
+            "127.0.0.1",
+            "--out",
+            str(out),
+            "--nodes",
+            str(_colocated_nodes_file(tmp_path)),
+        ],
+    )
+
+    man = json.loads((out / "run_colo" / "manifest.json").read_text())
+    assert_conforms(schema("manifest"), [man], "manifest")
+    assert man["validity"]["colocated_nodes"] == 2
+    assert man["validity"]["valid"] is False
+    assert rc == 1
+    assert "colocated node(s)" in capsys.readouterr().out

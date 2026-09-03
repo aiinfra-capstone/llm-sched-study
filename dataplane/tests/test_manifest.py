@@ -18,6 +18,7 @@ from dataplane.harness.manifest import (
     build,
     config_hash,
     git_shas,
+    unsynced_hosts,
 )
 
 CONTRACTS = Path(__file__).resolve().parents[2] / "contracts"
@@ -266,3 +267,85 @@ def test_the_engine_gap_example_is_a_shape_i_can_emit(schema) -> None:
     man = _manifest(nodes=sample["nodes"])
     errors = list(schema("manifest").iter_errors(man))
     assert not errors, [e.message for e in errors]
+
+
+def test_an_unmeasured_clock_is_not_a_failed_one() -> None:
+    """Absent means nobody looked, and a single-host run has no clock block by design.
+
+    Counting that as an unsynchronised host would make every single-host run in the study
+    look suspect, which is the opposite of what the field is for.
+    """
+    assert unsynced_hosts(None) == 0
+    assert unsynced_hosts({}) == 0
+    assert unsynced_hosts({"reference": "box-a", "hosts": {}}) == 0
+
+
+def test_unsynchronised_hosts_are_counted_but_do_not_fail_the_run() -> None:
+    """The rate error is the only clock term the pipeline acts on, and it is sub-millisecond.
+
+    A constant offset cancels in a difference of single-host durations, and there is no
+    cross-host subtraction anywhere in C-4 or C-5. So an undisciplined host costs the
+    *evidence* that durations were comparable, not the durations. It is recorded, not fatal.
+    """
+    block = {
+        "reference": "box-a",
+        "hosts": {
+            "box-a": {"method": "chrony", "synchronised": True, "rate_error_ppm": 1.2},
+            "box-b": {"method": "chrony", "synchronised": False},
+            # No `synchronised` key at all: a host that never reported is not a host that
+            # reported success, so it counts against us rather than for us.
+            "box-c": {"method": "none"},
+        },
+    }
+    assert unsynced_hosts(block) == 2
+
+    validity = Validity(clock_unsynced_hosts=2)
+    assert validity.valid is True
+    assert validity.to_dict()["clock_unsynced_hosts"] == 2
+    assert validity.reasons() == []
+
+
+def test_a_measured_clock_block_travels_on_the_manifest() -> None:
+    """C-6 carries the measurement so the claim can be checked rather than taken."""
+    jsonschema = pytest.importorskip("jsonschema")
+    block = {
+        "reference": "box-a",
+        "measured_unix": 1788376140,
+        "hosts": {
+            "box-a": {"method": "chrony", "synchronised": True, "rate_error_ppm": 0.4},
+            "box-b": {"method": "chrony", "synchronised": True, "rate_error_ppm": -0.3},
+        },
+        "max_abs_offset_ms": 1.4,
+        "max_rate_error_ppm": 0.8,
+        "ok": True,
+    }
+    man = build(
+        run_id="run_0009",
+        config=CONFIG,
+        trace_path="traces/t.jsonl",
+        trace_sha256="0" * 64,
+        validity=Validity(clock_unsynced_hosts=unsynced_hosts(block)),
+        nodes=_nodes(),
+        clock_sync=block,
+    )
+    assert man["clock_sync"]["reference"] == "box-a"
+    assert man["validity"]["clock_unsynced_hosts"] == 0
+
+    validator = jsonschema.Draft202012Validator(
+        json.loads((CONTRACTS / "schemas" / "manifest.schema.json").read_text())
+    )
+    assert not list(validator.iter_errors(man))
+
+
+def test_a_manifest_with_no_clock_measurement_omits_the_block_entirely() -> None:
+    """A zeroed block would read as "the clocks agreed". Absence is the honest record."""
+    man = build(
+        run_id="run_0010",
+        config=CONFIG,
+        trace_path="traces/t.jsonl",
+        trace_sha256="0" * 64,
+        validity=Validity(),
+        nodes=_nodes(),
+    )
+    assert "clock_sync" not in man
+    assert man["validity"]["clock_unsynced_hosts"] == 0

@@ -285,3 +285,101 @@ def test_a_rate_scale_of_zero_would_replay_a_trace_that_never_arrives(tmp_path, 
                 rate_scale=0.0,
             )
         )
+
+
+def test_cli_records_the_measured_clock_on_every_anchor(
+    tmp_path, trace, monkeypatch, capsys
+) -> None:
+    """A multi-host anchor set has to carry the proof its clocks were disciplined.
+
+    `manifest.build` has always accepted the block; nothing ever passed it, so every
+    two-host run would have recorded an unevidenced claim that the hosts ticked together.
+    The count of undisciplined hosts rides along in `validity`, where it is reported and
+    deliberately not fatal.
+    """
+    path, sha = trace
+    header, _ = gen_trace.load(path)
+    out_root = tmp_path / "clocked"
+    config_path = tmp_path / "anchors.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "trace": str(path),
+                "trace_sha256": sha,
+                "scheduler": "127.0.0.1:50051",
+                "nodes": NODES,
+                "settle_s": 0.0,
+                "out_root": str(out_root),
+                "points": [
+                    {"name": "light", "rate_scale": 1.0},
+                    {"name": "mid", "rate_scale": 1.6},
+                    {"name": "heavy", "rate_scale": 2.4},
+                ],
+            }
+        )
+    )
+    clock_path = tmp_path / "clock_sync.json"
+    clock_path.write_text(
+        json.dumps(
+            {
+                "reference": "fedora",
+                "measured_unix": 1788376140,
+                "hosts": {
+                    "fedora": {"method": "chrony", "synchronised": True, "rate_error_ppm": 0.4},
+                    "cpu1": {"method": "none", "synchronised": False},
+                },
+                "max_abs_offset_ms": 2.1,
+                "max_rate_error_ppm": 0.4,
+                "ok": False,
+            }
+        )
+    )
+
+    good, _ = _fake_replay(header)
+    monkeypatch.setattr(anchors.replay_mod, "replay", good)
+    assert anchors.main([str(config_path), "--clock-sync", str(clock_path)]) == 0
+    assert "3/3 anchors valid" in capsys.readouterr().out
+
+    manifests = sorted(out_root.glob("*/manifest.json"))
+    assert len(manifests) == 3
+    for m in manifests:
+        man = json.loads(m.read_text())
+        assert man["clock_sync"]["reference"] == "fedora"
+        assert man["validity"]["clock_unsynced_hosts"] == 1
+        # One host with no discipline does not sink the run: the only clock term the
+        # pipeline acts on is the rate error, and it is sub-millisecond on a 900 ms request.
+        assert man["validity"]["valid"] is True
+
+
+def test_without_the_flag_an_anchor_manifest_carries_no_clock_claim(
+    tmp_path, trace, monkeypatch
+) -> None:
+    """Single-host runs are the common case, and silence is the correct record for them."""
+    path, sha = trace
+    header, _ = gen_trace.load(path)
+    out_root = tmp_path / "unclocked"
+    config_path = tmp_path / "anchors.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "trace": str(path),
+                "trace_sha256": sha,
+                "scheduler": "127.0.0.1:50051",
+                "nodes": NODES,
+                "settle_s": 0.0,
+                "out_root": str(out_root),
+                "points": [
+                    {"name": "light", "rate_scale": 1.0},
+                    {"name": "mid", "rate_scale": 1.6},
+                    {"name": "heavy", "rate_scale": 2.4},
+                ],
+            }
+        )
+    )
+    good, _ = _fake_replay(header)
+    monkeypatch.setattr(anchors.replay_mod, "replay", good)
+    assert anchors.main([str(config_path)]) == 0
+    for m in sorted(out_root.glob("*/manifest.json")):
+        man = json.loads(m.read_text())
+        assert "clock_sync" not in man
+        assert man["validity"]["clock_unsynced_hosts"] == 0

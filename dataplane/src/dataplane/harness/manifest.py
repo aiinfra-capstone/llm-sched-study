@@ -38,6 +38,15 @@ class Validity:
     (`colocated_nodes`, `engine_restarts`). `heartbeat_gaps` is reported but not fatal —
     a missed heartbeat degrades the scheduler's estimate, which is a thing H3 is *about*,
     not a thing that ruins the measurement.
+
+    `clock_unsynced_hosts` is reported and not fatal either, and the arithmetic is why.
+    The only clock term the pipeline acts on is the rate error, because a constant offset
+    cancels in a difference of single-host durations and there is no cross-host subtraction
+    anywhere in C-4 or C-5. `clocksync` bounds a disciplined host at 100 ppm, which on a
+    900 ms request is 0.09 ms. Even an undisciplined RTC drifting ten times that costs under
+    a millisecond. What an unsynchronised host actually costs is the *evidence*: the run can
+    no longer show that its durations were comparable, only assert it. That belongs in the
+    record, not in the reject rule.
     """
 
     max_send_lag_ms: float = 0.0
@@ -46,6 +55,7 @@ class Validity:
     heartbeat_gaps: int = 0
     engine_restarts: int = 0
     colocated_nodes: int = 0
+    clock_unsynced_hosts: int = 0
 
     @property
     def valid(self) -> bool:
@@ -65,6 +75,7 @@ class Validity:
             "engine_restarts": self.engine_restarts,
             "valid": self.valid,
             "colocated_nodes": self.colocated_nodes,
+            "clock_unsynced_hosts": self.clock_unsynced_hosts,
         }
 
     def reasons(self) -> list[str]:
@@ -87,6 +98,19 @@ class Validity:
         if self.engine_restarts:
             out.append(f"{self.engine_restarts} engine restart(s) mid-run")
         return out
+
+
+def unsynced_hosts(clock_sync: dict[str, Any] | None) -> int:
+    """How many hosts in a C-6 `clock_sync` block had no disciplined clock.
+
+    A missing block returns 0 rather than a count, because absent means nobody measured
+    rather than everybody failed. The distinction matters: a single-host run has no clock
+    block by design and is not thereby suspect.
+    """
+    if not clock_sync:
+        return 0
+    hosts = clock_sync.get("hosts") or {}
+    return sum(1 for c in hosts.values() if not c.get("synchronised", False))
 
 
 def config_hash(config: dict[str, Any]) -> str:

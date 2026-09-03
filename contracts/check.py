@@ -49,6 +49,7 @@ import json
 import re
 import sys
 import tempfile
+from itertools import pairwise
 from pathlib import Path
 
 from jsonschema import Draft202012Validator
@@ -237,6 +238,65 @@ def _schema_property_names(node: object) -> set[str]:
         for item in node:
             names |= _schema_property_names(item)
     return names
+
+
+def check_calibration_envelopes() -> list[str]:
+    """A calibration config must not declare an envelope wider than the grid it samples.
+
+    A C-3 snapshot's `admissibility` is what the scheduler's AdmissionFilter enforces at
+    dispatch; its `entries` are the only shapes anyone can price. When the first is wider
+    than the second, a request is admitted and then has no cell, and what happens next is a
+    property of the consumer rather than of the measurement. The simulator used to
+    substitute a flat 100 ms and carry on, which turned a hole in the table into a
+    plausible-looking latency; it throws now, which is better but still a crash mid-sweep.
+
+    Every 1B config declared 2048/256 while sampling to 512/128, and the 8B CPU config
+    declared it while sampling to 128/64. None of it ever fired, because every trace this
+    study has run sits inside the sampled range. It would have fired the first time we
+    widened the workload.
+
+    This is a config lint rather than a check inside `build_snapshot`, because the builder
+    is a pure function over samples and is legitimately called with synthetic grids. The
+    place a human writes a number that is wrong is the config.
+    """
+
+    def bucket_top(value: int, edges: list[int]) -> int:
+        """The inclusive top of the bucket `value` lands in.
+
+        Mirrors `cost_model.buckets_from_edges`: edges [1, 128, 512] give buckets
+        (1, 128) and (129, 512), so only the first bucket owns its lower edge. It is
+        reimplemented rather than imported because this checker runs with no dependencies
+        and outside the data plane's environment, and eight lines of arithmetic is a
+        smaller risk than making the contract gate depend on numpy being installed.
+        """
+        for i, (lo, hi) in enumerate(pairwise(edges)):
+            if (lo if i == 0 else lo + 1) <= value <= hi:
+                return hi
+        return value
+
+    failures: list[str] = []
+    configs = sorted((REPO / "dataplane" / "configs").glob("calibration*.json"))
+    for path in configs:
+        cfg = json.loads(path.read_text())
+        adm = cfg.get("admissibility")
+        if not adm:
+            continue
+        sampled_prompt = max(bucket_top(p, cfg["prompt_edges"]) for p in cfg["prompt_lens"])
+        sampled_output = max(bucket_top(o, cfg["output_edges"]) for o in cfg["output_lens"])
+        for field, declared, sampled in (
+            ("max_prompt", adm.get("max_prompt", 0), sampled_prompt),
+            ("max_output", adm.get("max_output", 0), sampled_output),
+        ):
+            if declared > sampled:
+                failures.append(
+                    f"{path.relative_to(REPO)}: declares {field} {declared} but its grid is "
+                    f"sampled only to {sampled}. A node that admits a shape it cannot price "
+                    "is not admissible for it — narrow `admissibility`, or add the lengths "
+                    "to prompt_lens/output_lens and calibrate them."
+                )
+    if not failures:
+        print(f"  calibration configs      -> {len(configs)} declare only what they sample")
+    return failures
 
 
 def check_java_bindings() -> list[str]:
@@ -428,6 +488,8 @@ def main(argv: list[str] | None = None) -> int:
     print("\nC-1 — wire schema:")
     failures += check_proto()
     failures += check_proto_copies()
+    print("\nC-3 — the envelope a snapshot is allowed to claim:")
+    failures += check_calibration_envelopes()
     print("\nC-3 / C-6 — the seam's other reader:")
     failures += check_java_bindings()
 

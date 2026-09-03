@@ -39,13 +39,13 @@ import argparse
 import asyncio
 import json
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
 import grpc
 
-from dataplane.harness import gen_trace
+from dataplane.harness import gen_trace, launch
 from dataplane.harness import manifest as manifest_mod
 from dataplane.harness.prompts import materialize_all
 from dataplane.proto import sched_grpc, sched_pb2
@@ -287,6 +287,12 @@ def main() -> int:
         "--sha256", help="expected trace hash; the run refuses to start without a match"
     )
     ap.add_argument(
+        "--clock-sync",
+        type=Path,
+        help="clock_sync.json from `clocksync --combine`, recorded into the manifest. "
+        "Only meaningful with --nodes, since without it this writes validity.json alone.",
+    )
+    ap.add_argument(
         "--bind", default="0.0.0.0:0", help="where this client listens for Deliver (F-11)"
     )
     ap.add_argument(
@@ -348,7 +354,22 @@ def main() -> int:
         "".join(json.dumps(r, separators=(",", ":")) + "\n" for r in result.records)
     )
 
-    if args.nodes is not None:
+    # `replay()` measures the load generator and nothing else, so the two pool-level
+    # counters can only be filled in here, where the node block and the clock measurement
+    # have been read. This used to write colocated_nodes: 0 whatever the pool looked like,
+    # which made a co-located two-node run come out valid. The count reuses the launcher's
+    # rule rather than a second copy of it.
+    nodes = json.loads(args.nodes.read_text()) if args.nodes is not None else None
+    clock_sync = json.loads(args.clock_sync.read_text()) if args.clock_sync else None
+    validity = result.validity
+    if nodes is not None:
+        validity = replace(
+            result.validity,
+            colocated_nodes=launch.colocated_count(nodes),
+            clock_unsynced_hosts=manifest_mod.unsynced_hosts(clock_sync),
+        )
+
+    if nodes is not None:
         config = {
             "duration_s": result.header["duration_s"] / args.rate_scale,
             "warmup_s": args.warmup_s,
@@ -363,16 +384,15 @@ def main() -> int:
             config=config,
             trace_path=args.trace,
             trace_sha256=args.sha256,
-            validity=result.validity,
+            validity=validity,
             policy=args.policy,
-            nodes=json.loads(args.nodes.read_text()),
+            nodes=nodes,
+            clock_sync=clock_sync,
         )
         (run_dir / "manifest.json").write_text(json.dumps(man, indent=2) + "\n")
     else:
         # The launcher assembles the manifest; the client contributes the half it measured.
-        (run_dir / "validity.json").write_text(
-            json.dumps(result.validity.to_dict(), indent=2) + "\n"
-        )
+        (run_dir / "validity.json").write_text(json.dumps(validity.to_dict(), indent=2) + "\n")
 
     ok = sum(1 for r in result.records if r["status"] == "ok")
     print(f"{log_path}  {ok}/{len(result.records)} ok")
@@ -381,11 +401,14 @@ def main() -> int:
         f"violations {result.validity.send_lag_violations}"
     )
 
-    if result.validity.valid:
+    # The exit code is what a sweep script reads, so it has to agree with the manifest it
+    # sits next to. Reading it off `result.validity` would have printed "run VALID" beside a
+    # manifest saying otherwise, for exactly the co-located pool this now catches.
+    if validity.valid:
         print("run VALID")
         return 0
     print("run INVALID — not analysable:")
-    for reason in result.validity.reasons():
+    for reason in validity.reasons():
         print(f"  - {reason}")
     return 1
 

@@ -81,6 +81,9 @@ class AnchorConfig:
     settle_s: float = 15.0
     out_root: Path = ANCHOR_ROOT
     cost_model_snapshots: dict[str, str] = field(default_factory=dict)
+    # Set by the CLI from --clock-sync, not read from the campaign config: it is a
+    # measurement of the pool taken just before the run, not a property of the run's design.
+    clock_sync: dict[str, Any] | None = None
     tag: str = "anchor"
 
     @classmethod
@@ -174,6 +177,7 @@ def build_manifest(
         heartbeat_gaps=result.validity.heartbeat_gaps,
         engine_restarts=result.validity.engine_restarts,
         colocated_nodes=_colocated(config.nodes),
+        clock_unsynced_hosts=manifest_mod.unsynced_hosts(config.clock_sync),
     )
     run_config = {
         "duration_s": header["duration_s"] / point.rate_scale,
@@ -198,6 +202,7 @@ def build_manifest(
         vehicle="hardware",
         policy=config.policy,
         cost_model_snapshots=config.cost_model_snapshots,
+        clock_sync=config.clock_sync,
         started_unix=started_unix,
     )
 
@@ -271,11 +276,20 @@ def main(argv: list[str] | None = None) -> int:
     )
     ap.add_argument("config", type=Path, help="anchor campaign config (JSON)")
     ap.add_argument("--out-root", type=Path, help="override where the anchor runs are written")
+    ap.add_argument(
+        "--clock-sync",
+        type=Path,
+        help="clock_sync.json from `clocksync --combine`, recorded into every manifest. "
+        "Omit on a single-host pool: absence means nobody measured, which is the honest "
+        "record, and a zeroed block would read as though the clocks had agreed.",
+    )
     args = ap.parse_args(argv)
 
     config = AnchorConfig.from_dict(json.loads(args.config.read_text()))
     if args.out_root is not None:
         config.out_root = args.out_root
+    if args.clock_sync is not None:
+        config.clock_sync = json.loads(args.clock_sync.read_text())
 
     results = asyncio.run(run_anchors(config))
     valid = [r for r in results if r.valid]

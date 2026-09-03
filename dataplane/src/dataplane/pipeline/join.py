@@ -277,9 +277,16 @@ def _candidate_view(decision: dict[str, Any], output_len: int) -> dict[str, Any]
     which is the quantity H3 is about. A cost-model counterfactual would measure something
     different and is a Week-5 refinement, not a drop-in replacement.
 
-    The estimate is `(queue_depth + 1) * output_len / capability_tok_s`: the request has to
-    wait out what is already queued and then decode its own tokens. First-order, and
-    stated rather than buried.
+    The estimate is `(queue_depth + inflight + 1) * output_len / capability_tok_s`: the
+    request has to wait out everything already on the node and then decode its own tokens.
+    First-order, and stated rather than buried.
+
+    `inflight` belongs in that sum and leaving it out was a real hole. A node holding four
+    requests in the engine and none in the buffer reports `queue_depth = 0`, so a
+    queue-depth-only estimate scored it identically to a node sitting idle, and routing a
+    request into a saturated engine came out as zero routing error. It also disagreed with
+    the policy it grades: `WJSQ` scores on `queue_depth + inflight`, so the estimator was
+    marking decisions against a different notion of load than the one that made them.
     """
     candidates = decision.get("candidates") or []
     chosen_id = decision.get("chosen_node")
@@ -288,7 +295,8 @@ def _candidate_view(decision: dict[str, Any], output_len: int) -> dict[str, Any]
         cap = c.get("capability_tok_s") or 0.0
         if cap <= 0:
             return None
-        return (c.get("queue_depth", 0) + 1) * output_len / cap * 1000.0
+        pending = c.get("queue_depth", 0) + c.get("inflight", 0)
+        return (pending + 1) * output_len / cap * 1000.0
 
     chosen = next((c for c in candidates if c.get("node_id") == chosen_id), None)
     alts = [

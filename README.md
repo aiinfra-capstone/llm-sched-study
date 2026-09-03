@@ -155,8 +155,9 @@ firing them together, and there the same 128-token prompt goes 174 ms at one slo
 at four. Both numbers are real and they answer different questions. It matters because
 `service_ms_mean` at *c* > 1 inherits the synchronised figure, so the cost model carries
 contention that a trace-driven run never produces. We have recorded that caveat on the C-3
-field rather than refitting around it, because it has to be corrected together with the
-stochastic component and not before.
+field rather than refitting around it. It is a fact about attribution rather than about
+total cost: reconstructing service time from the split comes out 20 to 40% below the anchors,
+where the table as it stands is accurate to within 1.7 to 7.4% at four slots.
 
 **The deployed cost model missed its own hardware by 127%.** We found it with `costcheck`, a
 diagnostic that asks whether the model a run was served by would have predicted that run.
@@ -200,9 +201,12 @@ the client also pays for the gRPC hop, the decision, the dispatch, and the direc
 That number is flat from quiet to heavy, which is why it is added in milliseconds rather
 than applied as a percentage, and it travels on the run manifest so a different environment
 supplies its own. The remaining error is uniformly negative, and we know where it lives: the
-cost model carries one global σ = 0.1225 against a dispersion that runs from 0.675 at one
-slot to 0.198 at four, so the simulator is under-dispersed exactly where the error is
-largest.
+cost model carries one global σ = 0.1225, and at fixed concurrency the engine turns out to
+be close to deterministic: σ = 0.003 at one slot, and 0.0035 across the second half of a
+632-sample sustained segment at four, with p95/p50 of 1.01. The spread the anchors show is
+concurrency changing *during* a request rather than service-time noise, which the simulator
+already models as a queueing effect. So the residual is a queueing question and not a
+service-model one.
 
 *R* is currently **2.00× configured and 1.00× deployable**. That gap is the whole of what is
 left, and it is a hardware problem rather than a code one.

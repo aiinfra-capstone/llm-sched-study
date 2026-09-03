@@ -48,12 +48,15 @@ that contention: on this 1B class the same 128-token prompt reads 174 ms at one 
 727 ms at four. Under the Poisson arrivals a trace actually produces, prefill is flat at
 about 180 ms at every batch size, because a new request's prefill overlaps its neighbours'
 *decode* rather than their prefill. The `c = 1` row is the uncontended prompt-evaluation
-cost. The rest is a property of the calibration workload as much as of the hardware, and
-`service_ms_mean` at `c > 1` inherits the same thing.
+cost, and the rest is a property of the calibration workload as much as of the hardware.
 
-That last point is a known defect in this table, not a subtlety to work around. It has to be
-corrected together with the stochastic refit in issue #13, because the two errors partly
-cancel and fixing either alone moves the F-23 error rather than reducing it.
+**That does not make `service_ms_mean` at `c > 1` wrong, and we checked rather than assumed.**
+Reconstructing service as `prefill(c=1) + decode(c) + residual(c)` comes out 20 to 40% below
+the anchors, where the table as it stands is accurate to within 1.7 to 7.4% at four slots. A
+new prefill still slows the decodes running beside it; the engine's flat per-request
+`prefill_ns` is a fact about attribution, not about total cost. Use the split to reason about
+which part of a running request should stretch when the batch changes, which is what the
+simulator does, and not to rebuild the service time.
 
 ### The 1B class carries two series, measured a day apart, and the second one supersedes the first
 

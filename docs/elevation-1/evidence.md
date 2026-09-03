@@ -72,11 +72,29 @@ starts two prompts at the same instant, so a new request's prefill overlaps its 
 decode rather than their prefill. Our calibration harness synchronises them on purpose, and
 there the prefills serialise against each other because prefill is compute-bound.
 
-**What it decides.** Two things. The `reevaluateActive` fix is justified: only the decode
-remainder is scaled when batch composition changes. And, less comfortably,
-`service_ms_mean` at concurrency above 1 inherits contention that a trace-driven run never
-produces. The caveat is now written into the C-3 field description. It must be corrected
-together with item 4 below and not before, because the two errors partly cancel.
+**What it decides.** The `reevaluateActive` fix is justified: only the decode remainder is
+scaled when batch composition changes, and it measurably improved F-23.
+
+**What it does not decide, though we first thought it did.** The obvious next inference is
+that `service_ms_mean` at concurrency above 1 therefore inherits contention a trace-driven
+run never sees, and should be reconstructed as `prefill(c=1) + decode(c) + residual(c)` from
+data we already hold. We built that reconstruction and checked it against the anchors before
+shipping it. It is wrong:
+
+| prompt | output | c | anchor service | C-3 as it stands | reconstruction |
+|---|---|---|---|---|---|
+| (1,128) | (1,64) | 4 | 1849.9 ms | 1987.4 (+7.4%) | 1435.0 (-22.4%) |
+| (129,256) | (1,64) | 4 | 2018.5 ms | 2052.2 (+1.7%) | 1219.5 (-39.6%) |
+| (257,512) | (65,128) | 4 | 4066.1 ms | 4184.6 (+2.9%) | 2486.6 (-38.8%) |
+
+C-3 is already accurate at four slots and the reconstruction is 20 to 40% low everywhere.
+The engine's per-request `prefill_ns` really is flat under Poisson arrivals, but the
+attribution does not capture cross-request interference: a new prefill still slows the
+decodes running beside it, and the total service time grows about as much as the
+synchronised calibration says it does. So the flat prefill is a fact about *attribution*,
+not a fact about total cost, and `service_ms_mean` needs no correction.
+
+The hypothesis was cheap to test and would have been expensive to ship.
 
 ---
 
@@ -114,39 +132,55 @@ backend never reported.
 
 ---
 
-## 4. The simulator is under-dispersed, and the distribution family is not the problem
+## 4. The engine is nearly deterministic at fixed concurrency
 
 **Why it was measured.** The scrutiny pass claimed real serving latency is bimodal and that
-modelling it as log-normal smooths away the tail that causes queue pileups.
+modelling it as log-normal smooths away the tail that causes queue pileups. Our first pass
+at checking that measured the anchors and concluded the opposite problem, that the simulator
+was two to three times *under*-dispersed. Both of those are wrong, and the reason they are
+wrong is the same.
 
-**Shape**, from 800 anchor service observations, on the log of service time:
+**What the anchors show**, as within-cell log standard deviation of service time, keyed on
+batch size at admission:
 
-| batch | n | p95/p50 | log-skew | excess kurtosis |
+| pooled by admission batch | c=1 | c=2 | c=3 | c=4 |
 |---|---|---|---|---|
-| 1 | 183 | 2.74 | 0.61 | -0.35 |
-| 2 | 127 | 2.73 | 0.30 | -0.62 |
-| 3 | 84 | 2.06 | -0.18 | -0.66 |
-| 4 | 406 | 2.17 | 0.37 | 0.32 |
+| log-sd | 0.403 | 0.368 | 0.363 | 0.228 |
 
-A perfectly log-normal residual gives log-skew 0 and excess kurtosis 0. These are close, and
-nothing here is bimodal. **The form is right.**
+**What the calibration shows**, where concurrency is genuinely held fixed for the life of
+each request:
 
-**Scale**, as within-cell log standard deviation, which is what a refit would write:
+| pooled by concurrency | c=1 | c=2 | c=3 | c=4 |
+|---|---|---|---|---|
+| log-sd | 0.003 | 0.002 | 0.306 | 0.260 |
 
-| prompt | output | c=1 | c=2 | c=3 | c=4 |
-|---|---|---|---|---|---|
-| (1,128) | (1,64) | 0.459 | 0.430 | 0.402 | 0.242 |
-| (129,256) | (1,64) | 0.346 | 0.285 | 0.333 | 0.245 |
-| (257,512) | (65,128) | 0.394 | 0.321 | 0.286 | 0.145 |
-| **pooled** | | **0.403** | **0.368** | **0.363** | **0.228** |
+And the sustained segment, 632 samples at a true steady-state four slots, gives log-sd
+**0.087** overall, **0.0035** across its second half, with p95/p50 of **1.01**. The first
+half's 0.104 is the thermal ramp, not noise.
 
-C-3 carries a single global `sigma` of 0.12253 at `fit_r2` 0.0 for all of these, implying a
-p95/p50 of 1.22 against an observed 2.06 to 2.74.
+**The two tables disagree because they are not measuring the same thing.**
+`batch_size_at_admission` is a snapshot taken when a request is admitted, not an average
+over its life. Under Poisson arrivals a request admitted alone very often finishes with
+neighbours, and the anchors say so directly: mean service at admission-batch 1 is 1016.6 ms
+against a true fixed-concurrency c=1 of 615.7 ms. So most of the anchor "dispersion" is
+concurrency changing during a request, which is a queueing effect the DES already models
+explicitly in `reevaluateActive`. Fitting a service-time sigma to it would count the same
+physics twice.
 
-**What it decides.** Fit sigma per concurrency, additive to the C-3 `stochastic` block the
-same way the phase split was. Do not change the distribution family. The simulator is two to
-three times under-dispersed and worst at low concurrency, which is exactly where the
-remaining F-23 error sits.
+The residual 0.306 and 0.260 at c=3 and c=4 in the calibration are the same effect in
+miniature: `_run_cell` fires ten requests through a semaphore of `c`, so concurrency varies
+at the tail of the cell.
+
+**What it decides.** Do not refit sigma per concurrency, and do not raise it. The engine is
+close to deterministic at fixed load, C-3's global 0.12253 is already at or above the honest
+c=4 value, and the distribution family was never the issue. **This reverses the proposal in
+issue #13, which we wrote.**
+
+The uniformly negative F-23 error therefore needs a different explanation, and the number
+above points at one: real requests spend much of their life at a higher concurrency than
+their admission batch, so the size of the effect the simulator applies when the batch
+changes around a running request is the thing to examine. That is `reevaluateActive`, and it
+is a queueing question rather than a service-model one.
 
 ---
 

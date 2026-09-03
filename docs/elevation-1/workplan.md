@@ -155,23 +155,29 @@ moves with every commit.
 
 ---
 
-## W6. Refit the stochastic component
+## W6. ~~Refit the stochastic component~~ Withdrawn, and replaced
 
-**Divyansh. Issue #13.**
+**Divyansh. Issue #13, which now says the opposite of what it originally said.**
 
-Sigma per concurrency, additive to the C-3 `stochastic` block, with the sampler selecting by
-concurrency. The distribution family does not change. This is the last honest source of F-23
-error.
+The plan was sigma per concurrency, on the reading that the simulator was two to three times
+under-dispersed. Measuring it properly reversed the conclusion. At fixed concurrency the
+engine is close to deterministic, 0.003 at one slot and 0.0035 across the second half of the
+sustained segment, so C-3's global 0.12253 is already at or above the honest value. The
+spread we had measured came from keying on `batch_size_at_admission`, which is a snapshot at
+admission rather than an average over a request's life.
 
-It must land together with the calibration-synchronisation correction described in
-[`evidence.md`](evidence.md) section 2, not before it. The two errors partly cancel, so
-fixing one alone moves the error rather than reducing it.
+**What replaces it.** The uniformly negative F-23 error is a queueing question. Mean service
+at admission-batch 1 is 1016.6 ms against a true fixed-concurrency value of 615.7 ms, so real
+requests spend much of their life more crowded than their admission batch suggests. How much
+the simulator stretches a running request when the batch changes around it is the thing to
+examine, and that is `reevaluateActive`.
 
-**Verified by** F-23 error shrinking at the quiet anchor with nothing fitted to the gate,
-and the determinism test still passing.
+The companion correction, rebuilding `service_ms_mean` from the phase split, was also tested
+and rejected: it lands 20 to 40% below the anchors where the table as it stands is accurate
+to within 1.7 to 7.4% at four slots.
 
-**This one adds code inside the 100% coverage gate**, so it needs tests written
-deliberately. Flag it rather than widening the test surface quietly.
+**Verified by** nothing yet. This workstream produced two rejected hypotheses and a
+corrected record, which is the honest outcome and cost a morning rather than a week.
 
 ---
 

@@ -63,8 +63,10 @@ actionable: it tells an operator when a profiler is worth writing.
    2.00 and 0.50, load-matched to within 2.1% and sharing a seed so their arrival streams are
    identical, all inside the existing admissible envelope and all inside cells the cost model
    has already calibrated.
-5. **A stochastic component that matches the hardware.** One global sigma of 0.1225 is
-   replaced by a fit per concurrency.
+5. ~~**A stochastic component that matches the hardware.**~~ Withdrawn after measurement.
+   At fixed concurrency the engine is close to deterministic, so the global sigma is already
+   at or above the honest value and the anchors' spread is a queueing effect the simulator
+   models elsewhere. Section 4 of [`evidence.md`](evidence.md) has the numbers.
 6. **Honest run lengths.** The saturated operating point is a transient observation and our
    own load-band tool already says so.
 
@@ -120,9 +122,10 @@ repositioning the paper. October is a checkpoint with the paper written afterwar
 are optimising for a complete and honest result set rather than for venue novelty. The
 positioning advice is worth keeping for later; it is not worth spending September on.
 
-Two of its criticisms we also reject on the evidence. It claims our service-time residuals
-are bimodal rather than log-normal, and they are not: log-residual skew runs 0.30 to 0.61
-and excess kurtosis minus 0.66 to plus 0.32. The distributional form is right and only the
-scale is wrong. It also cites our own claim that prefill is flat in concurrency as though it
-were unconditional, and the truth is more interesting than either version; see
-[`evidence.md`](evidence.md).
+Two of its criticisms we also answer with measurement rather than argument, and in one case
+our own first answer was wrong as well. It claims the service-time residuals are bimodal.
+They are not, but neither are they the under-dispersed log-normal we initially replied with:
+at fixed concurrency the engine is close to deterministic, and the spread we had measured was
+concurrency changing during a request. It also cites our own claim that prefill is flat in
+concurrency as though it were unconditional. Both are worked through in
+[`evidence.md`](evidence.md) sections 2 and 4.

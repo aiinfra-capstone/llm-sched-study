@@ -57,7 +57,10 @@ public class LiveSchedulerApp {
         InMemoryStateStore store = new InMemoryStateStore();
         StalenessVeil veil = new StalenessVeil(stalenessNs, sysClock);
 
-        // Load admissibility bounds from C-3 snapshots named in the manifest (lifted from SimApp)
+        // Load admissibility bounds from the C-3 snapshots the manifest names.
+        // Same rule as SimApp: a named snapshot that is not on disk refuses
+        // instead of widening the envelope, and a stale series resolves to the
+        // newest snapshot per node class so both vehicles serve the same model.
         Map<String, Admissibility> boundsMap = new HashMap<>();
         Map<String, com.sched.core.models.CostModelSnapshot> loadedSnaps = new HashMap<>();
         try {
@@ -70,24 +73,34 @@ public class LiveSchedulerApp {
                         byId.put(s.snapshotId(), s);
                     }
                 }
+            } else {
+                throw new IllegalStateException("cost models dir not found: " + costModelDir);
+            }
+            Map<String, com.sched.core.models.CostModelSnapshot> newestByClass = new HashMap<>();
+            for (com.sched.core.models.CostModelSnapshot s : byId.values()) {
+                com.sched.core.models.CostModelSnapshot cur = newestByClass.get(s.nodeClass());
+                if (cur == null || s.measuredAtUnix() > cur.measuredAtUnix()) {
+                    newestByClass.put(s.nodeClass(), s);
+                }
             }
             for (Map.Entry<String, String> e : manifest.costModelSnapshots().entrySet()) {
                 com.sched.core.models.CostModelSnapshot snap = byId.get(e.getValue());
-                if (snap != null) {
-                    boundsMap.put(e.getKey(), snap.admissibility());
-                    loadedSnaps.put(e.getKey(), snap);
-                } else {
-                    System.err.println("Warning: snapshot " + e.getValue() + " for node " + e.getKey() + " not found in " + costModelDir + ", using permissive bounds");
-                    boundsMap.put(e.getKey(), new Admissibility(4096, 4096, 60000));
+                if (snap == null)
+                    throw new IllegalStateException("node " + e.getKey() + " names snapshot "
+                        + e.getValue() + ", which is not in " + costModelDir + "/");
+                com.sched.core.models.CostModelSnapshot newest = newestByClass.get(snap.nodeClass());
+                if (newest != null && newest.measuredAtUnix() > snap.measuredAtUnix()) {
+                    System.out.printf("Resolving snapshot for node %s: %s -> %s [%s]%n",
+                        e.getKey(), snap.snapshotId(), newest.snapshotId(), snap.nodeClass());
+                    snap = newest;
                 }
+                boundsMap.put(e.getKey(), snap.admissibility());
+                loadedSnaps.put(e.getKey(), snap);
             }
-            if (boundsMap.isEmpty()) {
-                System.err.println("No admissibility bounds loaded from C-3; using permissive fallback");
-                boundsMap.put("fallback", new Admissibility(4096, 4096, 60000));
-            }
+        } catch (RuntimeException e) {
+            throw e;
         } catch (Exception e) {
-            System.err.println("Failed to load C-3 admissibility, using permissive: " + e.getMessage());
-            boundsMap.put("fallback", new Admissibility(4096, 4096, 60000));
+            throw new IllegalStateException("failed to load C-3 snapshots from " + costModelDir + ": " + e.getMessage(), e);
         }
         AdmissionFilter filter = new AdmissionFilter(boundsMap);
 

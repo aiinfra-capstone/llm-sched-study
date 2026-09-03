@@ -31,12 +31,13 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import json
-import time
 import hashlib
+import json
 import shutil
 import subprocess
 import tempfile
+import time
+import traceback
 from pathlib import Path
 from typing import Any
 
@@ -73,9 +74,12 @@ def synthesize_snapshot(base: dict[str, Any], factor: float) -> dict[str, Any]:
     label it; provenance is left as the measured snapshot's provenance so the
     file remains valid per C-3 (additional fields would break the frozen schema
     and the Java parser which is strict). The factor is recoverable from the id.
+
+    Every sweep point gets two nodes, including R=1 where the second node is
+    an unscaled copy with its own id. A one node R=1 point next to two node
+    R>1 points would read pool size as an effect of R, so homogeneity means
+    two identical nodes, not one node.
     """
-    if factor == 1.0:
-        return base
     new_id = f"synth_{base['snapshot_id']}__x{factor:g}"
     # Deep copy via json round-trip to avoid mutating the base
     new = json.loads(json.dumps(base))
@@ -111,6 +115,7 @@ def ensure_trace(trace_path: Path, trace_config: Path, anchors_dir: Path | None 
         return hashlib.sha256(trace_path.read_bytes()).hexdigest()
     # Regenerate
     from dataplane.harness.gen_trace import generate
+
     config = json.loads(trace_config.read_text())
     sha = generate(config, trace_path)
     print(f"regenerated {trace_path} from {trace_config} sha {sha[:12]}")
@@ -148,6 +153,14 @@ def build_sweep_manifest(
     return new_manifest
 
 
+def find_mvn() -> str:
+    """Locate the maven binary on PATH so the runner works on Linux and Windows alike."""
+    found = shutil.which("mvn")
+    if found is None:
+        raise RuntimeError("mvn not found on PATH; install Maven to run DES sweeps")
+    return found
+
+
 def run_one_des(
     trace: Path,
     manifest: dict[str, Any],
@@ -157,51 +170,59 @@ def run_one_des(
 ) -> Path:
     """Run SimApp for one manifest (DES, not hardware) and return the run dir."""
     # Write manifest to temp file
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, encoding="utf-8") as tf:
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".json", delete=False, encoding="utf-8"
+    ) as tf:
         json.dump(manifest, tf, indent=2)
         manifest_path = Path(tf.name)
-    # If we have synthesised snapshots, write them to a temp cost_models dir that overlays the real one
+    # If we have synthesised snapshots, write them to a temp cost_models dir that overlays the real one.
+    # SimApp walks a single dir, so the temp dir holds copies of the real files plus the synthesised ones.
     temp_cost_dir = None
     if extra_snapshots:
         temp_cost_dir = Path(tempfile.mkdtemp())
-        # Copy real cost models into temp dir for SimApp to find both
-        # Instead of copying, we can just write synthesised files into temp dir and pass that dir plus real dir?
-        # SimApp walks one dir, so we need a unified dir. Create temp dir with symlinks/copies of real + synthesised
         for src in cost_models_dir.rglob("*.json"):
-            # Replicate structure under temp
             rel = src.relative_to(cost_models_dir)
             dst = temp_cost_dir / rel
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy(src, dst)
         for snap in extra_snapshots:
-            # Write synthesised snapshot as if it were a file
             fname = f"synth_{snap['snapshot_id']}.json"
-            # Find a suitable subdir (use first real snapshot's subdir or just root)
             (temp_cost_dir / fname).write_text(json.dumps(snap, indent=2), encoding="utf-8")
         cost_models_arg = temp_cost_dir
     else:
         cost_models_arg = cost_models_dir
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    # Use --deterministic for reproducibility (F-20)
+    # Use --deterministic for reproducibility (F-20).
+    # Plain argument list with no shell, so this runs the same on Linux and Windows.
     cmd = [
-        "mvn", "-q", "-f", str(REPO_ROOT / "controlplane" / "pom.xml"),
+        find_mvn(),
+        "-q",
+        "-f",
+        str(REPO_ROOT / "controlplane" / "pom.xml"),
         "exec:java",
-        f"-Dexec.mainClass=com.sched.sim.SimApp",
+        "-Dexec.mainClass=com.sched.sim.SimApp",
         f"-Dexec.args={trace} {manifest_path} {out_dir} --deterministic --cost-models {cost_models_arg}",
     ]
-    # Use shell for mvn.cmd on Windows
     result = subprocess.run(
-        ["C:/Program Files/apache-maven-3.9.16/bin/mvn.cmd" if Path("C:/Program Files/apache-maven-3.9.16/bin/mvn.cmd").exists() else "mvn"]
-        + cmd[1:],
+        cmd,
         cwd=str(REPO_ROOT / "controlplane"),
-        capture_output=True, text=True, shell=True,
+        capture_output=True,
+        text=True,
+        shell=False,
+        check=False,
     )
     manifest_path.unlink(missing_ok=True)
     if temp_cost_dir:
         shutil.rmtree(temp_cost_dir, ignore_errors=True)
-    if result.returncode != 0 or "Error during simulation" in result.stdout or "Error during simulation" in result.stderr:
-        raise RuntimeError(f"SimApp failed for {manifest.get('run_id')}: {result.stdout[-1000:]} {result.stderr[-1000:]}")
+    if (
+        result.returncode != 0
+        or "Error during simulation" in result.stdout
+        or "Error during simulation" in result.stderr
+    ):
+        raise RuntimeError(
+            f"SimApp failed for {manifest.get('run_id')}: {result.stdout[-1000:]} {result.stderr[-1000:]}"
+        )
     # Verify output
     if not list(out_dir.glob("scheduler_*.jsonl")):
         raise RuntimeError(f"No scheduler log in {out_dir}, SimApp output: {result.stdout[-500:]}")
@@ -211,13 +232,38 @@ def run_one_des(
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="MPR-3 DES sweep runner (policy, R, staleness, load)")
     ap.add_argument("--config", type=Path, help="sweep config JSON (if omitted, uses defaults)")
-    ap.add_argument("--out", type=Path, required=True, help="output root for sweep runs (will contain many run dirs + runset.parquet)")
+    ap.add_argument(
+        "--out",
+        type=Path,
+        required=True,
+        help="output root for sweep runs (will contain many run dirs + runset.parquet)",
+    )
     ap.add_argument("--trace", type=Path, default=TRACE_DEFAULT, help="trace to replay")
-    ap.add_argument("--trace-config", type=Path, default=REPO_ROOT / "dataplane" / "configs" / "trace_anchor_1b.json", help="C-2 config to regenerate trace if missing")
-    ap.add_argument("--anchors", type=Path, default=REPO_ROOT / "runs" / "anchors", help="anchors dir for trace hash check")
+    ap.add_argument(
+        "--trace-config",
+        type=Path,
+        default=REPO_ROOT / "dataplane" / "configs" / "trace_anchor_1b.json",
+        help="C-2 config to regenerate trace if missing",
+    )
+    ap.add_argument(
+        "--anchors",
+        type=Path,
+        default=REPO_ROOT / "runs" / "anchors",
+        help="anchors dir for trace hash check",
+    )
     ap.add_argument("--cost-models", type=Path, default=SNAPSHOT_ROOT, help="cost models dir")
     ap.add_argument("--dry-run", action="store_true", help="print what would be run, don't execute")
-    ap.add_argument("--settle-s", type=float, default=2.0, help="sleep between points to drain tail (like anchors.py)")
+    ap.add_argument(
+        "--settle-s",
+        type=float,
+        default=0.0,
+        help="sleep between points; only useful against hardware with an engine to drain, the DES has none",
+    )
+    ap.add_argument(
+        "--keep-going",
+        action="store_true",
+        help="run remaining points after a failure instead of stopping at the first one",
+    )
     args = ap.parse_args(argv)
 
     # Load sweep grid
@@ -229,7 +275,11 @@ def main(argv: list[str] | None = None) -> int:
             base_manifest = json.loads(Path(base_manifest_path).read_text())
         else:
             # Use first anchor manifest as base
-            anchor_manifests = sorted(Path(args.anchors).glob("*/manifest.json")) if Path(args.anchors).exists() else []
+            anchor_manifests = (
+                sorted(Path(args.anchors).glob("*/manifest.json"))
+                if Path(args.anchors).exists()
+                else []
+            )
             if not anchor_manifests:
                 print(f"no anchor manifests under {args.anchors}, using minimal base", flush=True)
                 base_manifest = {
@@ -241,10 +291,32 @@ def main(argv: list[str] | None = None) -> int:
                     "staleness_s": 0.0,
                     "warmup_s": 10.0,
                     "duration_s": 193.0,
-                    "cost_model_snapshots": {"gtx1650ti": "cm_gtx1650ti_ngl99_p4_q4km_llama32_1b_20260831T153652Z_008"},
-                    "nodes": [{"node_id": "gtx1650ti", "host": "fedora", "role": "pool", "engine": "llamacpp", "engine_version": "b10569+p1+cuda13.2", "model": "Llama-3.2-1B-Instruct", "quant": "Q4_K_M", "gpu": "NVIDIA GeForce GTX 1650 Ti", "driver": "580.173.02", "prefix_caching": False, "max_batch": 4, "engine_config": {"ngl": 99, "threads": 6, "parallel": 4}}],
+                    "cost_model_snapshots": {
+                        "gtx1650ti": "cm_gtx1650ti_ngl99_p4_q4km_llama32_1b_20260831T153652Z_008"
+                    },
+                    "nodes": [
+                        {
+                            "node_id": "gtx1650ti",
+                            "host": "fedora",
+                            "role": "pool",
+                            "engine": "llamacpp",
+                            "engine_version": "b10569+p1+cuda13.2",
+                            "model": "Llama-3.2-1B-Instruct",
+                            "quant": "Q4_K_M",
+                            "gpu": "NVIDIA GeForce GTX 1650 Ti",
+                            "driver": "580.173.02",
+                            "prefix_caching": False,
+                            "max_batch": 4,
+                            "engine_config": {"ngl": 99, "threads": 6, "parallel": 4},
+                        }
+                    ],
                     "config": {"arrival": {"lambda_base": 0.9}, "gen_seed": 20260830},
-                    "git_shas": {"worker": "unknown", "scheduler": "unknown", "harness": "unknown", "sim": "unknown"},
+                    "git_shas": {
+                        "worker": "unknown",
+                        "scheduler": "unknown",
+                        "harness": "unknown",
+                        "sim": "unknown",
+                    },
                     "validity": {"valid": True},
                 }
             else:
@@ -255,7 +327,11 @@ def main(argv: list[str] | None = None) -> int:
     else:
         grid = DEFAULT_GRID
         # Fallback base
-        anchor_manifests = sorted(Path(args.anchors).glob("*/manifest.json")) if Path(args.anchors).exists() else []
+        anchor_manifests = (
+            sorted(Path(args.anchors).glob("*/manifest.json"))
+            if Path(args.anchors).exists()
+            else []
+        )
         if anchor_manifests:
             base_manifest = json.loads(anchor_manifests[0].read_text())
         else:
@@ -268,27 +344,57 @@ def main(argv: list[str] | None = None) -> int:
                 "staleness_s": 0.0,
                 "warmup_s": 10.0,
                 "duration_s": 193.0,
-                "cost_model_snapshots": {"gtx1650ti": "cm_gtx1650ti_ngl99_p4_q4km_llama32_1b_20260831T153652Z_008"},
-                "nodes": [{"node_id": "gtx1650ti", "host": "fedora", "role": "pool", "engine": "llamacpp", "engine_version": "b10569+p1+cuda13.2", "model": "Llama-3.2-1B-Instruct", "quant": "Q4_K_M", "gpu": "NVIDIA GeForce GTX 1650 Ti", "driver": "580.173.02", "prefix_caching": False, "max_batch": 4, "engine_config": {"ngl": 99, "threads": 6, "parallel": 4}}],
+                "cost_model_snapshots": {
+                    "gtx1650ti": "cm_gtx1650ti_ngl99_p4_q4km_llama32_1b_20260831T153652Z_008"
+                },
+                "nodes": [
+                    {
+                        "node_id": "gtx1650ti",
+                        "host": "fedora",
+                        "role": "pool",
+                        "engine": "llamacpp",
+                        "engine_version": "b10569+p1+cuda13.2",
+                        "model": "Llama-3.2-1B-Instruct",
+                        "quant": "Q4_K_M",
+                        "gpu": "NVIDIA GeForce GTX 1650 Ti",
+                        "driver": "580.173.02",
+                        "prefix_caching": False,
+                        "max_batch": 4,
+                        "engine_config": {"ngl": 99, "threads": 6, "parallel": 4},
+                    }
+                ],
                 "config": {"arrival": {"lambda_base": 0.9}, "gen_seed": 20260830},
-                "git_shas": {"worker": "unknown", "scheduler": "unknown", "harness": "unknown", "sim": "unknown"},
+                "git_shas": {
+                    "worker": "unknown",
+                    "scheduler": "unknown",
+                    "harness": "unknown",
+                    "sim": "unknown",
+                },
                 "validity": {"valid": True},
             }
 
-    print(f"Sweep grid: policies={grid['policies']} R={grid['R']} staleness={grid['staleness_s']} rate_scale={grid['rate_scale']}")
-    total = len(grid["policies"]) * len(grid["R"]) * len(grid["staleness_s"]) * len(grid["rate_scale"])
+    print(
+        f"Sweep grid: policies={grid['policies']} R={grid['R']} staleness={grid['staleness_s']} rate_scale={grid['rate_scale']}"
+    )
+    total = (
+        len(grid["policies"]) * len(grid["R"]) * len(grid["staleness_s"]) * len(grid["rate_scale"])
+    )
     print(f"Total points: {total} -> {args.out}")
 
     # Ensure trace exists (like ensure_trace.py, but simpler)
     if not args.trace.exists():
         print(f"Trace missing at {args.trace}, regenerating from {args.trace_config}")
-        ensure_trace(args.trace, args.trace_config, Path(args.anchors) if Path(args.anchors).exists() else None)
+        ensure_trace(
+            args.trace,
+            args.trace_config,
+            Path(args.anchors) if Path(args.anchors).exists() else None,
+        )
     else:
         # Verify hash once, like anchors.py
         if Path(args.anchors).exists():
             try:
                 gen_trace.load(args.trace, expect_sha256=base_manifest.get("trace_sha256"))
-            except Exception as e:
+            except ValueError as e:
                 print(f"Trace hash check warning (will continue): {e}")
 
     if args.dry_run:
@@ -298,93 +404,116 @@ def main(argv: list[str] | None = None) -> int:
     args.out.mkdir(parents=True, exist_ok=True)
     index = load_snapshots_by_id(args.cost_models)
     # Compute actual trace SHA for manifests (regenerated trace has new SHA)
-    trace_sha256 = hashlib.sha256(args.trace.read_bytes()).hexdigest() if args.trace.exists() else base_manifest.get("trace_sha256", "unknown")
+    trace_sha256 = (
+        hashlib.sha256(args.trace.read_bytes()).hexdigest()
+        if args.trace.exists()
+        else base_manifest.get("trace_sha256", "unknown")
+    )
     print(f"Using trace {args.trace} sha {trace_sha256[:12]}")
 
-    # Sort by rate_scale so slowest first (cold-engine cost where warmup discards it)
-    rate_scales = sorted(grid["rate_scale"])
+    # Flat grid sorted by rate_scale so the slowest load runs first. Anchors.py
+    # does this because a cold engine pays a first request cost; the DES has no
+    # engine but the same order keeps sweep output comparable with anchor output.
+    points = [
+        (R, rate, staleness, policy)
+        for R in sorted(grid["R"])
+        for rate in sorted(grid["rate_scale"])
+        for staleness in sorted(grid["staleness_s"])
+        for policy in grid["policies"]
+    ]
 
     run_dirs: list[Path] = []
-    for R in sorted(grid["R"]):
-        # Synthesize snapshots for this R if needed
-        extra_snaps: list[dict[str, Any]] = []
-        # For now, synthesize by scaling the base snapshot with factor R
-        # In a real sweep, you'd have two node classes: fast and slow. Here we create a slow synthesised
-        # snapshot for a second node to achieve the ratio.
-        # Simplified: use one node for R=1 (homogeneous), two nodes for R>1
-        for rate in rate_scales:
-            for staleness in sorted(grid["staleness_s"]):
-                for policy in grid["policies"]:
-                    # Build manifest for this point
-                    # For R>1, we need two nodes; for R=1, one node (homogeneous)
-                    # Create a second node by synthesising the base node's snapshot
-                    cost_snaps = dict(base_manifest["cost_model_snapshots"])
-                    extra_for_this_run: list[dict[str, Any]] | None = None
-                    if R != 1:
-                        # Find base snapshot id for the pool node
-                        base_snap_id = next(iter(cost_snaps.values()))
-                        base_snap = index.get(base_snap_id)
-                        if base_snap:
-                            synth = synthesize_snapshot(base_snap, float(R))
-                            # Persist synthesised snapshot under the sweep out dir (not contracts/),
-                            # so runset can find it via a custom index without polluting measured data
-                            synth_dir = args.out / "synthesised"
-                            synth_dir.mkdir(parents=True, exist_ok=True)
-                            synth_path = synth_dir / f"{synth['snapshot_id']}.json"
-                            if not synth_path.exists():
-                                synth_path.write_text(json.dumps(synth, indent=2), encoding="utf-8")
-                                print(f"  wrote synthesised {synth['snapshot_id']} -> {synth_path}")
-                            # Also keep in index for this run
-                            index[synth["snapshot_id"]] = synth
-                            extra_for_this_run = [synth]
-                            # Add second node to manifest
-                            nodes = list(base_manifest["nodes"])
-                            slow_node_id = f"slow_{R}x"
-                            cost_snaps[slow_node_id] = synth["snapshot_id"]
-                            if nodes:
-                                slow_node = dict(nodes[0])
-                                slow_node["node_id"] = slow_node_id
-                                slow_node["host"] = f"slow-{R}x"
-                                slow_node["gpu"] = "synthesised"
-                                nodes = nodes + [slow_node]
-                            manifest = build_sweep_manifest(base_manifest, policy, staleness, rate, R, cost_snaps, trace_sha256)
-                            manifest["nodes"] = nodes
-                            manifest["run_id"] = f"sweep_R{R:g}_{policy}_s{staleness}_r{rate:g}_{len(run_dirs)}"
-                        else:
-                            manifest = build_sweep_manifest(base_manifest, policy, staleness, rate, R, cost_snaps, trace_sha256)
-                            manifest["run_id"] = f"sweep_R{R:g}_{policy}_s{staleness}_r{rate:g}_{len(run_dirs)}"
-                            extra_for_this_run = None
-                    else:
-                        manifest = build_sweep_manifest(base_manifest, policy, staleness, rate, R, cost_snaps, trace_sha256)
-                        manifest["run_id"] = f"sweep_R{R:g}_{policy}_s{staleness}_r{rate:g}_{len(run_dirs)}"
+    failures: list[str] = []
+    max_rate = max(grid["rate_scale"])
+    for point_no, (R, rate, staleness, policy) in enumerate(points):
+        # Every point runs a two node pool. At R=1 the second node is an
+        # unscaled copy with its own id; a one node R=1 pool next to two node
+        # R>1 pools would confound pool size with heterogeneity.
+        cost_snaps = dict(base_manifest["cost_model_snapshots"])
+        base_snap_id = next(iter(cost_snaps.values()))
+        base_snap = index.get(base_snap_id)
+        if base_snap is None:
+            print(f"  failed: base snapshot {base_snap_id} not in {args.cost_models}")
+            failures.append(
+                f"R={R} policy={policy} staleness={staleness} rate={rate}: missing base snapshot"
+            )
+            if not args.keep_going:
+                break
+            continue
+        synth = synthesize_snapshot(base_snap, float(R))
+        # Persist synthesised snapshot under the sweep out dir (not contracts/),
+        # so runset can find it via a custom index without polluting measured data
+        synth_dir = args.out / "synthesised"
+        synth_dir.mkdir(parents=True, exist_ok=True)
+        synth_path = synth_dir / f"{synth['snapshot_id']}.json"
+        if not synth_path.exists():
+            synth_path.write_text(json.dumps(synth, indent=2), encoding="utf-8")
+            print(f"  wrote synthesised {synth['snapshot_id']} -> {synth_path}")
+        index[synth["snapshot_id"]] = synth
+        extra_for_this_run = [synth]
+        nodes = list(base_manifest["nodes"])
+        slow_node_id = f"slow_{R:g}x"
+        cost_snaps[slow_node_id] = synth["snapshot_id"]
+        if nodes:
+            slow_node = dict(nodes[0])
+            slow_node["node_id"] = slow_node_id
+            slow_node["host"] = f"slow-{R:g}x"
+            slow_node["gpu"] = "synthesised"
+            nodes = nodes + [slow_node]
+        manifest = build_sweep_manifest(
+            base_manifest, policy, staleness, rate, R, cost_snaps, trace_sha256
+        )
+        manifest["nodes"] = nodes
+        manifest["run_id"] = f"sweep_R{R:g}_{policy}_s{staleness}_r{rate:g}_{point_no:04d}"
 
-                    # Stagger rate_scale order: already sorted, but we need to ensure slowest first overall
-                    # For simplicity, we run in the nested loops as is; to truly sort, we'd flatten and sort by rate
-                    # Here we just run in order and sleep between rate changes
-                    run_dir = args.out / manifest["run_id"]
-                    print(f"Running {manifest['run_id']}  R={R} policy={policy} staleness={staleness} rate_scale={rate} -> {run_dir}")
-                    try:
-                        run_one_des(trace=args.trace, manifest=manifest, out_dir=run_dir, cost_models_dir=args.cost_models, extra_snapshots=extra_for_this_run)
-                        run_dirs.append(run_dir)
-                    except Exception as e:
-                        print(f"  failed: {e}")
-                        continue
-                    # Settle between points like anchors.py
-                    if args.settle_s and rate != rate_scales[-1]:
-                        time.sleep(args.settle_s)
+        run_dir = args.out / manifest["run_id"]
+        print(
+            f"Running {manifest['run_id']}  R={R} policy={policy} staleness={staleness} rate_scale={rate} -> {run_dir}"
+        )
+        try:
+            run_one_des(
+                trace=args.trace,
+                manifest=manifest,
+                out_dir=run_dir,
+                cost_models_dir=args.cost_models,
+                extra_snapshots=extra_for_this_run,
+            )
+            run_dirs.append(run_dir)
+        except RuntimeError as e:
+            print(f"  failed: {e}")
+            failures.append(f"{manifest['run_id']}: {e}")
+            if not args.keep_going:
+                break
+            continue
+        if args.settle_s and rate != max_rate:
+            time.sleep(args.settle_s)
 
     print(f"\n{len(run_dirs)}/{total} sweep points completed, written under {args.out}")
+    if failures and not args.keep_going:
+        print(
+            f"Stopped at the first failure ({len(failures)} failed). Rerun with --keep-going to run the rest."
+        )
+        return 1
+    if len(run_dirs) < total:
+        print(f"Only {len(run_dirs)} of {total} points produced output, failing.")
+        return 1
 
     # Aggregate to runset.parquet with an index that includes synthesised snapshots
     try:
         from dataplane.pipeline import runset
+
         # Rebuild index to include synthesised snapshots written under <out>/synthesised/
         full_index = dict(index)
-        for sp in sorted((args.out / "synthesised").glob("*.json")) if (args.out / "synthesised").exists() else []:
+        synth_glob = (
+            sorted((args.out / "synthesised").glob("*.json"))
+            if (args.out / "synthesised").exists()
+            else []
+        )
+        for sp in synth_glob:
             try:
                 s = json.loads(sp.read_text(encoding="utf-8"))
                 full_index[s["snapshot_id"]] = s
-            except Exception as e:
+            except (OSError, json.JSONDecodeError, KeyError) as e:
                 print(f"  warning: could not index synthesised {sp.name}: {e}")
         rs = runset.aggregate(args.out, index=full_index)
         out_parquet = args.out / "runset.parquet"
@@ -395,9 +524,10 @@ def main(argv: list[str] | None = None) -> int:
         if rs.excluded:
             print(f"{len(rs.excluded)} runs excluded")
             return 1
-    except Exception as e:
-        print(f"Aggregation failed (non-fatal for sweep runner smoke): {e}")
-        import traceback; traceback.print_exc()
+    except (ValueError, OSError) as e:
+        print(f"Aggregation failed: {e}")
+        traceback.print_exc()
+        return 1
 
     return 0
 

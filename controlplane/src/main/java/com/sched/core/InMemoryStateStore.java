@@ -14,6 +14,10 @@ public class InMemoryStateStore implements StateStore {
         nodes.put(view.nodeId(), view);
     }
 
+    public NodeView getNode(String nodeId) {
+        return nodes.get(nodeId);
+    }
+
     @Override
     public List<NodeView> getAllNodes() {
         List<NodeView> list = new ArrayList<>(nodes.values());

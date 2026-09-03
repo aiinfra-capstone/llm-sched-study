@@ -64,9 +64,18 @@ public class SchedulerGrpcService extends SchedulerGrpc.SchedulerImplBase {
         return new StreamObserver<Heartbeat>() {
             @Override
             public void onNext(Heartbeat beat) {
+                // Capability stays on the C-3 measurement the scheduler was seeded with.
+                // The heartbeat refreshes queue depth and inflight only. Taking the live
+                // throughput EWMA here would weight static_weighted and wjsq by a live
+                // queue signal instead of the calibrated capability H1 compares on,
+                // while the DES keeps the C-3 value for the whole run.
+                double capability = 0.0;
+                NodeView known = store.getNode(beat.getNodeId());
+                if (known != null) capability = known.capabilityTokS();
+                if (capability <= 0.0) capability = beat.getRecentTokensPerS();
                 NodeView nv = new NodeView(
                         beat.getNodeId(), beat.getQueueDepth(), beat.getInflightCount(),
-                        beat.getRecentTokensPerS(), 0L, true);
+                        capability, 0L, true);
                 store.updateNode(nv);
                 veil.updateNode(nv);
             }
@@ -111,11 +120,16 @@ public class SchedulerGrpcService extends SchedulerGrpc.SchedulerImplBase {
             logger.logRecord(rec);
         }
 
-        // Forward to chosen worker via Worker.Execute (F-11: scheduler not in response path, but in dispatch path)
+        // Forward to chosen worker via Worker.Execute. The worker delivers direct
+        // to the client under F-11 and reports completion separately, so the
+        // scheduler is in the request path but not the response path.
+        boolean forwarded = false;
+        String forwardError = null;
         if (chosenNode != null && workerChannels.containsKey(chosenNode)) {
             io.grpc.ManagedChannel ch = workerChannels.get(chosenNode);
             try {
-                com.sched.v1.WorkerGrpc.WorkerBlockingStub stub = com.sched.v1.WorkerGrpc.newBlockingStub(ch);
+                com.sched.v1.WorkerGrpc.WorkerBlockingStub stub = com.sched.v1.WorkerGrpc.newBlockingStub(ch)
+                        .withDeadlineAfter(5, java.util.concurrent.TimeUnit.SECONDS);
                 com.sched.v1.ExecuteRequest exec = com.sched.v1.ExecuteRequest.newBuilder()
                         .setRunId(req.getRunId().isEmpty() ? runId : req.getRunId())
                         .setReqId(req.getReqId())
@@ -126,21 +140,29 @@ public class SchedulerGrpcService extends SchedulerGrpc.SchedulerImplBase {
                         .setClientEndpoint(req.getClientEndpoint())
                         .setDecisionSeq((int) seq)
                         .build();
-                // Fire and forget; worker will deliver to client and report completion separately
-                // Use blocking stub with short deadline to avoid holding dispatch thread, but still log errors
                 stub.execute(exec);
+                forwarded = true;
             } catch (Exception e) {
-                System.err.println("Failed to forward Execute to worker " + chosenNode + ": " + e.getMessage());
+                forwardError = e.getMessage();
+                System.err.println("Failed to forward Execute to worker " + chosenNode + ": " + forwardError);
             }
         } else if (chosenNode != null && !workerChannels.isEmpty()) {
+            forwardError = "no channel for " + chosenNode + " (known: " + workerChannels.keySet() + ")";
             System.err.println("No channel for chosen node " + chosenNode + " (known: " + workerChannels.keySet() + ")");
+        } else if (chosenNode != null) {
+            // No worker channels configured (fixture mode): decision is logged,
+            // nothing to forward to, treat as delivered for the smoke path.
+            forwarded = true;
         }
 
         DispatchAck.Builder ackBuilder = DispatchAck.newBuilder().setReqId(req.getReqId());
-        if (chosenNode != null) {
-            // Put node_id, not endpoint, so it joins against worker log's node_id (fixes fixtures/fake_scheduler)
+        if (chosenNode != null && forwarded) {
+            // Put node_id, not endpoint, so it joins against worker log's node_id
             ackBuilder.setChosenNode(chosenNode);
             ackBuilder.setAccepted(true);
+        } else if (chosenNode != null) {
+            ackBuilder.setAccepted(false);
+            ackBuilder.setRejectReason(forwardError != null ? forwardError : "worker forward failed");
         } else {
             ackBuilder.setAccepted(false);
             ackBuilder.setRejectReason("No admissible nodes available");

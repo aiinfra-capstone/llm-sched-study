@@ -1,5 +1,14 @@
-# Repo-level tooling that lives outside dataplane/ — currently contracts/check.py.
+# Repo-level tooling that lives outside dataplane/ — contracts/check.py and tools/.
 # This is a lint config only; it does NOT make the repo root a Python package.
 # dataplane/ carries its own [tool.ruff] and is unaffected.
 line-length = 100
 exclude = ["dataplane", "controlplane", "docs/uml"]
+
+# The shell-injection family, on top of the defaults. tools/ drives measurement runs
+# through subprocess, and `subprocess.run(list, shell=True)` silently discards every
+# argument after the first on POSIX while working fine on Windows. That is not a style
+# question: it is the difference between a sweep that runs and a sweep that reports
+# success having executed nothing. S603/S606/S607 stay off, since flagging every
+# subprocess call and every unqualified executable name is noise we would learn to skip.
+[lint]
+extend-select = ["S602", "S604", "S605"]

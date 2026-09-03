@@ -19,7 +19,13 @@ jobs:
         with:
           enable-cache: true
       - run: uv run contracts/check.py
-      - run: uv run --with ruff ruff check contracts/check.py fixtures
+      # tools/ is linted here and nowhere else: the dataplane job runs with
+      # working-directory: dataplane, so its `ruff check .` never reaches the repo root,
+      # and coverage only sources src/dataplane. That gap is how a sweep runner that
+      # cannot execute a single point on Linux passed both workflows green.
+      - run: uv run --with ruff ruff check contracts/check.py fixtures tools
+      # format --check deliberately excludes tools/. Formatting is a style claim and
+      # these scripts came from two people; the check above is the one that catches bugs.
       - run: uv run --with ruff ruff format --check contracts/check.py fixtures
 
   dataplane:

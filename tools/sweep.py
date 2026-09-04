@@ -130,6 +130,7 @@ def build_sweep_manifest(
     R: float,
     synthesized_snapshots: dict[str, str] | None = None,
     trace_sha256: str | None = None,
+    trace_path: Path | None = None,
 ) -> dict[str, Any]:
     """Build a C-6 manifest for one sweep point, reusing anchors' manifest builder shape."""
     config = dict(base_manifest.get("config", {}))
@@ -149,7 +150,12 @@ def build_sweep_manifest(
     new_manifest["config"] = new_config
     if trace_sha256:
         new_manifest["trace_sha256"] = trace_sha256
-        new_manifest["trace_path"] = str(TRACE_DEFAULT)
+        # The path has to name the file the sha was taken from. Hardcoding TRACE_DEFAULT
+        # here while hashing args.trace meant any run with --trace wrote a manifest naming
+        # one trace beside another's sha256, and join refuses that pair outright ("the
+        # workload is not the one this run replayed"), excluding the whole sweep. Invisible
+        # on the default path, fatal the first time W5 sweeps the workload-shape profiles.
+        new_manifest["trace_path"] = str(trace_path if trace_path is not None else TRACE_DEFAULT)
     return new_manifest
 
 
@@ -161,12 +167,46 @@ def find_mvn() -> str:
     return found
 
 
+def overlay_dir(
+    snapshots: list[dict[str, Any]],
+    cost_models_dir: Path,
+    cache: dict[str, Path] | None = None,
+) -> Path:
+    """A cost-model directory holding the measured snapshots plus these synthesised ones.
+
+    SimApp walks a single directory, so a synthesised snapshot can only reach it through a
+    copy of the real tree with the extra files dropped in. Built once per set of
+    synthesised ids and cached, because the sweep reuses the same synthesised snapshot for
+    every policy, staleness and load at one R: rebuilding it per point copied every
+    committed snapshot again each time, which over the full grid is tens of thousands of
+    file copies to produce the same directory over and over.
+
+    The caller owns cleanup, since the cache outlives any one run.
+    """
+    key = "|".join(sorted(snap["snapshot_id"] for snap in snapshots))
+    if cache is not None and key in cache:
+        return cache[key]
+    target = Path(tempfile.mkdtemp(prefix="sweep_costmodels_"))
+    for src in cost_models_dir.rglob("*.json"):
+        dst = target / src.relative_to(cost_models_dir)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(src, dst)
+    for snap in snapshots:
+        (target / f"{snap['snapshot_id']}.json").write_text(
+            json.dumps(snap, indent=2), encoding="utf-8"
+        )
+    if cache is not None:
+        cache[key] = target
+    return target
+
+
 def run_one_des(
     trace: Path,
     manifest: dict[str, Any],
     out_dir: Path,
     cost_models_dir: Path = SNAPSHOT_ROOT,
     extra_snapshots: list[dict[str, Any]] | None = None,
+    overlay_cache: dict[str, Path] | None = None,
 ) -> Path:
     """Run SimApp for one manifest (DES, not hardware) and return the run dir."""
     # Write manifest to temp file
@@ -177,18 +217,8 @@ def run_one_des(
         manifest_path = Path(tf.name)
     # If we have synthesised snapshots, write them to a temp cost_models dir that overlays the real one.
     # SimApp walks a single dir, so the temp dir holds copies of the real files plus the synthesised ones.
-    temp_cost_dir = None
     if extra_snapshots:
-        temp_cost_dir = Path(tempfile.mkdtemp())
-        for src in cost_models_dir.rglob("*.json"):
-            rel = src.relative_to(cost_models_dir)
-            dst = temp_cost_dir / rel
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy(src, dst)
-        for snap in extra_snapshots:
-            fname = f"synth_{snap['snapshot_id']}.json"
-            (temp_cost_dir / fname).write_text(json.dumps(snap, indent=2), encoding="utf-8")
-        cost_models_arg = temp_cost_dir
+        cost_models_arg = overlay_dir(extra_snapshots, cost_models_dir, overlay_cache)
     else:
         cost_models_arg = cost_models_dir
 
@@ -213,8 +243,6 @@ def run_one_des(
         check=False,
     )
     manifest_path.unlink(missing_ok=True)
-    if temp_cost_dir:
-        shutil.rmtree(temp_cost_dir, ignore_errors=True)
     if (
         result.returncode != 0
         or "Error during simulation" in result.stdout
@@ -257,7 +285,9 @@ def main(argv: list[str] | None = None) -> int:
         "--settle-s",
         type=float,
         default=0.0,
-        help="sleep between points; only useful against hardware with an engine to drain, the DES has none",
+        help="sleep between points; 0 by default because each point is a separate "
+        "SimApp process with no engine state to drain, unlike the anchors loop this "
+        "borrowed the shape from",
     )
     ap.add_argument(
         "--keep-going",
@@ -269,7 +299,10 @@ def main(argv: list[str] | None = None) -> int:
     # Load sweep grid
     if args.config and args.config.exists():
         sweep_cfg = json.loads(args.config.read_text())
-        grid = sweep_cfg.get("grid", DEFAULT_GRID)
+        # Merged over the default rather than replacing it, so a config that overrides
+        # one axis ("just sweep R further") keeps the other three instead of raising
+        # KeyError on the first axis it does not mention.
+        grid = {**DEFAULT_GRID, **sweep_cfg.get("grid", {})}
         base_manifest_path = sweep_cfg.get("base_manifest")
         if base_manifest_path:
             base_manifest = json.loads(Path(base_manifest_path).read_text())
@@ -424,6 +457,9 @@ def main(argv: list[str] | None = None) -> int:
 
     run_dirs: list[Path] = []
     failures: list[str] = []
+    # One overlay per set of synthesised snapshots, reused across every policy, staleness
+    # and load at the same R, and removed together at the end.
+    overlay_cache: dict[str, Path] = {}
     max_rate = max(grid["rate_scale"])
     for point_no, (R, rate, staleness, policy) in enumerate(points):
         # Every point runs a two node pool. At R=1 the second node is an
@@ -461,7 +497,7 @@ def main(argv: list[str] | None = None) -> int:
             slow_node["gpu"] = "synthesised"
             nodes = nodes + [slow_node]
         manifest = build_sweep_manifest(
-            base_manifest, policy, staleness, rate, R, cost_snaps, trace_sha256
+            base_manifest, policy, staleness, rate, R, cost_snaps, trace_sha256, args.trace
         )
         manifest["nodes"] = nodes
         manifest["run_id"] = f"sweep_R{R:g}_{policy}_s{staleness}_r{rate:g}_{point_no:04d}"
@@ -477,6 +513,7 @@ def main(argv: list[str] | None = None) -> int:
                 out_dir=run_dir,
                 cost_models_dir=args.cost_models,
                 extra_snapshots=extra_for_this_run,
+                overlay_cache=overlay_cache,
             )
             run_dirs.append(run_dir)
         except RuntimeError as e:
@@ -487,6 +524,9 @@ def main(argv: list[str] | None = None) -> int:
             continue
         if args.settle_s and rate != max_rate:
             time.sleep(args.settle_s)
+
+    for overlay in overlay_cache.values():
+        shutil.rmtree(overlay, ignore_errors=True)
 
     print(f"\n{len(run_dirs)}/{total} sweep points completed, written under {args.out}")
     if failures and not args.keep_going:

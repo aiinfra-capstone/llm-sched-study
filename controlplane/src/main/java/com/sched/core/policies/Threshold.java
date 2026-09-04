@@ -60,7 +60,10 @@ public class Threshold implements Policy {
             }
         }
 
-        int index = Math.abs(counter.getAndIncrement()) % strongNodes.size();
+        // floorMod, not Math.abs: Math.abs(Integer.MIN_VALUE) is itself, negative, so
+        // once the counter wraps past Integer.MAX_VALUE the index goes negative and
+        // get() throws. Identical to the old expression for every non-negative count.
+        int index = Math.floorMod(counter.getAndIncrement(), strongNodes.size());
         return new Choice(Optional.of(strongNodes.get(index).nodeId()), scores, null);
     }
 }

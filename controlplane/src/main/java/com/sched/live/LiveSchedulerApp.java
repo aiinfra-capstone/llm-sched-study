@@ -19,13 +19,15 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class LiveSchedulerApp {
     public static void main(String[] args) throws Exception {
         if (args.length < 1) {
-            System.err.println("Usage: LiveSchedulerApp <manifest_file.json> [--worker <node_id>=<host:port> ...] [--port <port>] [--cost-models <dir>]");
-            return;
+            // Non-zero, so a launcher script can tell a usage error from a clean start.
+            System.err.println("Usage: LiveSchedulerApp <manifest_file.json> [--worker <node_id>=<host:port> ...] [--port <port>] [--cost-models <dir>] [--log-dir <dir>]");
+            System.exit(2);
         }
 
         String manifestPath = null;
         int port = 50051;
         String costModelDir = "../contracts/cost_models";
+        String logDir = ".";
         java.util.List<String> workerArgs = new java.util.ArrayList<>();
 
         for (int i = 0; i < args.length; i++) {
@@ -35,17 +37,19 @@ public class LiveSchedulerApp {
                 port = Integer.parseInt(args[++i]);
             } else if (args[i].equals("--cost-models") && i + 1 < args.length) {
                 costModelDir = args[++i];
+            } else if (args[i].equals("--log-dir") && i + 1 < args.length) {
+                logDir = args[++i];
             } else if (!args[i].startsWith("--") && manifestPath == null) {
                 manifestPath = args[i];
             } else if (args[i].equals("--help") || args[i].equals("-h")) {
-                System.out.println("Usage: LiveSchedulerApp <manifest> [--worker <node_id>=<host:port> ...] [--port <port>] [--cost-models <dir>]");
+                System.out.println("Usage: LiveSchedulerApp <manifest_file.json> [--worker <node_id>=<host:port> ...] [--port <port>] [--cost-models <dir>] [--log-dir <dir>]");
                 return;
             }
         }
 
         if (manifestPath == null) {
             System.err.println("Manifest file required");
-            return;
+            System.exit(2);
         }
 
         Manifest manifest = ManifestParser.parse(manifestPath);
@@ -128,7 +132,9 @@ public class LiveSchedulerApp {
         double thresholdT = manifest.config() != null && manifest.config().containsKey("threshold_t") ? ((Number) manifest.config().get("threshold_t")).doubleValue() : 0.0;
         Policy policy = Policies.fromName(manifest.policy(), new AtomicInteger(0), thresholdT);
         
-        DecisionLogger logger = new DecisionLogger(".", runId);
+        // The scheduler log is a C-4 artifact of the run, so it belongs in the run
+        // directory rather than in whatever directory the process happened to start in.
+        DecisionLogger logger = new DecisionLogger(logDir, runId);
 
         int rngSeed = 42;
         if (manifest.config() != null && manifest.config().containsKey("seed")) {
@@ -187,6 +193,7 @@ public class LiveSchedulerApp {
             System.out.println("Shutting down scheduler");
             server.shutdown();
             for (io.grpc.ManagedChannel ch : workerChannels.values()) ch.shutdown();
+            logger.close();
         }));
         server.awaitTermination();
     }

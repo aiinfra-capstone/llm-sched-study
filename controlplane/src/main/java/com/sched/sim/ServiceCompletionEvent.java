@@ -49,10 +49,19 @@ public class ServiceCompletionEvent extends SimulationEvent {
         long queueWaitNs = startNs - request.admitNs();
         double kvOccupancy = (double) concurrencyAtStart / Math.max(1, server.getBatchCapacity());
 
+        // The span the request actually occupied, not the estimate it was admitted with.
+        // reevaluateActive reschedules this event when the batch changes around a running
+        // request, carrying startNs and the original serviceNs forward, so serviceNs is the
+        // pre-contention figure while scheduledTimeNs already reflects the stretch. The
+        // join computes transport_residual_ms as what is left of e2e after the single-host
+        // durations, so logging the estimate puts batch contention into a residual that is
+        // meant to be network only.
+        long realisedServiceNs = Math.max(0L, scheduledTimeNs - startNs);
+
         WorkerLogger workerLogger = des.getWorkerLogger();
         if (workerLogger != null) {
             workerLogger.logRecord(new WorkerRecord(
-                runId, request.req().reqId(), server.getNodeId(), "llamacpp", queueWaitNs, serviceNs,
+                runId, request.req().reqId(), server.getNodeId(), "llamacpp", queueWaitNs, realisedServiceNs,
                 request.req().promptLen(), request.req().outputLen(), concurrencyAtStart,
                 request.inflightAtAdmit(),
                 kvOccupancy,

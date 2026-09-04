@@ -238,6 +238,11 @@ public class SimApp {
         } catch (Exception e) {
             System.err.println("Error during simulation: " + e.getMessage());
             e.printStackTrace();
+            // Non-zero, so a caller can tell. Returning normally here made the JVM exit 0
+            // for a simulation that threw, which is why validate_f23.sh has to grep stdout
+            // for "Error during simulation" instead of reading $?, and why the sweep
+            // runner's stop-on-first-failure could not see a failed point at all.
+            System.exit(1);
         }
     }
 

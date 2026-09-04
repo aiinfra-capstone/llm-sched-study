@@ -31,7 +31,19 @@ public class StalenessVeil implements StateStore {
 
     public void updateNode(NodeView nv) {
         long curr = clk.nowNs();
-        hist.computeIfAbsent(nv.nodeId(), k -> new ConcurrentSkipListMap<>()).put(curr, nv);
+        ConcurrentSkipListMap<Long, NodeView> h =
+            hist.computeIfAbsent(nv.nodeId(), k -> new ConcurrentSkipListMap<>());
+        h.put(curr, nv);
+
+        // getAllNodes serves floorEntry(now - staleNs), and both clocks in use here only
+        // move forward, so once an entry is older than the entry that horizon currently
+        // lands on it can never be served again. Keeping that one and dropping what is
+        // strictly older bounds the history at the staleness window instead of letting it
+        // grow for the length of the run.
+        Long horizon = h.floorKey(curr - staleNs);
+        if (horizon != null) {
+            h.headMap(horizon, false).clear();
+        }
     }
 
     @Override

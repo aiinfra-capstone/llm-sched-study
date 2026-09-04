@@ -22,7 +22,10 @@ public class RoundRobin implements Policy {
         if (admissibleNodes.isEmpty()) {
             return new Choice(Optional.empty(), new HashMap<>(), null);
         }
-        int index = Math.abs(counter.getAndIncrement()) % admissibleNodes.size();
+        // floorMod, not Math.abs: Math.abs(Integer.MIN_VALUE) is itself, negative, so
+        // once the counter wraps past Integer.MAX_VALUE the index goes negative and
+        // get() throws. Identical to the old expression for every non-negative count.
+        int index = Math.floorMod(counter.getAndIncrement(), admissibleNodes.size());
         String chosen = admissibleNodes.get(index).nodeId();
         
         Map<String, Double> scores = new HashMap<>();

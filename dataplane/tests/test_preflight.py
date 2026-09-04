@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+import time
 from concurrent import futures
 
 import grpc
@@ -228,6 +229,12 @@ def test_serve_mode_stands_up_a_port_for_the_far_side_to_prove_it_can_reach(caps
             check = preflight.check_peer("probe", "probe", "127.0.0.1:50079", samples=2)
             if check.ok:
                 break
+            # Paced, because `serve_probe` binds inside an event loop on another thread
+            # and a refused connection on loopback returns immediately. Unpaced, all 50
+            # attempts finish in a few milliseconds and the assertion below fires before
+            # the socket exists. That is how this flaked on CI, on a commit that touched
+            # only a docstring.
+            time.sleep(0.05)
     finally:
         stop_flag.set()
         thread.join(timeout=10)

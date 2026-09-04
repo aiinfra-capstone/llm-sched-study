@@ -2,6 +2,17 @@
 
 Throwaway, and load-bearing.
 
+**Superseded for anything measured, as of 2026-09-04.** The real control plane now
+dispatches: `LiveSchedulerApp` runs the veil, the filter and the policy, writes the C-4
+decision record, and forwards `Execute` to the chosen worker. Verified end to end on a
+two-node local pool, where WJSQ split 200 requests 130/70 between an `ngl 99` node and an
+`ngl 0` one and every row came out with `chosen_node` and `routing_error_ms` populated for
+the first time in the project.
+
+`fake_scheduler` round-robins blindly and writes no decision record, so every run it drives
+has those columns null and cannot answer H1 or MPR-2. Keep it for developing the data plane
+without the JVM in the loop. Do not point a measurement at it.
+
 | | Built by | Talks to | Behaviour |
 |---|---|---|---|
 | `fake_scheduler/` | **A** | A's replay client | Round-robins blindly. Accepts `Dispatch`, returns a `DispatchAck`, forwards `Execute`. No policy, no state store. |

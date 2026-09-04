@@ -308,8 +308,19 @@ and the only thing exposed to the LAN.
   -ngl 99 --threads 6 --parallel 4
 
 uv run worker --node-id gtx1650ti --engine http://127.0.0.1:18080 \
-  --bind 0.0.0.0:50061 --engine-version b10569+p1+cuda13.2 --log-dir runs/worker
+  --bind 0.0.0.0:50061 --scheduler 10.42.0.1:50051 --slots 4 \
+  --engine-version b10569+p1+cuda13.2 --log-dir runs/exp/<run_id>
 ```
+
+`--scheduler` is not optional any more. The worker heartbeats to it and reports every
+completion to it, and the scheduler now uses both: completions arrive on their own RPC
+rather than at the next heartbeat tick, which is the second staleness source C-1's first
+invariant exists to keep out of H3.
+
+**All three processes must log into the same run directory.** `replay --out runs/exp`
+creates `runs/exp/<run_id>/` and writes the client log there, so the worker and the
+scheduler have to be pointed at that same path. Splitting them is not loud: the join finds
+the manifest, finds no client log, and writes an empty frame rather than refusing.
 
 **This is where *R* is set.** A second node running the same engine at a lower `-ngl` is
 genuinely slower, and that is how we produce a second *R* point without a second machine.
@@ -321,13 +332,41 @@ than per machine.
 Control plane only. It picks a node and steps out of the way, so it never sits in the
 response path.
 
+The scheduler reads a C-6 manifest to learn the pool, the policy, and which C-3 snapshot
+prices each node. Admissibility and capability both come from those snapshots, so a node
+whose snapshot is missing gets neither.
+
 ```bash
-uv run --project dataplane python fixtures/fake_scheduler/serve.py \
-  --bind 0.0.0.0:50051 --worker 10.42.0.11:50061 --worker 10.42.0.12:50061
+cd controlplane
+mvn -q exec:java -Dexec.mainClass=com.sched.live.LiveSchedulerApp \
+  -Dexec.args="../runs/exp/<run_id>/manifest.json --port 50051 \
+    --cost-models ../contracts/cost_models --log-dir ../runs/exp/<run_id> \
+    --worker gtx1650ti=10.42.0.1:50061 --worker cpu1=10.42.0.2:50061"
 ```
 
-The fixture round-robins blindly and writes no decision record. It exists so neither half of
-the project blocks on the other. The real control plane replaces it at the same address.
+`--worker <node_id>=<host:port>` maps the node ids in the manifest to endpoints. The ids
+have to match, because `DispatchAck.chosen_node` carries the node id and that is what C-5
+joins on.
+
+The manifest is a pre-run input here, not the post-run C-6 record. Build one per pool and
+policy from an existing manifest:
+
+```bash
+uv run --project dataplane python - <<'EOF'
+import json, glob, pathlib
+m = json.load(open(sorted(glob.glob("runs/anchors/anchor1b_quiet_*/manifest.json"))[0]))
+m["nodes"] = json.load(open("dataplane/configs/pool_1b_lan.json"))
+m["cost_model_snapshots"] = {"gtx1650ti": "<gpu snapshot_id>", "cpu1": "<cpu snapshot_id>"}
+m["run_id"], m["policy"], m["staleness_s"] = "jsq_r1", "jsq", 0.0
+pathlib.Path("runs/exp/jsq_r1").mkdir(parents=True, exist_ok=True)
+pathlib.Path("runs/exp/jsq_r1/manifest.json").write_text(json.dumps(m, indent=2))
+EOF
+```
+
+`fixtures/fake_scheduler/serve.py` still exists and still round-robins blindly without
+writing a decision record. It is a Week-1 unblocking device, not a vehicle for a result:
+every run it drives has `chosen_node` and `routing_error_ms` null, so it cannot produce
+MPR-2. Do not use it for anything being measured.
 
 ### 6. Run
 

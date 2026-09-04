@@ -439,10 +439,18 @@ uv run worker --node-id gtx1650ti --engine http://127.0.0.1:18080 \
   --bind 0.0.0.0:50061 --scheduler <scheduler>:50051 --slots 4 \
   --engine-version b10569+p1+cuda13.2 --log-dir runs/worker
 
-# The fixture scheduler, from the repo root. The control plane's LiveSchedulerApp replaces
-# it; --loopback answers from an analytic service-time model and is NOT a worker — its
-# timings mean nothing and no calibration may be run against it.
-uv run --project dataplane python fixtures/fake_scheduler/serve.py --worker 127.0.0.1:50061
+# The real scheduler, from the repo root. It reads the pool and the C-3 snapshots from a
+# manifest, applies the policy, logs the decision, and forwards Execute to the chosen node.
+cd controlplane && mvn -q exec:java -Dexec.mainClass=com.sched.live.LiveSchedulerApp \
+  -Dexec.args="../runs/exp/run_0001/manifest.json --port 50051 \
+    --cost-models ../contracts/cost_models --log-dir ../runs/exp/run_0001 \
+    --worker gtx1650ti=127.0.0.1:50061"
+
+# fixtures/fake_scheduler/serve.py is still there and still round-robins blindly with no
+# decision record, so every run it drives has chosen_node and routing_error_ms null. It
+# unblocks development; it cannot produce a measured result. --loopback answers from an
+# analytic service-time model and is NOT a worker: its timings mean nothing and no
+# calibration may be run against it.
 
 # F-17 — open-loop replay. Exits non-zero and says why when the run is invalid.
 uv run replay traces/smoke.jsonl \

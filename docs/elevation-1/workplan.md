@@ -45,11 +45,28 @@ The live scheduler decides and logs but never calls `Worker.Execute`. Four chang
 No contract change. `DispatchRequest` already carries every field `ExecuteRequest` needs;
 the scheduler adds `decision_seq`, which it already owns.
 
-**Verified by** running the real scheduler with two `--worker` endpoints against two local
-workers, before any LAN work. A `scheduler_*.jsonl` appears with a decision record per
-request, `uv run pipeline` fills `chosen_node` and `routing_error_ms` for the first time in
-the project, and `uv run figures --only node-utilization` stops raising. That smoke test is
-co-located and therefore `valid: false` by F-9a, which is correct.
+**Done, 2026-09-04.** All four changes landed, and the smoke test ran on a two-node local
+pool: an `ngl 99` engine on 18080 and an `ngl 0` engine on 18081, two workers, the real
+scheduler, 200 requests under WJSQ.
+
+| | |
+|---|---|
+| `chosen_node` | `gtx1650ti` 130, `gtx1650ti_b` 70 |
+| `routing_error_ms` non-null | 200 of 200, previously 0 of 800 |
+| `decide_us` | median 113 us |
+| median e2e | 1296 ms on the GPU node, 4183 ms on the CPU one |
+
+The 130/70 split is the part that matters. A blind rotation gives 100/100, so the policy
+read capability and weighted by it, and the capability it read is the C-3 value rather than
+a live throughput EWMA. `routing_error_ms` is zero on every row, meaning WJSQ never chose a
+node its own information said was worse, which is the expected answer at this load and is
+now a measured zero instead of a null.
+
+Two things the smoke test exposed that are not W1's fault. `replay --out X` writes to
+`X/<run_id>/`, so pointing the worker and scheduler `--log-dir` at `X` splits the logs
+across two directories and the join then produces an empty frame instead of refusing. And
+the run reported `valid: true` despite being co-located, because `--nodes` was not passed
+and `colocated_nodes` stayed 0. Both are written up in the README's run section.
 
 ---
 

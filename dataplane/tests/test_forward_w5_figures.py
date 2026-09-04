@@ -101,9 +101,16 @@ def test_figures_read_parquet_and_nothing_else() -> None:
 
 
 def test_the_h1_interaction_term_uses_the_stated_sign_convention() -> None:
-    """H1 predicts `(WJSQ - JSQ) < (StaticWeighted - RoundRobin)`: calibration buys less
-    once the policy is already queue-aware. The estimator has to compute that difference
-    in that order, or the headline result reverses while still looking like a result."""
+    """H1 predicts calibration buys less once the policy is already queue-aware, which
+    means `(WJSQ - JSQ) > (StaticWeighted - RoundRobin)`: both brackets are negative when
+    calibration helps, and the queue-aware one is the shallower of the two. The estimator
+    has to compute that difference in that order, or the headline result reverses while
+    still looking like a result.
+
+    This docstring used to quote the inequality the other way round, copied from the
+    "Formally." sentence of H1 in the spec, which is inverted against its own prose two
+    lines above it and against the assertion below. The assertions here were always
+    right; only the sentence describing them was wrong."""
     latencies = {
         "round_robin": 100.0,
         "static_weighted": 80.0,  # calibration alone: -20

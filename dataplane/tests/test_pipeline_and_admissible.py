@@ -130,10 +130,59 @@ def test_the_best_alternative_is_the_schedulers_own_view() -> None:
     is the quantity H3 is about — not what the other node would really have done."""
     row = _join()[0]
     assert row["best_alt_node"] == "n2"
-    # n2: (3 queued + 1) * 128 tokens / 20 tok/s = 25.6 s; n1: 1 * 128 / 100 = 1.28 s.
-    assert row["best_alt_est_service_ms"] == pytest.approx(25600.0)
+    # Pending is queued plus inflight, the same sum WJSQ scores on.
+    # n2: (3 queued + 4 inflight + 1) * 128 tokens / 20 tok/s = 51.2 s;
+    # n1: (0 + 1 + 1) * 128 / 100 = 2.56 s.
+    assert row["best_alt_est_service_ms"] == pytest.approx(51200.0)
     assert row["routing_error_ms"] == 0.0  # it chose the better node
     assert row["chosen_queue_depth"] == 0 and row["chosen_est_age_ms"] == 40
+
+
+def test_a_saturated_engine_does_not_price_the_same_as_an_idle_one() -> None:
+    """The regression guard for the hole the estimate used to have.
+
+    `queue_depth` counts what is waiting in the wrapper's buffer, `inflight` what is
+    already executing in the engine. A node running four requests at its batch limit and
+    a node doing nothing both report `queue_depth = 0`, so an estimate keyed on queue
+    depth alone priced them identically and routing into the saturated engine scored
+    exactly zero error. Zero is the value that means the scheduler chose well, so the
+    worst available decision was being recorded as the best kind of outcome.
+
+    Everything here is held equal except `inflight`, which is the whole point: with the
+    old formula both candidates estimate 1280 ms and `routing_error_ms` is 0.0.
+    """
+    saturated = [
+        {
+            **_SCHEDULER[0],
+            "candidates": [
+                {
+                    "node_id": "n1",
+                    "queue_depth": 0,
+                    "inflight": 4,
+                    "capability_tok_s": 100.0,
+                    "estimate_age_ms": 40,
+                    "admissible": True,
+                    "score": 1.0,
+                },
+                {
+                    "node_id": "n2",
+                    "queue_depth": 0,
+                    "inflight": 0,
+                    "capability_tok_s": 100.0,
+                    "estimate_age_ms": 40,
+                    "admissible": True,
+                    "score": 1.0,
+                },
+            ],
+        }
+    ]
+    row = _join(scheduler=saturated)[0]
+    assert row["best_alt_node"] == "n2"
+    # n2 idle: (0 + 0 + 1) * 128 / 100 = 1.28 s. n1 saturated: (0 + 4 + 1) * 128 / 100 =
+    # 6.4 s. C-5 carries the alternative's estimate and the error, so the chosen node's
+    # own estimate is the sum of the two rather than a column of its own.
+    assert row["best_alt_est_service_ms"] == pytest.approx(1280.0)
+    assert row["routing_error_ms"] == pytest.approx(5120.0)
 
 
 def test_a_missing_scheduler_record_is_null_not_zero() -> None:

@@ -1,10 +1,10 @@
 {
-  "_comment": "Fill in the two hostnames before the first multi-host run; the addresses match the 10.42.0.0/24 subnet that tools/lan-up.sh and tools/pool-install.sh both assume, with the harness on .1 as the hotspot gateway. client_endpoint is the port the replay client binds for F-11 deliveries; it must be reachable INBOUND from every worker host, which is the check nothing else performs. The pool is the 1B model on both nodes because F-9 holds engine, model and quant constant across pool members, and pool-install.sh only fetches the 1B weights. Heterogeneity comes from ngl, which is F-9a.",
+  "_comment": "The two-host pool: the laptop (hostname fedora) is the harness host on .1 and also runs the GTX 1650 Ti node; the RTX 4070 box boots from the Crucial X9 as hostname rtx4070 on .11. The addresses match the 10.42.0.0/24 subnet that tools/lan-up.sh and tools/pool-install.sh both assume. client_endpoint is the port the replay client binds for F-11 deliveries; it must be reachable INBOUND from every worker host, which is the check nothing else performs. Both nodes run the 1B model because F-9 holds engine, model and quant constant across pool members.",
   "client_endpoint": "10.42.0.1:50071",
   "scheduler": "10.42.0.1:50051",
   "workers": {
     "gtx1650ti": "10.42.0.1:50061",
-    "cpu1": "10.42.0.2:50061"
+    "rtx4070": "10.42.0.11:50061"
   },
   "pool": [
     {
@@ -16,23 +16,32 @@
       "model": "Llama-3.2-1B-Instruct",
       "quant": "Q4_K_M",
       "gpu": "NVIDIA GeForce GTX 1650 Ti",
-      "driver": "580.173.02",
+      "driver": "580.178.04",
       "prefix_caching": false,
       "max_batch": 4,
-      "engine_config": { "ngl": 99, "threads": 6, "parallel": 4 }
+      "engine_config": {
+        "ngl": 99,
+        "threads": 6,
+        "parallel": 4
+      }
     },
     {
-      "node_id": "cpu1",
-      "host": "REPLACE-WITH-HOSTNAME",
+      "node_id": "rtx4070",
+      "host": "rtx4070",
       "role": "pool",
       "engine": "llamacpp",
-      "engine_version": "b10569+p1+cpu",
+      "engine_version": "b10569+p1+cuda13.2",
       "model": "Llama-3.2-1B-Instruct",
       "quant": "Q4_K_M",
-      "gpu": "none",
+      "gpu": "NVIDIA GeForce RTX 4070",
+      "driver": "580.178.04",
       "prefix_caching": false,
       "max_batch": 4,
-      "engine_config": { "ngl": 0, "threads": 6, "parallel": 4 }
+      "engine_config": {
+        "ngl": 99,
+        "threads": 6,
+        "parallel": 4
+      }
     }
   ]
 }

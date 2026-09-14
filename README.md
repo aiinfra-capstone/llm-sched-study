@@ -317,7 +317,12 @@ completion to it, and the scheduler now uses both: completions arrive on their o
 rather than at the next heartbeat tick, which is the second staleness source C-1's first
 invariant exists to keep out of H3.
 
-**All three processes must log into the same run directory.** `replay --out runs/exp`
+**For a `tools/hw_runs.py` campaign, every worker logs to `~/Documents/capstone/runs/worker_logs`**
+(`--log-dir ~/Documents/capstone/runs/worker_logs`), on whichever host it runs. That is
+where `hw_mpr2_lan.json` looks for each node's log, and the driver copies it into the run
+directory after every run.
+
+For a run by hand, all three processes must log into the same run directory. `replay --out runs/exp`
 creates `runs/exp/<run_id>/` and writes the client log there, so the worker and the
 scheduler have to be pointed at that same path. Splitting them is not loud: the join finds
 the manifest, finds no client log, and writes an empty frame rather than refusing.
@@ -339,29 +344,37 @@ whose snapshot is missing gets neither.
 ```bash
 cd controlplane
 mvn -q exec:java -Dexec.mainClass=com.sched.live.LiveSchedulerApp \
-  -Dexec.args="../runs/exp/<run_id>/manifest.json --port 50051 \
+  -Dexec.args="../runs/exp/<run_id>/manifest.pre.json --port 50051 \
     --cost-models ../contracts/cost_models --log-dir ../runs/exp/<run_id> \
-    --worker gtx1650ti=10.42.0.1:50061 --worker cpu1=10.42.0.2:50061"
+    --worker gtx1650ti=10.42.0.1:50061 --worker rtx4070=10.42.0.11:50061"
 ```
 
 `--worker <node_id>=<host:port>` maps the node ids in the manifest to endpoints. The ids
 have to match, because `DispatchAck.chosen_node` carries the node id and that is what C-5
 joins on.
 
-The manifest is a pre-run input here, not the post-run C-6 record. Build one per pool and
-policy from an existing manifest:
+The manifest is a pre-run input here, not the post-run C-6 record, which is why it is named
+`manifest.pre.json`: `runset` only reads `manifest.json`, so a run that dies halfway leaves
+nothing that looks like a data point. The scheduler takes its run id, policy, staleness and
+log file from it at startup, so **one scheduler process serves exactly one run**. The
+scheduler also serves the newest snapshot in each node class whatever the manifest names,
+so the manifest has to name the newest one or it records a model that did not run.
+
+For a campaign we do not do any of this by hand. `tools/hw_runs.py` writes the pre-run
+manifest, starts a fresh scheduler per run, replays, stops the scheduler, pulls each node's
+worker log back over rsync, and writes the post-run manifest:
 
 ```bash
-uv run --project dataplane python - <<'EOF'
-import json, glob, pathlib
-m = json.load(open(sorted(glob.glob("runs/anchors/anchor1b_quiet_*/manifest.json"))[0]))
-m["nodes"] = json.load(open("dataplane/configs/pool_1b_lan.json"))
-m["cost_model_snapshots"] = {"gtx1650ti": "<gpu snapshot_id>", "cpu1": "<cpu snapshot_id>"}
-m["run_id"], m["policy"], m["staleness_s"] = "jsq_r1", "jsq", 0.0
-pathlib.Path("runs/exp/jsq_r1").mkdir(parents=True, exist_ok=True)
-pathlib.Path("runs/exp/jsq_r1/manifest.json").write_text(json.dumps(m, indent=2))
-EOF
+uv run --project dataplane python tools/hw_runs.py dataplane/configs/hw_mpr2_lan.json --dry-run
+uv run --project dataplane python tools/hw_runs.py dataplane/configs/hw_mpr2_lan.json \
+  --clock-sync clock_sync.json
 ```
+
+It refuses a snapshot that is not the newest in its class, a pool node with no worker
+endpoint or log location, and a co-located pool. It runs the operating points slowest first
+and shuffles the policy order at each point from a fixed seed, so throughput drift over the
+campaign does not line up with the policy comparison. A campaign that stops can be restarted
+with the same command; finished runs are skipped.
 
 `fixtures/fake_scheduler/serve.py` still exists and still round-robins blindly without
 writing a decision record. It is a Week-1 unblocking device, not a vehicle for a result:
@@ -377,17 +390,23 @@ replay refuses to start unless the file still hashes to it.
 uv run gen-trace configs/trace_anchor_1b.json -o runs/traces/t_lam1.2.jsonl
 ```
 
-Then one replay per policy, and the whole set again per *R* point. `--advertise` is the
-LAN address the worker sends the response back to, which is the F-11 path and the thing
-nothing else exercises.
+Then one replay per policy, and the whole set again per *R* point; `tools/hw_runs.py` does
+this loop. By hand, `--advertise` is the LAN address the worker sends the response back to,
+which is the F-11 path and the thing nothing else exercises.
 
 ```bash
 uv run replay runs/traces/t_lam1.2.jsonl \
-  --scheduler 10.42.0.1:50051 --run-id jsq_r1 --policy jsq \
+  --scheduler 10.42.0.1:50051 --run-id jsq_r1 \
   --sha256 <printed by gen-trace> \
-  --bind 0.0.0.0:50071 --advertise 10.42.0.1 \
-  --nodes nodes.json --out runs/exp
+  --bind 0.0.0.0:50071 --advertise 10.42.0.1 --out runs/exp
 ```
+
+The replay reads `runs/exp/jsq_r1/manifest.pre.json` (or `--manifest`) and takes the node
+block, policy, snapshots and staleness from it, so the post-run `manifest.json` describes
+the scheduler that actually ran. It refuses before the first request if the run id, trace
+hash or `--policy` disagrees with that manifest. Each worker writes its log on its own
+host, so `worker_<node_id>_<run_id>.jsonl` has to be copied into the run directory before
+the pipeline runs.
 
 Then the pipeline, which is a pure function of the manifest and the three log files. No
 network, no engine, and it runs on a laptop.

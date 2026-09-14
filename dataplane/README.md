@@ -485,17 +485,22 @@ repo rather than from a shell history. Four groups.
 
 **Calibration.** `calibration_1b*.json` and `calibration_8b*.json`, one per node class, plus
 `calibration_smoke.json` for timing a single cell before committing to a full grid.
-`calibration_1b_cpu.json` is the second pool node and its grid edges and sampled cells are
-byte-identical to `calibration_1b_anchorgrid.json`. That is deliberate and load-bearing:
+`calibration_1b_rtx4070.json` (the RTX 4070 box) and `calibration_1b_cpu.json` (the laptop
+at `ngl 0`) have grid edges and sampled cells byte-identical to
+`calibration_1b_anchorgrid.json`. That is deliberate and load-bearing:
 `r_range.synthesizable` refuses to compute a ratio between two classes that share no
 `(prompt_bucket, output_bucket, concurrency)` cell, and mismatched grids already cost this
 study 20% of its ratio once, when the fast node was calibrated at prompt 256 against the
 slow one at 64.
 
-**Pool topology.** `pool_1b.json` is the single-host pool; `pool_1b_lan.json` adds the
-second physical node. Both run the same model and quant, because F-9 holds those constant
-across a pool and `launch.build_nodes` refuses otherwise; heterogeneity comes from `ngl`,
-which is F-9a. `preflight_lan.json` carries the same two nodes plus the LAN addresses.
+**Pool topology.** `pool_1b.json` is the single-host pool; `pool_1b_lan.json` is the
+two-host pool, the laptop's GTX 1650 Ti and the RTX 4070 box. Both run the same model and
+quant, because F-9 holds those constant across a pool and `launch.build_nodes` refuses
+otherwise; heterogeneity comes from the hardware and from `ngl`, which is F-9a.
+`preflight_lan.json` carries the same two nodes plus the LAN addresses, and
+`hw_mpr2_lan.json` is the MPR-2 campaign over them for `tools/hw_runs.py`. Its `rtx4070`
+snapshot is a placeholder until that class is calibrated, and the driver refuses to start
+until it is replaced.
 
 **Traces.** `trace_anchor_1b.json` is the F-23 validation trace. The three workload-shape
 profiles are `trace_summarisation_1b.json`, `trace_balanced_1b.json` and

@@ -1,0 +1,89 @@
+{
+  "tag": "mpr2_1650ti_4070",
+  "trace": "runs/traces/anchor_1b.trace.jsonl",
+  "trace_sha256": "bea054628d197527a530f04dc95f4170686c3b7651941698558e145f02c540cf",
+  "out_root": "runs/exp/mpr2_1650ti_4070",
+  "nodes": [
+    {
+      "node_id": "gtx1650ti",
+      "host": "fedora",
+      "role": "pool",
+      "engine": "llamacpp",
+      "engine_version": "b10569+p1+cuda13.2",
+      "model": "Llama-3.2-1B-Instruct",
+      "quant": "Q4_K_M",
+      "gpu": "NVIDIA GeForce GTX 1650 Ti",
+      "driver": "580.178.04",
+      "prefix_caching": false,
+      "max_batch": 4,
+      "engine_config": {
+        "ngl": 99,
+        "threads": 6,
+        "parallel": 4
+      }
+    },
+    {
+      "node_id": "rtx4070",
+      "host": "rtx4070",
+      "role": "pool",
+      "engine": "llamacpp",
+      "engine_version": "b10569+p1+cuda13.2",
+      "model": "Llama-3.2-1B-Instruct",
+      "quant": "Q4_K_M",
+      "gpu": "NVIDIA GeForce RTX 4070",
+      "driver": "580.178.04",
+      "prefix_caching": false,
+      "max_batch": 4,
+      "engine_config": {
+        "ngl": 99,
+        "threads": 6,
+        "parallel": 4
+      }
+    }
+  ],
+  "workers": {
+    "gtx1650ti": {
+      "endpoint": "10.42.0.1:50061",
+      "logs": "runs/worker_logs"
+    },
+    "rtx4070": {
+      "endpoint": "10.42.0.11:50061",
+      "logs": "divyansh@10.42.0.11:Documents/capstone/runs/worker_logs"
+    }
+  },
+  "cost_model_snapshots": {
+    "gtx1650ti": "cm_gtx1650ti_ngl99_p4_q4km_llama32_1b_20260831T153652Z_008",
+    "rtx4070": "REPLACE-WITH-THE-NEWEST-rtx4070_ngl99_p4_q4km_llama32_1b-SNAPSHOT"
+  },
+  "policies": [
+    "round_robin",
+    "jsq",
+    "static_weighted",
+    "wjsq",
+    "threshold"
+  ],
+  "points": [
+    {
+      "name": "quiet",
+      "rate_scale": 0.8
+    },
+    {
+      "name": "light",
+      "rate_scale": 1.15
+    },
+    {
+      "name": "mid",
+      "rate_scale": 1.45
+    }
+  ],
+  "staleness_s": [
+    0.0
+  ],
+  "threshold_t": 50.0,
+  "repeats": 3,
+  "warmup_s": 10.0,
+  "settle_s": 20.0,
+  "scheduler_port": 50051,
+  "bind": "0.0.0.0:50071",
+  "advertise": "10.42.0.1"
+}

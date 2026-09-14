@@ -50,7 +50,7 @@ from dataplane.harness import manifest as manifest_mod
 from dataplane.harness.prompts import materialize_all
 from dataplane.proto import sched_grpc, sched_pb2
 
-__all__ = ["ReplayResult", "replay"]
+__all__ = ["ReplayResult", "check_pre_run", "find_pre_run", "post_run_manifest", "replay"]
 
 
 @dataclass
@@ -162,6 +162,121 @@ async def _fire(
     record["output_tokens"] = delivery.output_tokens
     record["responding_node"] = delivery.node_id
     return record
+
+
+# Config keys this replay measures itself. Every other config key in the pre-run manifest
+# describes the scheduler's condition and is carried into the post-run record.
+_MEASURED_CONFIG = ("duration_s", "warmup_s", "rate_scale", "lambda", "arrival", "length_dist")
+
+
+def find_pre_run(run_dir: Path) -> Path | None:
+    """The manifest the scheduler was started with, if the run directory holds one.
+
+    `manifest.pre.json` first, because that name is never mistaken for a finished run by
+    `runset.discover`. A `manifest.json` already in the directory is the older README
+    layout, where the pre-run manifest sat at the path the post-run one is written to.
+    """
+    for name in ("manifest.pre.json", "manifest.json"):
+        if (run_dir / name).is_file():
+            return run_dir / name
+    return None
+
+
+def check_pre_run(
+    pre: dict[str, Any], *, run_id: str, sha256: str | None, policy: str | None
+) -> None:
+    """Refuse a replay whose client would disagree with the scheduler it is talking to.
+
+    Checked before the run rather than after it. A different run_id splits the logs
+    across two names and the join finds no decisions; a different trace or policy produces
+    a record that describes a run nobody did.
+    """
+    if pre.get("run_id") != run_id:
+        raise ValueError(
+            f"the pre-run manifest is for run {pre.get('run_id')!r} but --run-id is {run_id!r}; "
+            "the scheduler names its log after the manifest, so the join would find no decisions"
+        )
+    if sha256 and pre.get("trace_sha256") and pre["trace_sha256"] != sha256:
+        raise ValueError(
+            f"the pre-run manifest names trace {pre['trace_sha256'][:12]} but --sha256 is "
+            f"{sha256[:12]}"
+        )
+    if policy and pre.get("policy") and pre["policy"] != policy:
+        raise ValueError(
+            f"the scheduler was started with policy {pre['policy']!r} but --policy says {policy!r}"
+        )
+    if not pre.get("cost_model_snapshots"):
+        raise ValueError(
+            "the pre-run manifest names no cost model snapshots; the scheduler admits no node "
+            "without one, and runset cannot derive R for the run"
+        )
+
+
+def post_run_manifest(
+    *,
+    run_id: str,
+    result: ReplayResult,
+    trace_path: str | Path,
+    trace_sha256: str,
+    rate_scale: float,
+    warmup_s: float,
+    nodes: list[dict[str, Any]],
+    policy: str,
+    pre: dict[str, Any] | None = None,
+    clock_sync: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """The C-6 record of a finished replay: what the client measured over what the scheduler ran.
+
+    The measured fields (duration, rate, arrival, validity) come from this replay. Everything
+    that describes the scheduler's condition comes from the pre-run manifest when there is
+    one: the snapshots, staleness, Threshold(T) cutoff, any borrowed snapshot, the transport
+    term. `staleness_s` is taken from the top level because that is the field the scheduler
+    reads.
+    """
+    header = result.header
+    validity = replace(
+        result.validity,
+        colocated_nodes=launch.colocated_count(nodes),
+        clock_unsynced_hosts=manifest_mod.unsynced_hosts(clock_sync),
+    )
+    config = {k: v for k, v in (pre or {}).get("config", {}).items() if k not in _MEASURED_CONFIG}
+    config.update(
+        {
+            "duration_s": header["duration_s"] / rate_scale,
+            "warmup_s": warmup_s,
+            "rate_scale": rate_scale,
+            "lambda": round(float(header["arrival"].get("lambda_base", 0.0)) * rate_scale, 6),
+            "arrival": header["arrival"],
+            "length_dist": header["length_dist"],
+            "gen_seed": header["gen_seed"],
+        }
+    )
+    if pre is not None:
+        config["staleness_s"] = float(pre.get("staleness_s", 0.0))
+    man = manifest_mod.build(
+        run_id=run_id,
+        config=config,
+        trace_path=trace_path,
+        trace_sha256=trace_sha256,
+        validity=validity,
+        policy=policy,
+        nodes=nodes,
+        clock_sync=clock_sync,
+        vehicle=(pre or {}).get("vehicle", "hardware"),
+        cost_model_snapshots=(pre or {}).get("cost_model_snapshots"),
+        f18_status=(pre or {}).get("f18_status"),
+    )
+    if pre is not None and "transport_overhead" in pre:
+        man["transport_overhead"] = pre["transport_overhead"]
+    return man
+
+
+def write_run(run_dir: Path, run_id: str, records: list[dict[str, Any]]) -> Path:
+    """Write the client's C-4 log into the run directory and return its path."""
+    run_dir.mkdir(parents=True, exist_ok=True)
+    log_path = run_dir / f"client_{run_id}.jsonl"
+    log_path.write_text("".join(json.dumps(r, separators=(",", ":")) + "\n" for r in records))
+    return log_path
 
 
 async def replay(
@@ -287,10 +402,16 @@ def main() -> int:
         "--sha256", help="expected trace hash; the run refuses to start without a match"
     )
     ap.add_argument(
+        "--manifest",
+        type=Path,
+        help="the pre-run manifest the scheduler was started with. Defaults to "
+        "<out>/<run-id>/manifest.pre.json, then manifest.json. Its snapshots, staleness and "
+        "policy are carried into the post-run manifest.",
+    )
+    ap.add_argument(
         "--clock-sync",
         type=Path,
-        help="clock_sync.json from `clocksync --combine`, recorded into the manifest. "
-        "Only meaningful with --nodes, since without it this writes validity.json alone.",
+        help="clock_sync.json from `clocksync --combine`, recorded into the manifest",
     )
     ap.add_argument(
         "--bind", default="0.0.0.0:0", help="where this client listens for Deliver (F-11)"
@@ -309,15 +430,16 @@ def main() -> int:
     )
     ap.add_argument(
         "--policy",
-        default="round_robin",
-        help="recorded in the manifest; the client does not choose",
+        help="recorded in the manifest; the client does not choose. Taken from the pre-run "
+        "manifest when there is one, and refused if it disagrees.",
     )
     ap.add_argument(
         "--nodes",
         type=Path,
-        help="JSON array of C-6 node blocks from the launcher. Without it the client writes "
-        "its validity block alone — under F-9a the node block is the experimental "
-        "condition and the harness must not invent one.",
+        help="JSON array of C-6 node blocks from the launcher. Taken from the pre-run "
+        "manifest when there is one. Without either, the client writes its validity block "
+        "alone: under F-9a the node block is the experimental condition and the harness "
+        "must not invent one.",
     )
     ap.add_argument(
         "--threshold-ms",
@@ -327,10 +449,27 @@ def main() -> int:
     )
     args = ap.parse_args()
 
-    # Checked before the run, not after it: a C-6 manifest must carry the trace's
-    # sha256 (the schema pins it to 64 hex characters), and discovering that at the end
-    # of a ten-minute replay costs the run.
-    if args.nodes is not None and not args.sha256:
+    run_dir = args.out / args.run_id
+    pre_path = args.manifest or find_pre_run(run_dir)
+    if args.manifest is not None and not args.manifest.is_file():
+        ap.error(f"--manifest {args.manifest} does not exist")
+    pre = json.loads(pre_path.read_text()) if pre_path is not None else None
+
+    nodes = json.loads(args.nodes.read_text()) if args.nodes is not None else None
+    # Everything below is checked before the run, not after it: discovering at the end of a
+    # ten-minute replay that the record cannot be written costs the run.
+    if pre is not None:
+        try:
+            check_pre_run(pre, run_id=args.run_id, sha256=args.sha256, policy=args.policy)
+        except ValueError as exc:
+            ap.error(f"{pre_path}: {exc}")
+        if nodes is not None and nodes != pre["nodes"]:
+            ap.error(f"--nodes differs from the node block in {pre_path}; pass one of them")
+        nodes = pre["nodes"]
+        print(f"pre-run manifest {pre_path}")
+    sha256 = args.sha256 or (pre or {}).get("trace_sha256")
+    # A C-6 manifest must carry the trace's sha256 (the schema pins it to 64 hex characters).
+    if nodes is not None and not sha256:
         ap.error("--nodes writes a manifest, which must carry the trace hash; pass --sha256")
 
     result = asyncio.run(
@@ -338,7 +477,7 @@ def main() -> int:
             trace_path=args.trace,
             scheduler_endpoint=args.scheduler,
             run_id=args.run_id,
-            expect_sha256=args.sha256,
+            expect_sha256=sha256,
             bind=args.bind,
             advertise_host=args.advertise,
             warmup_s=args.warmup_s,
@@ -347,51 +486,32 @@ def main() -> int:
         )
     )
 
-    run_dir = args.out / args.run_id
-    run_dir.mkdir(parents=True, exist_ok=True)
-    log_path = run_dir / f"client_{args.run_id}.jsonl"
-    log_path.write_text(
-        "".join(json.dumps(r, separators=(",", ":")) + "\n" for r in result.records)
-    )
+    log_path = write_run(run_dir, args.run_id, result.records)
 
-    # `replay()` measures the load generator and nothing else, so the two pool-level
-    # counters can only be filled in here, where the node block and the clock measurement
-    # have been read. This used to write colocated_nodes: 0 whatever the pool looked like,
-    # which made a co-located two-node run come out valid. The count reuses the launcher's
-    # rule rather than a second copy of it.
-    nodes = json.loads(args.nodes.read_text()) if args.nodes is not None else None
+    # `replay()` measures the load generator and nothing else, so the pool-level counters
+    # are filled in here, where the node block and the clock measurement have been read.
+    # The count reuses the launcher's rule rather than a second copy of it.
     clock_sync = json.loads(args.clock_sync.read_text()) if args.clock_sync else None
-    validity = result.validity
     if nodes is not None:
-        validity = replace(
-            result.validity,
-            colocated_nodes=launch.colocated_count(nodes),
-            clock_unsynced_hosts=manifest_mod.unsynced_hosts(clock_sync),
-        )
-
-    if nodes is not None:
-        config = {
-            "duration_s": result.header["duration_s"] / args.rate_scale,
-            "warmup_s": args.warmup_s,
-            "rate_scale": args.rate_scale,
-            "lambda": result.header["arrival"].get("lambda_base", 0.0) * args.rate_scale,
-            "arrival": result.header["arrival"],
-            "length_dist": result.header["length_dist"],
-            "gen_seed": result.header["gen_seed"],
-        }
-        man = manifest_mod.build(
+        man = post_run_manifest(
             run_id=args.run_id,
-            config=config,
+            result=result,
             trace_path=args.trace,
-            trace_sha256=args.sha256,
-            validity=validity,
-            policy=args.policy,
+            trace_sha256=sha256,
+            rate_scale=args.rate_scale,
+            warmup_s=args.warmup_s,
             nodes=nodes,
+            policy=(pre or {}).get("policy") or args.policy or "round_robin",
+            pre=pre,
             clock_sync=clock_sync,
         )
         (run_dir / "manifest.json").write_text(json.dumps(man, indent=2) + "\n")
+        validity = manifest_mod.Validity(
+            **{k: v for k, v in man["validity"].items() if k != "valid"}
+        )
     else:
         # The launcher assembles the manifest; the client contributes the half it measured.
+        validity = result.validity
         (run_dir / "validity.json").write_text(json.dumps(validity.to_dict(), indent=2) + "\n")
 
     ok = sum(1 for r in result.records if r["status"] == "ok")
@@ -402,8 +522,7 @@ def main() -> int:
     )
 
     # The exit code is what a sweep script reads, so it has to agree with the manifest it
-    # sits next to. Reading it off `result.validity` would have printed "run VALID" beside a
-    # manifest saying otherwise, for exactly the co-located pool this now catches.
+    # sits next to.
     if validity.valid:
         print("run VALID")
         return 0

@@ -405,3 +405,216 @@ def test_a_colocated_pool_is_counted_and_fails_the_run(
     assert man["validity"]["valid"] is False
     assert rc == 1
     assert "colocated node(s)" in capsys.readouterr().out
+
+
+# --- the pre-run manifest ------------------------------------------------------------------
+#
+# The live scheduler starts from a manifest: it takes its run_id, policy, staleness and cost
+# model snapshots from it. The client has to agree with that file or the join finds nothing,
+# and the post-run record has to carry the scheduler's half of it forward rather than
+# rebuilding it from flags.
+
+
+def _pre_run(run_id: str, sha: str, **overrides) -> dict:
+    """A pre-run manifest shaped like the one `tools/hw_runs.py` writes, built on the C-6
+    example so its node block and snapshots are ones the schema already accepts."""
+    pre = json.loads(
+        (
+            Path(__file__).resolve().parents[2] / "contracts/examples/manifest.sample.json"
+        ).read_text()
+    )
+    pre = {k: v for k, v in pre.items() if not k.startswith("_")}
+    pre.update(
+        {
+            "run_id": run_id,
+            "trace_sha256": sha,
+            "policy": "wjsq",
+            "staleness_s": 0.25,
+            # One key the scheduler owns and one the replay measures. Only the first survives.
+            "config": {"threshold_ms": 900, "duration_s": 99999},
+            "transport_overhead": {
+                "mean_ms": 5.4,
+                "sd_ms": 0.3,
+                "n_samples": 120,
+                "source": "C-5 transport_residual_ms over the 1B anchors",
+            },
+        }
+    )
+    pre.update(overrides)
+    return pre
+
+
+def _client_args(path: Path, endpoint: str, run_id: str, out: Path, *extra: str) -> list[str]:
+    return [
+        str(path),
+        "--scheduler",
+        endpoint,
+        "--run-id",
+        run_id,
+        "--bind",
+        "127.0.0.1:0",
+        "--advertise",
+        "127.0.0.1",
+        "--out",
+        str(out),
+        *extra,
+    ]
+
+
+def test_find_pre_run_prefers_the_name_runset_never_discovers(tmp_path) -> None:
+    assert replay.find_pre_run(tmp_path) is None
+
+    (tmp_path / "manifest.json").write_text("{}")
+    assert replay.find_pre_run(tmp_path) == tmp_path / "manifest.json"
+
+    (tmp_path / "manifest.pre.json").write_text("{}")
+    assert replay.find_pre_run(tmp_path) == tmp_path / "manifest.pre.json"
+
+
+def test_check_pre_run_accepts_a_client_that_agrees_with_the_scheduler() -> None:
+    sha = "a" * 64
+    pre = _pre_run("run_ok", sha)
+    replay.check_pre_run(pre, run_id="run_ok", sha256=sha, policy="wjsq")
+    # Flags left off defer to the manifest rather than disagreeing with it.
+    replay.check_pre_run(pre, run_id="run_ok", sha256=None, policy=None)
+    # A manifest that names no trace or policy has nothing to disagree with.
+    bare = _pre_run("run_ok", sha)
+    del bare["trace_sha256"], bare["policy"]
+    replay.check_pre_run(bare, run_id="run_ok", sha256="b" * 64, policy="round_robin")
+
+
+@pytest.mark.parametrize(
+    ("overrides", "kwargs", "match"),
+    [
+        ({}, {"run_id": "run_other"}, "join would find no decisions"),
+        ({}, {"sha256": "b" * 64}, "names trace aaaaaaaaaaaa but --sha256 is bbbbbbbbbbbb"),
+        ({}, {"policy": "round_robin"}, "started with policy 'wjsq'"),
+        ({"cost_model_snapshots": {}}, {}, "no cost model snapshots"),
+    ],
+)
+def test_check_pre_run_refuses_a_client_that_disagrees(overrides, kwargs, match) -> None:
+    pre = _pre_run("run_ok", "a" * 64, **overrides)
+    call = {"run_id": "run_ok", "sha256": None, "policy": None} | kwargs
+    with pytest.raises(ValueError, match=match):
+        replay.check_pre_run(pre, **call)
+
+
+def test_a_pre_run_manifest_in_the_run_directory_supplies_the_scheduler_half(
+    trace, scheduler, tmp_path, monkeypatch, schema, capsys
+) -> None:
+    """No --nodes, --policy or --sha256: all three come from `manifest.pre.json`, and the
+    post-run record carries the snapshots, staleness and transport term forward."""
+    path, sha = trace
+    out = tmp_path / "runs"
+    pre = _pre_run("run_pre", sha)
+    (out / "run_pre").mkdir(parents=True)
+    pre_path = out / "run_pre" / "manifest.pre.json"
+    pre_path.write_text(json.dumps(pre))
+
+    rc = _main(monkeypatch, _client_args(path, scheduler(), "run_pre", out))
+
+    assert rc == 0
+    assert f"pre-run manifest {pre_path}" in capsys.readouterr().out
+    man = json.loads((out / "run_pre" / "manifest.json").read_text())
+    assert_conforms(schema("manifest"), [man], "manifest")
+    assert man["policy"] == "wjsq"
+    assert man["trace_sha256"] == sha
+    assert man["nodes"] == pre["nodes"]
+    assert man["cost_model_snapshots"] == pre["cost_model_snapshots"]
+    assert man["f18_status"] == pre["f18_status"]
+    assert man["staleness_s"] == 0.25
+    assert man["transport_overhead"] == pre["transport_overhead"]
+    assert man["config"]["threshold_ms"] == 900
+    assert man["config"]["duration_s"] == CONFIG["duration_s"]
+    assert man["validity"]["valid"] is True
+
+
+def test_an_explicit_manifest_with_matching_flags_is_accepted(
+    trace, scheduler, tmp_path, monkeypatch, schema
+) -> None:
+    """The older layout: no transport term and no staleness, and the flags repeat what the
+    manifest already says. Agreement is not a conflict."""
+    path, sha = trace
+    out = tmp_path / "runs"
+    pre = _pre_run("run_explicit", sha)
+    del pre["transport_overhead"], pre["staleness_s"]
+    pre_path = tmp_path / "elsewhere.json"
+    pre_path.write_text(json.dumps(pre))
+    nodes = tmp_path / "nodes.json"
+    nodes.write_text(json.dumps(pre["nodes"]))
+
+    rc = _main(
+        monkeypatch,
+        _client_args(
+            path,
+            scheduler(),
+            "run_explicit",
+            out,
+            "--manifest",
+            str(pre_path),
+            "--nodes",
+            str(nodes),
+            "--sha256",
+            sha,
+            "--policy",
+            "wjsq",
+        ),
+    )
+
+    assert rc == 0
+    man = json.loads((out / "run_explicit" / "manifest.json").read_text())
+    assert_conforms(schema("manifest"), [man], "manifest")
+    assert "transport_overhead" not in man
+    assert man["staleness_s"] == 0.0
+
+
+def test_a_missing_explicit_manifest_is_refused(trace, tmp_path, monkeypatch, capsys) -> None:
+    path, _ = trace
+    with pytest.raises(SystemExit):
+        _main(
+            monkeypatch,
+            _client_args(
+                path, "127.0.0.1:1", "run_x", tmp_path, "--manifest", str(tmp_path / "nope.json")
+            ),
+        )
+    assert "does not exist" in capsys.readouterr().err
+
+
+def test_a_pre_run_manifest_for_another_run_is_refused_before_t0(
+    trace, tmp_path, monkeypatch, capsys
+) -> None:
+    path, sha = trace
+    (tmp_path / "run_mine").mkdir()
+    (tmp_path / "run_mine" / "manifest.pre.json").write_text(
+        json.dumps(_pre_run("run_theirs", sha))
+    )
+
+    with pytest.raises(SystemExit):
+        _main(monkeypatch, _client_args(path, "127.0.0.1:1", "run_mine", tmp_path))
+    assert "join would find no decisions" in capsys.readouterr().err
+
+
+def test_nodes_that_differ_from_the_pre_run_manifest_are_refused(
+    trace, tmp_path, monkeypatch, capsys
+) -> None:
+    """Two node blocks for one run is two claims about the experimental condition. The
+    client does not pick one."""
+    path, sha = trace
+    (tmp_path / "run_nodes").mkdir()
+    (tmp_path / "run_nodes" / "manifest.pre.json").write_text(
+        json.dumps(_pre_run("run_nodes", sha))
+    )
+
+    with pytest.raises(SystemExit):
+        _main(
+            monkeypatch,
+            _client_args(
+                path,
+                "127.0.0.1:1",
+                "run_nodes",
+                tmp_path,
+                "--nodes",
+                str(_colocated_nodes_file(tmp_path)),
+            ),
+        )
+    assert "--nodes differs from the node block" in capsys.readouterr().err

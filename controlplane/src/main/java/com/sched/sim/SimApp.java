@@ -1,6 +1,7 @@
 package com.sched.sim;
 
 import com.sched.core.AdmissionFilter;
+import com.sched.core.Capability;
 import com.sched.core.DecisionLogger;
 import com.sched.core.WorkerLogger;
 import com.sched.core.ClientLogger;
@@ -159,7 +160,10 @@ public class SimApp {
                 if (snap == null)
                     throw new IllegalStateException("node " + n.nodeId() + " is a pool member but has no snapshot");
                 
-                NodeView seed = new NodeView(n.nodeId(), 0, 0, referenceTokensPerS(snap), 0L, true);
+                if (!Capability.usesServiceRate(snap))
+                    System.out.println("Capability for " + n.nodeId() + ": " + snap.snapshotId()
+                        + " has no prefill/decode split, so it falls back to decode tok/s");
+                NodeView seed = new NodeView(n.nodeId(), 0, 0, Capability.referenceTokS(snap), 0L, true);
                 st.updateNode(seed);
                 vl.seed(seed, -stalenessNs);
 
@@ -244,21 +248,6 @@ public class SimApp {
             // runner's stop-on-first-failure could not see a failed point at all.
             System.exit(1);
         }
-    }
-
-    private static double referenceTokensPerS(CostModelSnapshot snap) {
-        int minPrompt = Integer.MAX_VALUE;
-        int minOutput = Integer.MAX_VALUE;
-        for (CostModelSnapshot.CostEntry e : snap.entries()) {
-            if (e.promptBucket().get(0) < minPrompt) minPrompt = e.promptBucket().get(0);
-            if (e.outputBucket().get(0) < minOutput) minOutput = e.outputBucket().get(0);
-        }
-        for (CostModelSnapshot.CostEntry e : snap.entries()) {
-            if (e.promptBucket().get(0) == minPrompt && e.outputBucket().get(0) == minOutput && e.concurrency() == 1) {
-                return e.tokensPerS();
-            }
-        }
-        throw new IllegalArgumentException("Cost model snapshot " + snap.snapshotId() + " has no cell for lowest bucket at concurrency 1.");
     }
 
     private static String getGitSha() {

@@ -118,7 +118,10 @@ public class LiveSchedulerApp {
             double cap = 0.0;
             if (snap != null) {
                 try {
-                    cap = referenceTokensPerS(snap);
+                    cap = com.sched.core.Capability.referenceTokS(snap);
+                    if (!com.sched.core.Capability.usesServiceRate(snap))
+                        System.out.println("Capability for " + n.nodeId() + ": " + snap.snapshotId()
+                            + " has no prefill/decode split, so it falls back to decode tok/s");
                 } catch (Exception ignored) {
                     cap = 0.0;
                 }
@@ -196,20 +199,5 @@ public class LiveSchedulerApp {
             logger.close();
         }));
         server.awaitTermination();
-    }
-
-    private static double referenceTokensPerS(com.sched.core.models.CostModelSnapshot snap) {
-        int minPrompt = Integer.MAX_VALUE;
-        int minOutput = Integer.MAX_VALUE;
-        for (com.sched.core.models.CostModelSnapshot.CostEntry e : snap.entries()) {
-            if (e.promptBucket().get(0) < minPrompt) minPrompt = e.promptBucket().get(0);
-            if (e.outputBucket().get(0) < minOutput) minOutput = e.outputBucket().get(0);
-        }
-        for (com.sched.core.models.CostModelSnapshot.CostEntry e : snap.entries()) {
-            if (e.promptBucket().get(0) == minPrompt && e.outputBucket().get(0) == minOutput && e.concurrency() == 1) {
-                return e.tokensPerS();
-            }
-        }
-        return 0.0;
     }
 }

@@ -341,6 +341,14 @@ The scheduler reads a C-6 manifest to learn the pool, the policy, and which C-3 
 prices each node. Admissibility and capability both come from those snapshots, so a node
 whose snapshot is missing gets neither.
 
+Capability is output tokens per second of service at the snapshot's lowest prompt and output
+bucket at one slot, computed as decode tok/s times the decode share of service time
+(`com.sched.core.Capability`, shared by the live scheduler and the simulator). We used to
+seed it with decode tok/s alone. That hides prefill, which is where our two GPU laptops
+differ most: decode is 1.18x apart and prefill about 10x, so the capability-aware policies
+saw a nearly homogeneous pool. A snapshot without the prefill/decode split still falls back
+to decode tok/s, and the scheduler prints that when it happens.
+
 ```bash
 cd controlplane
 mvn -q exec:java -Dexec.mainClass=com.sched.live.LiveSchedulerApp \

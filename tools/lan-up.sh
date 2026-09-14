@@ -78,7 +78,7 @@ pick_wifi_iface() {
   for d in /sys/class/net/*/wireless; do
     [ -e "$d" ] && found+=("$(basename "$(dirname "$d")")")
   done
-  [ "${#found[@]}" -eq 0 ] && die "no wireless interface found; pass --iface, or use ethernet"
+  [ "${#found[@]}" -eq 0 ] && die "no wireless interface found; if 'lspci -nnk' shows a wireless card, its firmware is missing (Intel cards need iwlwifi-mvm-firmware or iwlwifi-mld-firmware)"
   [ "${#found[@]}" -gt 1 ] && die "several wireless interfaces (${found[*]}); pass --iface"
   echo "${found[0]}"
 }
@@ -95,11 +95,14 @@ if [ "$MODE" = "ap" ]; then
   [ -n "$SSID" ] && [ -n "$PSK" ] || die "--ap needs --ssid and --pass"
   [ "${#PSK}" -ge 8 ] || die "WPA needs a passphrase of at least 8 characters"
   have nmcli || die "nmcli not found; this assumes NetworkManager"
-  DEV="$(pick_wifi_iface)"
+  DEV="$(pick_wifi_iface)" || exit 1
 
-  if ! iw list 2>/dev/null | grep -qw AP; then
-    say "WARNING: 'iw list' does not report AP mode on this machine's radio."
-    say "If the hotspot fails to start, run the access point on another machine."
+  # Check the radio behind $DEV, not every radio. A laptop with a USB adapter has two, and
+  # the internal card reporting AP says nothing about the adapter.
+  PHY="$(cat "/sys/class/net/$DEV/phy80211/name" 2>/dev/null)"
+  if [ -n "$PHY" ] && ! iw phy "$PHY" info 2>/dev/null | sed -n '/Supported interface modes/,/Band/p' | grep -qw AP; then
+    say "WARNING: $DEV ($PHY) does not report AP mode, so the hotspot will not start on it."
+    say "Pass --iface with a radio that does, or run the access point on another machine."
   fi
 
   echo "Bring up an access point on this machine:"
@@ -132,7 +135,7 @@ if [ "$MODE" = "join" ]; then
   [ -n "$SSID" ] && [ -n "$PSK" ] || die "--join needs --ssid and --pass"
   [ -n "$STATIC_IP" ] || die "--join needs --ip; a DHCP lease can change between runs and the manifest records host addresses"
   have nmcli || die "nmcli not found; this assumes NetworkManager"
-  DEV="$(pick_wifi_iface)"
+  DEV="$(pick_wifi_iface)" || exit 1
   case "$STATIC_IP" in */*) ADDR="$STATIC_IP" ;; *) ADDR="$STATIC_IP/24" ;; esac
 
   echo "Join the pool network:"
@@ -148,7 +151,8 @@ if [ "$MODE" = "join" ]; then
     || die "could not associate with $SSID"
   CONN="$(nmcli -t -f NAME,DEVICE connection show --active | awk -F: -v d="$DEV" '$2==d{print $1; exit}')"
   [ -n "$CONN" ] || die "associated but cannot find the connection profile for $DEV"
-  sudo nmcli connection modify "$CONN" ipv4.method manual ipv4.addresses "$ADDR" ipv4.gateway "$AP_GATEWAY"
+  # A manual address drops the DHCP-supplied DNS server too, so name it: the AP's dnsmasq.
+  sudo nmcli connection modify "$CONN" ipv4.method manual ipv4.addresses "$ADDR" ipv4.gateway "$AP_GATEWAY" ipv4.dns "$AP_GATEWAY"
   sudo nmcli connection up "$CONN" >/dev/null || die "could not reapply $CONN with the static address"
   echo
   say "joined as $ADDR"
@@ -192,7 +196,13 @@ if [ "$MODE" = "open" ]; then
 
   for p in "${PORTS[@]}"; do
     case "$FW" in
-      firewalld) sudo firewall-cmd --permanent --add-port="$p/tcp" >/dev/null && say "opened tcp/$p" ;;
+      firewalld)
+        sudo firewall-cmd --permanent --add-port="$p/tcp" >/dev/null && say "opened tcp/$p"
+        # NetworkManager's shared mode puts the hotspot interface in nm-shared, which rejects
+        # everything but DHCP, DNS and SSH. The default zone does not cover it.
+        if firewall-cmd --get-zones 2>/dev/null | grep -qw nm-shared; then
+          sudo firewall-cmd --permanent --zone=nm-shared --add-port="$p/tcp" >/dev/null && say "opened tcp/$p on nm-shared (the hotspot)"
+        fi ;;
       ufw)       sudo ufw allow "$p/tcp" >/dev/null && say "opened tcp/$p" ;;
     esac
   done

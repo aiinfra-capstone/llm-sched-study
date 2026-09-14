@@ -1,0 +1,468 @@
+{
+  "cost_model_schema": 1,
+  "snapshot_id": "cm_rtx3050_ngl99_p4_q4km_llama32_1b_20260914T195723Z_001",
+  "node_class": "rtx3050_ngl99_p4_q4km_llama32_1b",
+  "measured_at_unix": 1789415843,
+  "calibration_run_ids": [
+    "cal_rtx3050_ngl99_p4_q4km_llama32_1b_1789415783"
+  ],
+  "form": "lookup_table",
+  "entries": [
+    {
+      "prompt_bucket": [
+        1,
+        128
+      ],
+      "output_bucket": [
+        1,
+        64
+      ],
+      "concurrency": 1,
+      "service_ms_mean": 391.059,
+      "service_ms_p50": 391.133,
+      "service_ms_p95": 391.885,
+      "tokens_per_s": 174.6847,
+      "n_samples": 8,
+      "prefill_ms_mean": 20.363,
+      "decode_ms_mean": 366.26
+    },
+    {
+      "prompt_bucket": [
+        1,
+        128
+      ],
+      "output_bucket": [
+        1,
+        64
+      ],
+      "concurrency": 2,
+      "service_ms_mean": 438.926,
+      "service_ms_p50": 439.415,
+      "service_ms_p95": 441.979,
+      "tokens_per_s": 160.4415,
+      "n_samples": 8,
+      "prefill_ms_mean": 35.378,
+      "decode_ms_mean": 398.522
+    },
+    {
+      "prompt_bucket": [
+        1,
+        128
+      ],
+      "output_bucket": [
+        1,
+        64
+      ],
+      "concurrency": 3,
+      "service_ms_mean": 678.54,
+      "service_ms_p50": 693.063,
+      "service_ms_p95": 871.284,
+      "tokens_per_s": 110.1519,
+      "n_samples": 8,
+      "prefill_ms_mean": 48.509,
+      "decode_ms_mean": 617.136
+    },
+    {
+      "prompt_bucket": [
+        1,
+        128
+      ],
+      "output_bucket": [
+        1,
+        64
+      ],
+      "concurrency": 4,
+      "service_ms_mean": 590.655,
+      "service_ms_p50": 590.401,
+      "service_ms_p95": 596.698,
+      "tokens_per_s": 124.6733,
+      "n_samples": 408,
+      "prefill_ms_mean": 63.169,
+      "decode_ms_mean": 513.298
+    },
+    {
+      "prompt_bucket": [
+        1,
+        128
+      ],
+      "output_bucket": [
+        65,
+        128
+      ],
+      "concurrency": 1,
+      "service_ms_mean": 763.432,
+      "service_ms_p50": 763.663,
+      "service_ms_p95": 764.978,
+      "tokens_per_s": 173.7392,
+      "n_samples": 8,
+      "prefill_ms_mean": 20.286,
+      "decode_ms_mean": 736.761
+    },
+    {
+      "prompt_bucket": [
+        1,
+        128
+      ],
+      "output_bucket": [
+        65,
+        128
+      ],
+      "concurrency": 2,
+      "service_ms_mean": 846.065,
+      "service_ms_p50": 845.069,
+      "service_ms_p95": 849.058,
+      "tokens_per_s": 160.1959,
+      "n_samples": 8,
+      "prefill_ms_mean": 35.243,
+      "decode_ms_mean": 799.891
+    },
+    {
+      "prompt_bucket": [
+        1,
+        128
+      ],
+      "output_bucket": [
+        65,
+        128
+      ],
+      "concurrency": 3,
+      "service_ms_mean": 1289.001,
+      "service_ms_p50": 1311.083,
+      "service_ms_p95": 1677.693,
+      "tokens_per_s": 112.1009,
+      "n_samples": 8,
+      "prefill_ms_mean": 48.56,
+      "decode_ms_mean": 1229.277
+    },
+    {
+      "prompt_bucket": [
+        1,
+        128
+      ],
+      "output_bucket": [
+        65,
+        128
+      ],
+      "concurrency": 4,
+      "service_ms_mean": 1047.519,
+      "service_ms_p50": 1111.74,
+      "service_ms_p95": 1116.351,
+      "tokens_per_s": 123.8786,
+      "n_samples": 8,
+      "prefill_ms_mean": 56.072,
+      "decode_ms_mean": 977.724
+    },
+    {
+      "prompt_bucket": [
+        129,
+        256
+      ],
+      "output_bucket": [
+        1,
+        64
+      ],
+      "concurrency": 1,
+      "service_ms_mean": 413.455,
+      "service_ms_p50": 413.156,
+      "service_ms_p95": 416.402,
+      "tokens_per_s": 171.8949,
+      "n_samples": 8,
+      "prefill_ms_mean": 34.705,
+      "decode_ms_mean": 372.215
+    },
+    {
+      "prompt_bucket": [
+        129,
+        256
+      ],
+      "output_bucket": [
+        1,
+        64
+      ],
+      "concurrency": 2,
+      "service_ms_mean": 482.814,
+      "service_ms_p50": 483.059,
+      "service_ms_p95": 485.606,
+      "tokens_per_s": 157.5353,
+      "n_samples": 8,
+      "prefill_ms_mean": 62.344,
+      "decode_ms_mean": 406.282
+    },
+    {
+      "prompt_bucket": [
+        129,
+        256
+      ],
+      "output_bucket": [
+        1,
+        64
+      ],
+      "concurrency": 3,
+      "service_ms_mean": 733.057,
+      "service_ms_p50": 747.975,
+      "service_ms_p95": 933.878,
+      "tokens_per_s": 109.8603,
+      "n_samples": 8,
+      "prefill_ms_mean": 89.55,
+      "decode_ms_mean": 624.1
+    },
+    {
+      "prompt_bucket": [
+        129,
+        256
+      ],
+      "output_bucket": [
+        1,
+        64
+      ],
+      "concurrency": 4,
+      "service_ms_mean": 624.359,
+      "service_ms_p50": 669.131,
+      "service_ms_p95": 673.587,
+      "tokens_per_s": 122.4569,
+      "n_samples": 8,
+      "prefill_ms_mean": 107.226,
+      "decode_ms_mean": 492.909
+    },
+    {
+      "prompt_bucket": [
+        129,
+        256
+      ],
+      "output_bucket": [
+        65,
+        128
+      ],
+      "concurrency": 1,
+      "service_ms_mean": 791.712,
+      "service_ms_p50": 790.971,
+      "service_ms_p95": 796.033,
+      "tokens_per_s": 170.8369,
+      "n_samples": 8,
+      "prefill_ms_mean": 34.844,
+      "decode_ms_mean": 749.532
+    },
+    {
+      "prompt_bucket": [
+        129,
+        256
+      ],
+      "output_bucket": [
+        65,
+        128
+      ],
+      "concurrency": 2,
+      "service_ms_mean": 892.455,
+      "service_ms_p50": 892.81,
+      "service_ms_p95": 897.031,
+      "tokens_per_s": 156.1702,
+      "n_samples": 8,
+      "prefill_ms_mean": 62.128,
+      "decode_ms_mean": 819.21
+    },
+    {
+      "prompt_bucket": [
+        129,
+        256
+      ],
+      "output_bucket": [
+        65,
+        128
+      ],
+      "concurrency": 3,
+      "service_ms_mean": 1361.106,
+      "service_ms_p50": 1389.684,
+      "service_ms_p95": 1752.34,
+      "tokens_per_s": 109.0998,
+      "n_samples": 8,
+      "prefill_ms_mean": 89.571,
+      "decode_ms_mean": 1256.186
+    },
+    {
+      "prompt_bucket": [
+        129,
+        256
+      ],
+      "output_bucket": [
+        65,
+        128
+      ],
+      "concurrency": 4,
+      "service_ms_mean": 1130.088,
+      "service_ms_p50": 1201.899,
+      "service_ms_p95": 1210.361,
+      "tokens_per_s": 120.8585,
+      "n_samples": 8,
+      "prefill_ms_mean": 107.087,
+      "decode_ms_mean": 998.955
+    },
+    {
+      "prompt_bucket": [
+        257,
+        512
+      ],
+      "output_bucket": [
+        1,
+        64
+      ],
+      "concurrency": 1,
+      "service_ms_mean": 448.553,
+      "service_ms_p50": 447.328,
+      "service_ms_p95": 454.022,
+      "tokens_per_s": 170.2609,
+      "n_samples": 8,
+      "prefill_ms_mean": 62.629,
+      "decode_ms_mean": 376.26
+    },
+    {
+      "prompt_bucket": [
+        257,
+        512
+      ],
+      "output_bucket": [
+        1,
+        64
+      ],
+      "concurrency": 2,
+      "service_ms_mean": 549.311,
+      "service_ms_p50": 549.398,
+      "service_ms_p95": 550.062,
+      "tokens_per_s": 155.1211,
+      "n_samples": 8,
+      "prefill_ms_mean": 121.979,
+      "decode_ms_mean": 412.741
+    },
+    {
+      "prompt_bucket": [
+        257,
+        512
+      ],
+      "output_bucket": [
+        1,
+        64
+      ],
+      "concurrency": 3,
+      "service_ms_mean": 824.157,
+      "service_ms_p50": 846.724,
+      "service_ms_p95": 1030.949,
+      "tokens_per_s": 108.0236,
+      "n_samples": 8,
+      "prefill_ms_mean": 171.716,
+      "decode_ms_mean": 633.169
+    },
+    {
+      "prompt_bucket": [
+        257,
+        512
+      ],
+      "output_bucket": [
+        1,
+        64
+      ],
+      "concurrency": 4,
+      "service_ms_mean": 747.591,
+      "service_ms_p50": 806.365,
+      "service_ms_p95": 814.285,
+      "tokens_per_s": 119.9397,
+      "n_samples": 8,
+      "prefill_ms_mean": 213.294,
+      "decode_ms_mean": 504.784
+    },
+    {
+      "prompt_bucket": [
+        257,
+        512
+      ],
+      "output_bucket": [
+        65,
+        128
+      ],
+      "concurrency": 1,
+      "service_ms_mean": 830.646,
+      "service_ms_p50": 830.409,
+      "service_ms_p95": 834.889,
+      "tokens_per_s": 168.7085,
+      "n_samples": 8,
+      "prefill_ms_mean": 62.68,
+      "decode_ms_mean": 758.819
+    },
+    {
+      "prompt_bucket": [
+        257,
+        512
+      ],
+      "output_bucket": [
+        65,
+        128
+      ],
+      "concurrency": 2,
+      "service_ms_mean": 975.264,
+      "service_ms_p50": 979.204,
+      "service_ms_p95": 980.107,
+      "tokens_per_s": 152.9428,
+      "n_samples": 8,
+      "prefill_ms_mean": 122.741,
+      "decode_ms_mean": 833.852
+    },
+    {
+      "prompt_bucket": [
+        257,
+        512
+      ],
+      "output_bucket": [
+        65,
+        128
+      ],
+      "concurrency": 3,
+      "service_ms_mean": 1465.306,
+      "service_ms_p50": 1499.902,
+      "service_ms_p95": 1864.672,
+      "tokens_per_s": 107.7545,
+      "n_samples": 8,
+      "prefill_ms_mean": 171.413,
+      "decode_ms_mean": 1269.259
+    },
+    {
+      "prompt_bucket": [
+        257,
+        512
+      ],
+      "output_bucket": [
+        65,
+        128
+      ],
+      "concurrency": 4,
+      "service_ms_mean": 1262.385,
+      "service_ms_p50": 1355.278,
+      "service_ms_p95": 1359.796,
+      "tokens_per_s": 118.7666,
+      "n_samples": 8,
+      "prefill_ms_mean": 213.327,
+      "decode_ms_mean": 1016.14
+    }
+  ],
+  "stochastic": {
+    "model": "lognormal_multiplier",
+    "sigma": 0.04943,
+    "autocorr_time_s": 5.0,
+    "fit_r2": 0.0
+  },
+  "admissibility": {
+    "max_prompt": 512,
+    "max_output": 128,
+    "timeout_ceiling_ms": 60000
+  },
+  "provenance": {
+    "engine": "llamacpp",
+    "engine_version": "b10569+p1+cuda13.2",
+    "quant": "Q4_K_M",
+    "gpu": "NVIDIA GeForce RTX 3050 6GB Laptop GPU",
+    "driver": "580.178.04",
+    "prefix_caching": false,
+    "engine_config": {
+      "ngl": 99,
+      "threads": 6,
+      "parallel": 4
+    }
+  }
+}

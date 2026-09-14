@@ -305,12 +305,16 @@ and the only thing exposed to the LAN.
 ~/opt/llama.cpp/b10569-cuda/bin/llama-server \
   --host 127.0.0.1 --port 18080 \
   -m ~/models/gguf/Llama-3.2-1B-Instruct-Q4_K_M.gguf \
-  -ngl 99 --threads 6 --parallel 4
+  -ngl 99 --threads 6 --parallel 4 -c 55296
 
 uv run worker --node-id gtx1650ti --engine http://127.0.0.1:18080 \
   --bind 0.0.0.0:50061 --scheduler 10.42.0.1:50051 --slots 4 \
   --engine-version b10569+p1+cuda13.2 --log-dir runs/exp/<run_id>
 ```
+
+`-c 55296` is 13824 tokens per slot. Without it llama-server sizes the context to fit the
+card's VRAM, so the same command gave the 4 GB 1650 Ti 13824 tokens per slot and the 6 GB
+3050 30720, an engine difference that no config recorded.
 
 `--scheduler` is not optional any more. The worker heartbeats to it and reports every
 completion to it, and the scheduler now uses both: completions arrive on their own RPC

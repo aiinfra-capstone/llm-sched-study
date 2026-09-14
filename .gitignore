@@ -60,3 +60,6 @@ docs/*_extracted.txt
 
 # protoc output — regenerated from contracts/scheduling.proto on import
 dataplane/src/dataplane/_generated/
+
+# trash
+trash/

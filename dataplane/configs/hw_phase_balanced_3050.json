@@ -1,0 +1,86 @@
+{
+  "_comment": "P2 in docs/checkpoint.md: the balanced workload shape through the same five policies on the 1650 Ti and 3050 pool. The three shape traces share arrivals and priorities and differ only in lengths, so the comparison is paired. Points are the anchor campaign's mid and heavy (mpr2_1650ti_3050); its light point separated no policy. threshold_t and the snapshots are the anchor campaign's.",
+  "tag": "phase_balanced_1650ti_3050",
+  "trace": "runs/traces/balanced_1b.trace.jsonl",
+  "trace_sha256": "2bf0d0afe27a870540152365ae24d570c1e9d52e23bd70762c550a13094a647e",
+  "out_root": "runs/exp/phase_balanced_1650ti_3050",
+  "nodes": [
+    {
+      "node_id": "gtx1650ti",
+      "host": "fedora",
+      "role": "pool",
+      "engine": "llamacpp",
+      "engine_version": "b10569+p1+cuda13.2",
+      "model": "Llama-3.2-1B-Instruct",
+      "quant": "Q4_K_M",
+      "gpu": "NVIDIA GeForce GTX 1650 Ti",
+      "driver": "580.178.04",
+      "prefix_caching": false,
+      "max_batch": 4,
+      "engine_config": {
+        "ngl": 99,
+        "threads": 6,
+        "parallel": 4
+      }
+    },
+    {
+      "node_id": "rtx3050",
+      "host": "rtx3050",
+      "role": "pool",
+      "engine": "llamacpp",
+      "engine_version": "b10569+p1+cuda13.2",
+      "model": "Llama-3.2-1B-Instruct",
+      "quant": "Q4_K_M",
+      "gpu": "NVIDIA GeForce RTX 3050 6GB Laptop GPU",
+      "driver": "580.178.04",
+      "prefix_caching": false,
+      "max_batch": 4,
+      "engine_config": {
+        "ngl": 99,
+        "threads": 6,
+        "parallel": 4
+      }
+    }
+  ],
+  "workers": {
+    "gtx1650ti": {
+      "endpoint": "10.42.0.1:50061",
+      "logs": "runs/worker_logs"
+    },
+    "rtx3050": {
+      "endpoint": "10.42.0.12:50061",
+      "logs": "divyansh@10.42.0.12:Documents/capstone/runs/worker_logs"
+    }
+  },
+  "cost_model_snapshots": {
+    "gtx1650ti": "cm_gtx1650ti_ngl99_p4_q4km_llama32_1b_20260831T153652Z_008",
+    "rtx3050": "cm_rtx3050_ngl99_p4_q4km_llama32_1b_20260914T200053Z_008"
+  },
+  "policies": [
+    "round_robin",
+    "jsq",
+    "static_weighted",
+    "wjsq",
+    "threshold"
+  ],
+  "points": [
+    {
+      "name": "mid",
+      "rate_scale": 2.65
+    },
+    {
+      "name": "heavy",
+      "rate_scale": 3.55
+    }
+  ],
+  "staleness_s": [
+    0.0
+  ],
+  "threshold_t": 130.0,
+  "repeats": 3,
+  "warmup_s": 10.0,
+  "settle_s": 20.0,
+  "scheduler_port": 50051,
+  "bind": "0.0.0.0:50071",
+  "advertise": "10.42.0.1"
+}

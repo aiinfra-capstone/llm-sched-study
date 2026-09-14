@@ -64,6 +64,11 @@ __all__ = ["WorkerConfig", "WorkerService", "main", "run_worker"]
 # reported while the run it is corrupting is still going.
 _LEAK_CONFIRMATIONS = 3
 
+# How long a completion report waits for the scheduler's channel before giving up. The
+# driver in tools/hw_runs.py restarts the scheduler between runs, and a JVM under Maven takes
+# several seconds to come up; a report that outlives this is dropped, as before.
+COMPLETION_REPORT_TIMEOUT_S = 30.0
+
 
 @dataclass
 class WorkerConfig:
@@ -273,6 +278,11 @@ class WorkerService(sched_grpc.WorkerServicer):
         if not self.config.scheduler_endpoint:
             return
         try:
+            # `wait_for_ready`, because a channel that failed to connect sits in reconnect
+            # backoff, and a call made then fails at once without trying. A scheduler that
+            # restarts between runs leaves the channel in exactly that state, and the first
+            # completion of the next run was being dropped. A dropped completion is
+            # permanent: the scheduler counts that request in flight for the rest of the run.
             await sched_grpc.SchedulerStub(
                 self._channel(self.config.scheduler_endpoint)
             ).ReportCompletion(
@@ -282,7 +292,9 @@ class WorkerService(sched_grpc.WorkerServicer):
                     req_id=request.req_id,
                     status=result.status,
                     service_ns=result.service_ns,
-                )
+                ),
+                timeout=COMPLETION_REPORT_TIMEOUT_S,
+                wait_for_ready=True,
             )
         except grpc.aio.AioRpcError:
             pass

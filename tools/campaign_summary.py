@@ -74,13 +74,15 @@ def summarise(frame: pd.DataFrame, n_boot: int, seed: int) -> dict:
             e2e = g["e2e_ms"].to_numpy()
             policies[p] = {
                 "runs": int(g["run_id"].nunique()),
-                "requests": int(len(g)),
+                "requests": len(g),
                 "share_to_fast_node": round(float((g["chosen_node"] == fast).mean()), 3),
                 "queue_wait_ms_mean": round(float(g["queue_wait_ms"].mean()), 1),
                 "routing_error_rate": round(float((g["routing_error_ms"].fillna(0) > 0).mean()), 3),
                 **{
-                    s: {"value": round(float(fn(e2e)), 1),
-                        "ci95": [round(x, 1) for x in interval(draws[p][s])]}
+                    s: {
+                        "value": round(float(fn(e2e)), 1),
+                        "ci95": [round(x, 1) for x in interval(draws[p][s])],
+                    }
                     for s, fn in STATS.items()
                 },
             }
@@ -90,10 +92,14 @@ def summarise(frame: pd.DataFrame, n_boot: int, seed: int) -> dict:
                 v = {p: fn(by_policy[p]["e2e_ms"].to_numpy()) for p in H1_POLICIES}
                 point_value = (v["wjsq"] - v["jsq"]) - (v["static_weighted"] - v["round_robin"])
                 d = draws
-                boot = (d["wjsq"][s] - d["jsq"][s]) - (d["static_weighted"][s] - d["round_robin"][s])
+                boot = (d["wjsq"][s] - d["jsq"][s]) - (
+                    d["static_weighted"][s] - d["round_robin"][s]
+                )
                 lo, hi = interval(boot)
                 h1[s] = {
-                    "calibration_gain_queue_blind": round(float(v["round_robin"] - v["static_weighted"]), 1),
+                    "calibration_gain_queue_blind": round(
+                        float(v["round_robin"] - v["static_weighted"]), 1
+                    ),
                     "calibration_gain_queue_aware": round(float(v["jsq"] - v["wjsq"]), 1),
                     "interaction": round(float(point_value), 1),
                     "ci95": [round(lo, 1), round(hi, 1)],
@@ -114,23 +120,34 @@ def summarise(frame: pd.DataFrame, n_boot: int, seed: int) -> dict:
 
 def markdown(summary: dict) -> str:
     out = [
-        f"Fast node: `{summary['fast_node']}`. Bootstrap: {summary['bootstrap']['draws']} draws, "
-        "resampling requests within each run. Intervals are 95%.",
+        (
+            f"Fast node: `{summary['fast_node']}`. Bootstrap: {summary['bootstrap']['draws']} draws, "
+            "resampling requests within each run. Intervals are 95%."
+        ),
         "",
     ]
     for pt in summary["points"]:
-        out += [f"### {pt['lambda_rps']} req/s", "",
-                "| Policy | Requests | To fast node | p50 ms | p95 ms | p99 ms | Mean ms | Queue wait ms | Routing error rate |",
-                "|---|---:|---:|---|---|---|---|---:|---:|"]
+        out += [
+            f"### {pt['lambda_rps']} req/s",
+            "",
+            "| Policy | Requests | To fast node | p50 ms | p95 ms | p99 ms | Mean ms | Queue wait ms | Routing error rate |",
+            "|---|---:|---:|---|---|---|---|---:|---:|",
+        ]
         for p, r in pt["policies"].items():
-            cell = lambda s: f"{r[s]['value']:.0f} [{r[s]['ci95'][0]:.0f}, {r[s]['ci95'][1]:.0f}]"  # noqa: E731
+
+            def cell(s: str, r: dict = r) -> str:
+                return f"{r[s]['value']:.0f} [{r[s]['ci95'][0]:.0f}, {r[s]['ci95'][1]:.0f}]"
+
             out.append(
                 f"| {p} | {r['requests']} | {r['share_to_fast_node']:.0%} | {cell('p50')} | {cell('p95')} | "
                 f"{cell('p99')} | {cell('mean')} | {r['queue_wait_ms_mean']:.1f} | {r['routing_error_rate']:.0%} |"
             )
         if pt["h1"]:
-            out += ["", "| H1 on | Calibration gain, queue-blind | Calibration gain, queue-aware | Interaction | 95% CI | Excludes 0 |",
-                    "|---|---:|---:|---:|---|---|"]
+            out += [
+                "",
+                "| H1 on | Calibration gain, queue-blind | Calibration gain, queue-aware | Interaction | 95% CI | Excludes 0 |",
+                "|---|---:|---:|---:|---|---|",
+            ]
             for s, h in pt["h1"].items():
                 out.append(
                     f"| {s} | {h['calibration_gain_queue_blind']:.0f} | {h['calibration_gain_queue_aware']:.0f} | "

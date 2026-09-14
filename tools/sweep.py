@@ -75,7 +75,8 @@ def synthesize_snapshot(
     """Scale a measured C-3 snapshot to synthesise a new node class at R=factor.
 
     With `phase_skew` 1.0 every service-time field is multiplied by `factor` and
-    tokens_per_s divided by it, which preserves the shape of the grid.
+    tokens_per_s divided by it, which preserves the shape of the grid. tokens_per_s is decode
+    tok/s, so under a skew it is divided by the decode factor.
 
     Prefill and decode do not slow down at the same rate across real machines, and that is
     the elevation's claim, so a single factor cannot synthesise the pools it is about. With
@@ -122,8 +123,9 @@ def synthesize_snapshot(
             cell_factor = (prefill * prefill_factor + decode * decode_factor) / (prefill + decode)
         for f in ("service_ms_mean", "service_ms_p50", "service_ms_p95"):
             e[f] = round(e[f] * cell_factor, 4)
-        # tokens_per_s is work per time, so it scales inversely
-        e["tokens_per_s"] = round(e["tokens_per_s"] / cell_factor, 4)
+        # tokens_per_s is decode tok/s (C-3), so it answers to the decode factor alone. Dividing
+        # by the cell's blended factor made a skewed node's decode rate move with its prefill.
+        e["tokens_per_s"] = round(e["tokens_per_s"] / decode_factor, 4)
         if prefill is not None:
             e["prefill_ms_mean"] = round(prefill * prefill_factor, 4)
         if decode is not None:

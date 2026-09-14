@@ -511,6 +511,7 @@ EOF
     @core kernel kernel-devel dracut-config-generic linux-firmware
     grub2-efi-x64 grub2-efi-x64-modules grub2-tools shim-x64 efibootmgr dosfstools
     NetworkManager NetworkManager-wifi wpa_supplicant iw openssh-server chrony firewalld
+    iwlwifi-mvm-firmware iwlwifi-mld-firmware iwlwifi-dvm-firmware
     sudo git curl rsync tar cmake gcc-c++ make python3 tmux htop pciutils usbutils lsof
     vim-minimal glibc-langpack-en selinux-policy-targeted
     rpmfusion-free-release rpmfusion-nonfree-release

@@ -96,11 +96,15 @@ def summarise(frame: pd.DataFrame, n_boot: int, seed: int) -> dict:
                     d["static_weighted"][s] - d["round_robin"][s]
                 )
                 lo, hi = interval(boot)
+                blind = interval(d["round_robin"][s] - d["static_weighted"][s])
+                aware = interval(d["jsq"][s] - d["wjsq"][s])
                 h1[s] = {
                     "calibration_gain_queue_blind": round(
                         float(v["round_robin"] - v["static_weighted"]), 1
                     ),
+                    "calibration_gain_queue_blind_ci95": [round(x, 1) for x in blind],
                     "calibration_gain_queue_aware": round(float(v["jsq"] - v["wjsq"]), 1),
+                    "calibration_gain_queue_aware_ci95": [round(x, 1) for x in aware],
                     "interaction": round(float(point_value), 1),
                     "ci95": [round(lo, 1), round(hi, 1)],
                     "excludes_zero": bool(lo > 0 or hi < 0),

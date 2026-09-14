@@ -54,6 +54,10 @@ DEFAULT_GRID = {
     "staleness_s": [0.0, 0.1, 0.5, 1.0],
     "rate_scale": [0.8, 1.15, 1.45],  # quiet/light/mid, heavy is saturated and excluded from H2/H3
     "R": [1, 2, 4],  # small subset for smoke; full grid up to 100 for paper
+    # R_decode / R_prefill of the synthesised node. 1.0 scales both phases alike, which is
+    # every sweep before this axis existed. Above 1 the slow node loses decode faster than
+    # prefill (a CPU against a GPU); below 1 it loses prefill faster (an older GPU).
+    "phase_skew": [1.0],
 }
 
 
@@ -65,37 +69,65 @@ def load_snapshots_by_id(root: Path = SNAPSHOT_ROOT) -> dict[str, dict[str, Any]
     return index
 
 
-def synthesize_snapshot(base: dict[str, Any], factor: float) -> dict[str, Any]:
+def synthesize_snapshot(
+    base: dict[str, Any], factor: float, phase_skew: float = 1.0
+) -> dict[str, Any]:
     """Scale a measured C-3 snapshot to synthesise a new node class at R=factor.
 
-    Scaling is applied to service time (mean/p50/p95) and inversely to
-    tokens_per_s, preserving the shape of the grid. A synthesised snapshot
-    gets its own id (synth_<base>__x<factor>) and node_class so figures can
-    label it; provenance is left as the measured snapshot's provenance so the
-    file remains valid per C-3 (additional fields would break the frozen schema
-    and the Java parser which is strict). The factor is recoverable from the id.
+    With `phase_skew` 1.0 every service-time field is multiplied by `factor` and
+    tokens_per_s divided by it, which preserves the shape of the grid.
+
+    Prefill and decode do not slow down at the same rate across real machines, and that is
+    the elevation's claim, so a single factor cannot synthesise the pools it is about. With
+    `phase_skew` s, prefill is scaled by factor / sqrt(s) and decode by factor * sqrt(s):
+    their ratio is s and their geometric mean is still `factor`. Each cell's service time
+    then scales by what its own prefill and decode split implies, so a prompt-heavy cell and
+    a generation-heavy cell of the same node slow down by different amounts, as they do on
+    hardware. A cell without the split cannot be skewed, and refuses rather than falling
+    back to a uniform factor that would contradict the id it is written under.
+
+    A synthesised snapshot gets its own id and node_class so figures can label it:
+    synth_<base>__x<factor>, with _skew<s> appended when s is not 1, so every sweep written
+    before the skew axis keeps its ids. Provenance is left as the measured snapshot's so the
+    file remains valid per C-3 (additional fields would break the frozen schema and the
+    strict Java parser). Both parameters are recoverable from the id.
 
     Every sweep point gets two nodes, including R=1 where the second node is
     an unscaled copy with its own id. A one node R=1 point next to two node
     R>1 points would read pool size as an effect of R, so homogeneity means
     two identical nodes, not one node.
     """
-    new_id = f"synth_{base['snapshot_id']}__x{factor:g}"
+    if phase_skew <= 0:
+        raise ValueError(f"phase_skew is a ratio of two slowdowns and must be > 0, got {phase_skew}")
+    suffix = "" if phase_skew == 1.0 else f"_skew{phase_skew:g}"
+    new_id = f"synth_{base['snapshot_id']}__x{factor:g}{suffix}"
     # Deep copy via json round-trip to avoid mutating the base
     new = json.loads(json.dumps(base))
     new["snapshot_id"] = new_id
-    new["node_class"] = f"{base['node_class']}__synth_x{factor:g}"
-    # Scale every cell
+    new["node_class"] = f"{base['node_class']}__synth_x{factor:g}{suffix}"
+    prefill_factor = factor / phase_skew**0.5
+    decode_factor = factor * phase_skew**0.5
     for e in new["entries"]:
-        for field in ("service_ms_mean", "service_ms_p50", "service_ms_p95"):
-            e[field] = round(e[field] * factor, 4)
+        prefill = e.get("prefill_ms_mean")
+        decode = e.get("decode_ms_mean")
+        if phase_skew == 1.0:
+            cell_factor = factor
+        elif prefill is None or decode is None or prefill + decode <= 0:
+            raise ValueError(
+                f"{base['snapshot_id']} has a cell with no prefill/decode split "
+                f"({e['prompt_bucket']}, {e['output_bucket']}, c={e['concurrency']}), so "
+                f"phase_skew {phase_skew:g} cannot be synthesised from it"
+            )
+        else:
+            cell_factor = (prefill * prefill_factor + decode * decode_factor) / (prefill + decode)
+        for f in ("service_ms_mean", "service_ms_p50", "service_ms_p95"):
+            e[f] = round(e[f] * cell_factor, 4)
         # tokens_per_s is work per time, so it scales inversely
-        e["tokens_per_s"] = round(e["tokens_per_s"] / factor, 4)
-        # prefill/decode split, if present, scale with service
-        if e.get("prefill_ms_mean") is not None:
-            e["prefill_ms_mean"] = round(e["prefill_ms_mean"] * factor, 4)
-        if e.get("decode_ms_mean") is not None:
-            e["decode_ms_mean"] = round(e["decode_ms_mean"] * factor, 4)
+        e["tokens_per_s"] = round(e["tokens_per_s"] / cell_factor, 4)
+        if prefill is not None:
+            e["prefill_ms_mean"] = round(prefill * prefill_factor, 4)
+        if decode is not None:
+            e["decode_ms_mean"] = round(decode * decode_factor, 4)
     # Keep provenance as measured (so file validates); synthesis is evident from id/node_class
     return new
 
@@ -131,6 +163,7 @@ def build_sweep_manifest(
     synthesized_snapshots: dict[str, str] | None = None,
     trace_sha256: str | None = None,
     trace_path: Path | None = None,
+    phase_skew: float = 1.0,
 ) -> dict[str, Any]:
     """Build a C-6 manifest for one sweep point, reusing anchors' manifest builder shape."""
     config = dict(base_manifest.get("config", {}))
@@ -138,6 +171,7 @@ def build_sweep_manifest(
     new_config["staleness_s"] = staleness_s
     new_config["policy"] = policy
     new_config["R_target"] = R
+    new_config["phase_skew"] = phase_skew
     new_config["rate_scale"] = rate_scale
     new_manifest = dict(base_manifest)
     new_manifest["policy"] = policy
@@ -407,10 +441,15 @@ def main(argv: list[str] | None = None) -> int:
             }
 
     print(
-        f"Sweep grid: policies={grid['policies']} R={grid['R']} staleness={grid['staleness_s']} rate_scale={grid['rate_scale']}"
+        f"Sweep grid: policies={grid['policies']} R={grid['R']} phase_skew={grid['phase_skew']} "
+        f"staleness={grid['staleness_s']} rate_scale={grid['rate_scale']}"
     )
     total = (
-        len(grid["policies"]) * len(grid["R"]) * len(grid["staleness_s"]) * len(grid["rate_scale"])
+        len(grid["policies"])
+        * len(grid["R"])
+        * len(grid["phase_skew"])
+        * len(grid["staleness_s"])
+        * len(grid["rate_scale"])
     )
     print(f"Total points: {total} -> {args.out}")
 
@@ -448,8 +487,9 @@ def main(argv: list[str] | None = None) -> int:
     # does this because a cold engine pays a first request cost; the DES has no
     # engine but the same order keeps sweep output comparable with anchor output.
     points = [
-        (R, rate, staleness, policy)
+        (R, skew, rate, staleness, policy)
         for R in sorted(grid["R"])
+        for skew in sorted(grid["phase_skew"])
         for rate in sorted(grid["rate_scale"])
         for staleness in sorted(grid["staleness_s"])
         for policy in grid["policies"]
@@ -461,7 +501,7 @@ def main(argv: list[str] | None = None) -> int:
     # and load at the same R, and removed together at the end.
     overlay_cache: dict[str, Path] = {}
     max_rate = max(grid["rate_scale"])
-    for point_no, (R, rate, staleness, policy) in enumerate(points):
+    for point_no, (R, skew, rate, staleness, policy) in enumerate(points):
         # Every point runs a two node pool. At R=1 the second node is an
         # unscaled copy with its own id; a one node R=1 pool next to two node
         # R>1 pools would confound pool size with heterogeneity.
@@ -471,12 +511,20 @@ def main(argv: list[str] | None = None) -> int:
         if base_snap is None:
             print(f"  failed: base snapshot {base_snap_id} not in {args.cost_models}")
             failures.append(
-                f"R={R} policy={policy} staleness={staleness} rate={rate}: missing base snapshot"
+                f"R={R} skew={skew} policy={policy} staleness={staleness} rate={rate}: "
+                "missing base snapshot"
             )
             if not args.keep_going:
                 break
             continue
-        synth = synthesize_snapshot(base_snap, float(R))
+        try:
+            synth = synthesize_snapshot(base_snap, float(R), float(skew))
+        except ValueError as e:
+            print(f"  failed: {e}")
+            failures.append(f"R={R} skew={skew}: {e}")
+            if not args.keep_going:
+                break
+            continue
         # Persist synthesised snapshot under the sweep out dir (not contracts/),
         # so runset can find it via a custom index without polluting measured data
         synth_dir = args.out / "synthesised"
@@ -488,23 +536,35 @@ def main(argv: list[str] | None = None) -> int:
         index[synth["snapshot_id"]] = synth
         extra_for_this_run = [synth]
         nodes = list(base_manifest["nodes"])
-        slow_node_id = f"slow_{R:g}x"
+        skew_tag = "" if skew == 1.0 else f"_skew{skew:g}"
+        slow_node_id = f"slow_{R:g}x{skew_tag}"
         cost_snaps[slow_node_id] = synth["snapshot_id"]
         if nodes:
             slow_node = dict(nodes[0])
             slow_node["node_id"] = slow_node_id
-            slow_node["host"] = f"slow-{R:g}x"
+            slow_node["host"] = f"slow-{R:g}x{skew_tag}"
             slow_node["gpu"] = "synthesised"
             nodes = nodes + [slow_node]
         manifest = build_sweep_manifest(
-            base_manifest, policy, staleness, rate, R, cost_snaps, trace_sha256, args.trace
+            base_manifest,
+            policy,
+            staleness,
+            rate,
+            R,
+            cost_snaps,
+            trace_sha256,
+            args.trace,
+            phase_skew=float(skew),
         )
         manifest["nodes"] = nodes
-        manifest["run_id"] = f"sweep_R{R:g}_{policy}_s{staleness}_r{rate:g}_{point_no:04d}"
+        manifest["run_id"] = (
+            f"sweep_R{R:g}{skew_tag}_{policy}_s{staleness}_r{rate:g}_{point_no:04d}"
+        )
 
         run_dir = args.out / manifest["run_id"]
         print(
-            f"Running {manifest['run_id']}  R={R} policy={policy} staleness={staleness} rate_scale={rate} -> {run_dir}"
+            f"Running {manifest['run_id']}  R={R} skew={skew} policy={policy} "
+            f"staleness={staleness} rate_scale={rate} -> {run_dir}"
         )
         try:
             run_one_des(

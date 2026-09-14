@@ -95,8 +95,16 @@ public class SchedulerGrpcService extends SchedulerGrpc.SchedulerImplBase {
                 NodeView known = store.getNode(beat.getNodeId());
                 if (known != null) capability = known.capabilityTokS();
                 if (capability <= 0.0) capability = beat.getRecentTokensPerS();
+                // For a node this scheduler dispatches to, its own admit and completion
+                // counts are the queue state, the same as SimNodeServer's in the DES. A
+                // heartbeat sent before a dispatch reached the worker reports the queue
+                // without it, and taking those numbers would roll the count back and let
+                // JSQ send the next request of a burst to the node it just loaded.
+                boolean tracked = known != null && workerChannels.containsKey(beat.getNodeId());
+                int queueDepth = tracked ? known.queueDepth() : beat.getQueueDepth();
+                int inflightCount = tracked ? known.inflight() : beat.getInflightCount();
                 NodeView nv = new NodeView(
-                        beat.getNodeId(), beat.getQueueDepth(), beat.getInflightCount(),
+                        beat.getNodeId(), queueDepth, inflightCount,
                         capability, 0L, true);
                 store.updateNode(nv);
                 veil.updateNode(nv);
@@ -184,7 +192,11 @@ public class SchedulerGrpcService extends SchedulerGrpc.SchedulerImplBase {
         // this is the live side of the same invariant.
         if (chosenNode != null && forwarded) {
             int cap = workerCapacity.getOrDefault(chosenNode, 0);
-            store.admit(chosenNode, cap);
+            // The policy reads the veil, not the store, so the admission has to reach the
+            // veil too. Updating only the store left JSQ and WJSQ reading queue depth from
+            // the last heartbeat, up to a second old at staleness 0, while the DES pushes
+            // every admission to both (SimNodeServer.updateStore).
+            veil.updateNode(store.admit(chosenNode, cap));
             if (inflight.containsKey(chosenNode)) inflight.get(chosenNode).incrementAndGet();
         }
 
@@ -212,8 +224,21 @@ public class SchedulerGrpcService extends SchedulerGrpc.SchedulerImplBase {
         // which is a second, uncontrolled staleness source sitting alongside
         // the one H3 injects on purpose.
         String nodeId = req.getNodeId();
+        // A request from an earlier run can still finish after this scheduler has started
+        // on the next one, since every run gets its own scheduler process. Its completion
+        // was never admitted here, and counting it would free a slot a request of this run
+        // is holding.
+        boolean thisRun = req.getRunId().isEmpty() || req.getRunId().equals(runId);
+        if (!thisRun) {
+            System.err.println("Ignoring completion of " + req.getReqId() + " from run "
+                + req.getRunId() + " (this scheduler is run " + runId + ")");
+            responseObserver.onNext(ExecuteAck.newBuilder().setReqId(req.getReqId()).setQueued(false).build());
+            responseObserver.onCompleted();
+            return;
+        }
         int cap = workerCapacity.getOrDefault(nodeId, 0);
-        store.complete(nodeId, cap);
+        NodeView done = store.complete(nodeId, cap);
+        if (done != null) veil.updateNode(done);
         if (inflight.containsKey(nodeId)) {
             inflight.get(nodeId).updateAndGet(v -> Math.max(0, v - 1));
         }

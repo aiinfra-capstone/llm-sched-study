@@ -60,7 +60,10 @@ tok/s of service, 1.57x.
 
 | Campaign | Pool | Trace | Points (req/s) | Policies x repeats | Staleness | Status |
 |---|---|---|---|---|---|---|
-| `mpr2_1650ti_3050` | 1650 Ti + 3050, Wi-Fi | anchor | 1.3, 2.4, 3.2 | 5 x 3 | 0 | `[~]` running, every finished run valid |
+| `mpr2_1650ti_3050` | 1650 Ti + 3050, Wi-Fi | anchor | 1.3, 2.4, 3.2 | 5 x 3 | 0 | `[x]` 45 of 45 valid, `summary.md` |
+| `phase_generation_1650ti_3050` | same | generation | 2.4, 3.2 | 5 x 3 | 0 | `[x]` 30 of 30 valid, `summary.md` |
+| `phase_balanced_1650ti_3050` | same | balanced | 2.4, 3.2 | 5 x 3 | 0 | `[~]` running; engines restarted between runs 5 and 6 |
+| `phase_summarisation_1650ti_3050` | same | summarisation | 2.4, 3.2 | 5 x 3 | 0 | `[ ]` queued |
 | `demonstrate_jsq` | co-located | | | | | invalid by design, not a data point |
 
 ### Simulator sweeps
@@ -157,8 +160,8 @@ Ordered by what a reviewer would ask first. Cost is machine time plus people tim
 
 | # | Status | What | Why it is needed | Cost | Owner | Done when |
 |---|---|---|---|---|---|---|
-| P1 | `[~]` | **First pair, anchor trace.** `mpr2_1650ti_3050`, 45 runs, then pipeline, costcheck, runset and figures | The first H1 2x2 on real heterogeneous hardware. Without it MPR-2 does not exist. | 1.6 h machine, 1 h analysis | J | every run valid and `h1-decomposition` renders |
-| P2 | `[ ]` | **First pair, the three shape traces** (summarisation, balanced, generation) through the same 2x2 | The elevation's claim. On one pair, service R moves from 1.39 to 2.59 with the workload alone; if the policy ranking or H1's interaction term moves with it, that is the paper's result. | 8 to 12 h machine (600-request traces; two load points saves a third), half a day analysis | J | `phase-advantage` renders with three shapes |
+| P1 | `[x]` | **First pair, anchor trace.** `mpr2_1650ti_3050`, 45 runs, then pipeline, costcheck, runset and figures | The first H1 2x2 on real heterogeneous hardware. Without it MPR-2 does not exist. | 1.6 h machine, 1 h analysis | J | every run valid and `h1-decomposition` renders |
+| P2 | `[~]` | **First pair, the three shape traces** (summarisation, balanced, generation) through the same 2x2 | The elevation's claim. On one pair, service R moves from 1.39 to 2.59 with the workload alone; if the policy ranking or H1's interaction term moves with it, that is the paper's result. | 8 to 12 h machine (600-request traces; two load points saves a third), half a day analysis | J | `phase-advantage` renders with three shapes |
 | P3 | `[ ]` | **Two more real pairs.** Calibrate the CPU classes on both laptops, run the anchor campaign on 1650 Ti CPU + 3050 GPU and one more pair | One pair is an anecdote. H1 has to hold, or visibly change, across more than one R, and MPR-2 is defined as a range. | about 1 h per calibration, 2 to 3 h per campaign, 8 to 12 h total | D calibrates, J runs | `mpr2-range` renders across three R |
 | P4 | `[ ]` | **Simulator against hardware on the two-node pool, per policy** | Every simulator figure (N to 12, R to 100, staleness) is only believable if the simulator reproduces real heterogeneous runs, not just one node. | a driver that replays a hardware manifest through `SimApp`, about a day; simulator time is minutes | A | each P1 policy and point within ±25% on p50 and p95, or the misses explained |
 | P5 | `[ ]` | **Confidence intervals and effect sizes.** Bootstrap CIs on p50, p95 and the H1 interaction term; five repeats at the deciding points | Three repeats of 200 requests leave p95 and p99 noisy. A reviewer rejects a policy ranking whose intervals overlap. | about 3 h machine; `bootstrap_halfwidth` already exists, half a day to wire it into the H1 figures | D | every H1 claim carries an interval |
@@ -205,6 +208,7 @@ Ordered by what a reviewer would ask first. Cost is machine time plus people tim
 | Scale: 1B, 4 slots, consumer GPUs | external validity | frame as heterogeneous consumer serving; S5 |
 | Short trace, 200 requests per run | p99 noise | P5 repeats and CIs |
 | Novelty (spec R1) | the whole contribution | P8 |
+| llama-server's host prompt cache (`--cache-ram`, 8 GB by default) | host memory grew to 5.8 GB on the 1650 Ti laptop and pushed it into swap; a cache hit would also skip prefill | engine logs show every prompt evaluated at full length, so no hit occurred; both engines restarted with the identical command between runs at campaign boundaries; pass `--cache-ram 0` from the next calibration on and record it |
 
 ---
 
@@ -212,3 +216,4 @@ Ordered by what a reviewer would ask first. Cost is machine time plus people tim
 
 - **2026-09-15** Second node brought up on the RTX 3050 laptop from the X9. 3050 calibrated.
   Capability changed from decode tok/s to service rate in both vehicles. P1 started.
+- **2026-09-15, overnight** P1 done, all 45 valid; H1 interaction grows with load. Generation-shape campaign done, all 30 valid. Engines restarted between runs because llama-server's default host prompt cache exhausted memory; no cache hit found in the logs. Fixed the `node-utilization` and `phase-advantage` figures (tests pending).

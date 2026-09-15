@@ -269,11 +269,17 @@ def per_node_utilization(frame: pd.DataFrame, *, slots_per_node: int | None = No
     of Week 1 and changing one is a joint decision.
     """
     rows = analysable(frame)
+    # Spans are measured per run and then summed. Every run's offsets start near zero, so
+    # one span taken across a whole set is the length of a single run while the service
+    # time summed under it is every run's, and a four-slot node read 24 in service at once.
+    run = rows["run_id"] if "run_id" in rows.columns else pd.Series("", index=rows.index)
     out = []
     for node_id, at_node in rows.groupby("chosen_node", sort=True):
-        start = float(at_node["intended_offset_s"].min())
-        end = float((at_node["intended_offset_s"] + at_node["e2e_ms"] / 1e3).max())
-        span_s = end - start
+        span_s = 0.0
+        for _, in_run in at_node.groupby(run.loc[at_node.index], sort=False):
+            start = float(in_run["intended_offset_s"].min())
+            end = float((in_run["intended_offset_s"] + in_run["e2e_ms"] / 1e3).max())
+            span_s += end - start
         service_s = float(at_node["service_ms"].sum()) / 1e3
         busy_ratio = service_s / span_s if span_s > 0 else 0.0
         record = {
@@ -944,6 +950,7 @@ def phase_advantage_curve(frame: pd.DataFrame) -> list[dict[str, float]]:
             )
         per_run.append(
             {
+                "trace": group["trace_sha256"].iloc[0] if "trace_sha256" in group.columns else None,
                 "rho": float((group["prompt_len"].astype(float) / output_len).mean()),
                 "policy": group["policy"].iloc[0],
                 "mean_latency_ms": float(group["e2e_ms"].astype(float).mean()),
@@ -952,15 +959,18 @@ def phase_advantage_curve(frame: pd.DataFrame) -> list[dict[str, float]]:
 
     reduced = pd.DataFrame(per_run)
     out: list[dict[str, float]] = []
-    # Rounded because a profile's rho is a property of its bucket mix and lands on the same
-    # value every run, up to floating point. Runs of one profile must group together.
-    for rho, group in reduced.groupby(reduced["rho"].round(3)):
+    # A workload shape is the trace that was replayed, not the ratio measured on it. The
+    # measured ratio moves with which requests fall inside warmup, so one trace at three
+    # load points read as three shapes when runs were grouped on a rounded rho. Every C-5
+    # runset carries trace_sha256; a frame built without it falls back to the ratio.
+    shape = reduced["trace"] if reduced["trace"].notna().all() else reduced["rho"].round(3)
+    for _, group in reduced.groupby(shape):
         by_policy = group.groupby("policy")["mean_latency_ms"].mean().to_dict()
         if not set(CELLS) <= set(by_policy):
             continue
         out.append(
             {
-                "rho": float(rho),
+                "rho": float(group["rho"].mean()),
                 # Positive when calibration helps: blind minus aware.
                 "queue_blind_gain_ms": by_policy["round_robin"] - by_policy["static_weighted"],
                 "queue_aware_gain_ms": by_policy["jsq"] - by_policy["wjsq"],
@@ -1353,9 +1363,14 @@ def drawable(frame: pd.DataFrame) -> list[str]:
         # than the pool, so a single-R set can still draw it. The columns are guarded
         # because a frame assembled by hand for one figure need not carry them, even
         # though every real C-5 runset does.
+        # Shapes are counted by trace when the frame names one, because one trace mixes
+        # buckets of different ratios and counting per-request ratios offered this figure
+        # for a single-trace set. The guard is there because a frame assembled by hand for
+        # one figure need not carry these columns, even though every real C-5 runset does.
         if {"prompt_len", "output_len"} <= set(frame.columns):
-            shapes = (frame["prompt_len"] / frame["output_len"]).round(3).nunique()
-            if shapes > 1:
+            ratio = (frame["prompt_len"] / frame["output_len"]).round(3)
+            shape = frame["trace_sha256"] if "trace_sha256" in frame.columns else ratio
+            if shape.nunique() > 1:
                 names.append("phase-advantage")
     if "tau_s" in frame.columns and frame["staleness_s"].nunique() > 1:
         names.append("h3-staleness")

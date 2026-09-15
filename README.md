@@ -537,6 +537,8 @@ uv run contracts/check.py --validate runs/exp/jsq_r1/scheduler_jsq_r1.jsonl
 | [Split and interface contract](docs/base_scope/two-person-split-and-interface-contract.md) | Where the seam is, the six artifacts across it, and the failure modes to watch. |
 | [Week-1 freeze checklist](docs/base_scope/week1-freeze-checklist.md) | What had to be true before the contract froze, and the record of every week since. |
 | [Elevation 1](docs/elevation-1/) | What a scrutiny pass on the finished Week-4 system changed: the scope delta, the measurements behind it, and the workplan to October. |
+| [Checkpoint](docs/checkpoint.md) | The data we have, everything our code can still collect, and the plan to a publishable result, with why each item is needed and what it costs. |
+| [Writing brief](docs/writing-brief.md) | For the writing team: what changed since the specification, the results with their intervals, what we contrast against, and every figure with its provenance. |
 | [UML figure set](docs/uml/FIGURES.md) | Twelve figures with captions and the requirements each discharges. |
 
 ## Project status

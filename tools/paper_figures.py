@@ -128,9 +128,14 @@ def calibration_gain_by_shape(campaigns: dict[str, dict], out: Path) -> Path | N
     if len(shapes) < 2:
         return None
     shapes.sort(key=lambda lbl: SHAPE_RHO[lbl])
-    lambdas = sorted(
-        {pt["lambda_rps"] for lbl in shapes for pt in campaigns[lbl]["points"] if pt["h1"]}
-    )
+    # Only load points that two or more shapes share: a row with one bar pair compares
+    # nothing across shapes.
+    counts: dict[float, int] = {}
+    for lbl in shapes:
+        for pt in campaigns[lbl]["points"]:
+            if pt["h1"]:
+                counts[pt["lambda_rps"]] = counts.get(pt["lambda_rps"], 0) + 1
+    lambdas = sorted(lam for lam, n in counts.items() if n >= 2)
     fig, axes = plt.subplots(len(lambdas), 2, figsize=(10, 3.2 * len(lambdas)), squeeze=False)
     for row, lam in enumerate(lambdas):
         for col, stat in enumerate(["mean", "p95"]):
@@ -146,6 +151,18 @@ def calibration_gain_by_shape(campaigns: dict[str, dict], out: Path) -> Path | N
                         None,
                     )
                     if pt is None:
+                        # Measured at this load but some H1 policy has no valid run.
+                        ran = any(p["lambda_rps"] == lam for p in campaigns[lbl]["points"])
+                        if ran and kind == "queue_blind":
+                            ax.text(
+                                i,
+                                0,
+                                "H1 undefined:\na policy saturated",
+                                ha="center",
+                                va="bottom",
+                                fontsize=7,
+                                color="#555",
+                            )
                         continue
                     h = pt["h1"][stat]
                     v = h[f"calibration_gain_{kind}"]

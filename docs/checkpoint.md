@@ -1,7 +1,7 @@
 # Checkpoint
 
 What we have measured, what our code can still measure, and what stands between that and a
-paper. We update this after every campaign. Status as of **2026-09-15**.
+paper. We update this after every campaign. Status as of **2026-09-15**, after P2.
 
 `[x]` done, `[~]` running or partial, `[ ]` not started. Owners: **D** Divyansh (data plane),
 **A** Aditya (control plane), **J** joint.
@@ -13,9 +13,9 @@ paper. We update this after every campaign. Status as of **2026-09-15**.
 | Result | Needs | Status |
 |---|---|---|
 | **MPR-1** throughput nonstationarity | τ and the variance envelope on real nodes | `[x]` τ resolved on one class (CPU 8B, 69.5 s, r² 0.989); censored at ≤ 5 s on every 1B class |
-| **MPR-2** H1 2x2 on real hardware | two-host pool, 2x2 at several load points, a range across R | `[~]` first real pair running; one R only |
+| **MPR-2** H1 2x2 on real hardware | two-host pool, 2x2 at several load points, a range across R | `[~]` first real pair done: anchor plus three shape traces, 132 valid runs; one pair only |
 | **MPR-3** H2 and H3 in a validated simulator | F-23 on a heterogeneous pool, R and staleness sweeps | `[ ]` F-23 passes on one node only; no paper sweep run |
-| **Elevation 1** R depends on the workload's phase mix | phase-split cost models on a real pair, the three shape traces run through the 2x2 | `[~]` cost-model side measured; no shape trace run on hardware |
+| **Elevation 1** R depends on the workload's phase mix | phase-split cost models on a real pair, the three shape traces run through the 2x2 | `[~]` measured on one pair: queue-blind calibration gain rises 146 to 5484 ms with R at 2.4 req/s, queue-aware gain stays 112 to 168 ms; needs a second pair |
 | **Mid-tier journal** | the above, plus section 6 | `[ ]` |
 
 ---
@@ -62,8 +62,8 @@ tok/s of service, 1.57x.
 |---|---|---|---|---|---|---|
 | `mpr2_1650ti_3050` | 1650 Ti + 3050, Wi-Fi | anchor | 1.3, 2.4, 3.2 | 5 x 3 | 0 | `[x]` 45 of 45 valid, `summary.md` |
 | `phase_generation_1650ti_3050` | same | generation | 2.4, 3.2 | 5 x 3 | 0 | `[x]` 30 of 30 valid, `summary.md` |
-| `phase_balanced_1650ti_3050` | same | balanced | 2.4, 3.2 | 5 x 3 | 0 | `[~]` running; engines restarted between runs 5 and 6 |
-| `phase_summarisation_1650ti_3050` | same | summarisation | 2.4, 3.2 | 5 x 3 | 0 | `[ ]` queued |
+| `phase_balanced_1650ti_3050` | same | balanced | 2.4, 3.2 | 5 x 3 | 0 | `[x]` 30 of 30 valid, `summary.md` |
+| `phase_summarisation_1650ti_3050` | same | summarisation | 2.4, 3.2 | 5 x 3 | 0 | `[x]` 27 of 30 valid; RoundRobin at 3.2 req/s saturates in all three repeats (522 of 600 completed) and is reported as saturation |
 | `demonstrate_jsq` | co-located | | | | | invalid by design, not a data point |
 
 ### Simulator sweeps
@@ -105,7 +105,7 @@ Real pairs that gives us, each a different R and phase profile:
 
 | Pair | Expected | Why we want it | Cost | Status |
 |---|---|---|---|---|
-| 1650 Ti GPU + 3050 GPU | R 1.4 to 2.6, prefill-driven | first real H1 point; service R moves with the workload while decode R stays at 1.2 | 1.6 h anchor, 8 to 12 h shape traces | `[~]` campaign running |
+| 1650 Ti GPU + 3050 GPU | R 1.4 to 2.6, prefill-driven | first real H1 point; service R moves with the workload while decode R stays at 1.2 | 1.6 h anchor, 8 to 12 h shape traces | `[x]` done |
 | 1650 Ti CPU + 3050 GPU | large R | second point on the MPR-2 range, near where H2 predicts thresholding takes over | 1 h calibration, 2 to 3 h anchor campaign at lower rates, third machine for the harness | `[ ]` |
 | 1650 Ti GPU + 3050 CPU | measure; the GPU should win prefill by far more than decode | a pair where the host roles are reversed, so a host effect is not mistaken for a class effect | 45 min calibration, 2 to 3 h campaign | `[ ]` |
 | 1650 Ti CPU + 3050 CPU | CPU against CPU | heterogeneity without a GPU at all, the common case for small edge deployments | both CPU calibrations, 3 h campaign, third machine for the harness | `[ ]` |
@@ -141,12 +141,12 @@ Staleness multiplies the whole campaign by the number of values.
 
 | Figure | Needs | Status |
 |---|---|---|
-| `latency-vs-load`, `throughput-vs-load`, `queue-wait-vs-load`, `node-utilization` | any run set | `[ ]` render once the campaign finishes |
+| `latency-vs-load`, `throughput-vs-load`, `queue-wait-vs-load`, `node-utilization` | any run set | `[x]` `figures/mpr2_1650ti_3050/` |
 | `validation` | matched hardware and simulator points | `[x]` single node |
-| `h1-decomposition` | the 2x2 at one R | `[ ]` after the campaign |
+| `h1-decomposition` | the 2x2 at one R | `[x]` anchor; the per-point version with intervals is `tools/paper_figures.py` |
 | `mpr2-range` | the 2x2 at two or more R | `[ ]` needs a second pair |
 | `h2-advantage` | a sweep over R | `[ ]` needs a simulator sweep |
-| `phase-advantage` | the 2x2 at two or more workload shapes | `[ ]` needs the shape traces |
+| `phase-advantage` | the 2x2 at two or more workload shapes | `[x]` renders on the combined set, but pools load points unequally; `figures/paper/calibration_gain_by_shape.png` is the per-point version to use |
 | `h3-staleness` | staleness values and `--tau-s` | `[ ]` |
 | Threshold baseline on the H2 curve | `THRESHOLD_BASELINE` in `plots.py` | `[ ]` not implemented; its test is skipped |
 
@@ -161,13 +161,13 @@ Ordered by what a reviewer would ask first. Cost is machine time plus people tim
 | # | Status | What | Why it is needed | Cost | Owner | Done when |
 |---|---|---|---|---|---|---|
 | P1 | `[x]` | **First pair, anchor trace.** `mpr2_1650ti_3050`, 45 runs, then pipeline, costcheck, runset and figures | The first H1 2x2 on real heterogeneous hardware. Without it MPR-2 does not exist. | 1.6 h machine, 1 h analysis | J | every run valid and `h1-decomposition` renders |
-| P2 | `[~]` | **First pair, the three shape traces** (summarisation, balanced, generation) through the same 2x2 | The elevation's claim. On one pair, service R moves from 1.39 to 2.59 with the workload alone; if the policy ranking or H1's interaction term moves with it, that is the paper's result. | 8 to 12 h machine (600-request traces; two load points saves a third), half a day analysis | J | `phase-advantage` renders with three shapes |
+| P2 | `[x]` | **First pair, the three shape traces** (summarisation, balanced, generation) through the same 2x2 | The elevation's claim. On one pair, service R moves from 1.39 to 2.59 with the workload alone; if the policy ranking or H1's interaction term moves with it, that is the paper's result. | 8 to 12 h machine (600-request traces; two load points saves a third), half a day analysis | J | `phase-advantage` renders with three shapes |
 | P3 | `[ ]` | **Two more real pairs.** Calibrate the CPU classes on both laptops, run the anchor campaign on 1650 Ti CPU + 3050 GPU and one more pair | One pair is an anecdote. H1 has to hold, or visibly change, across more than one R, and MPR-2 is defined as a range. | about 1 h per calibration, 2 to 3 h per campaign, 8 to 12 h total | D calibrates, J runs | `mpr2-range` renders across three R |
 | P4 | `[ ]` | **Simulator against hardware on the two-node pool, per policy** | Every simulator figure (N to 12, R to 100, staleness) is only believable if the simulator reproduces real heterogeneous runs, not just one node. | a driver that replays a hardware manifest through `SimApp`, about a day; simulator time is minutes | A | each P1 policy and point within ±25% on p50 and p95, or the misses explained |
-| P5 | `[ ]` | **Confidence intervals and effect sizes.** Bootstrap CIs on p50, p95 and the H1 interaction term; five repeats at the deciding points | Three repeats of 200 requests leave p95 and p99 noisy. A reviewer rejects a policy ranking whose intervals overlap. | about 3 h machine; `bootstrap_halfwidth` already exists, half a day to wire it into the H1 figures | D | every H1 claim carries an interval |
+| P5 | `[~]` | **Confidence intervals and effect sizes.** Bootstrap CIs on p50, p95 and the H1 interaction term; five repeats at the deciding points | Three repeats of 200 requests leave p95 and p99 noisy. A reviewer rejects a policy ranking whose intervals overlap. | about 3 h machine; `bootstrap_halfwidth` already exists, half a day to wire it into the H1 figures | D | every H1 claim carries an interval |
 | P6 | `[ ]` | **A policy that prices each request from the full cost model** | Our capability-aware policies squeeze a node into one number, and we saw that number alone move the pool from 1.18x to 1.57x. Without a per-request policy, scalar WJSQ reads as a strawman and "calibration is redundant" is not earned. | about a day of policy code, then its arm rerun on P1 to P3 (about a fifth of their machine time) | A | the policy runs live and in the simulator and passes the determinism test |
 | P7 | `[ ]` | **Simulator sweeps for H2 and H3** over R 1 to 100, phase skew and staleness, parameterised from P1 | H2's non-monotonic curve and H3's staleness shift cannot be measured on two laptops. They are MPR-3. | cheap: minutes to hours of simulator time, half a day to configure and check | A | `h2-advantage` and `h3-staleness` render |
-| P8 | `[ ]` | **Literature check and positioning** against Splitwise, DistServe, Helix, HexGen, Mélange and 2025 heterogeneous-serving work | Spec threat R1. Prefill/decode asymmetry is already used by disaggregated serving; our question (does calibration add anything over queue depth, and does that depend on the phase mix) has to be shown to be new. | 2 to 3 days of reading and writing | J | related-work section drafted with the gap stated |
+| P8 | `[~]` | **Literature check and positioning** against Splitwise, DistServe, Helix, HexGen, Mélange and 2025 heterogeneous-serving work | Spec threat R1. Prefill/decode asymmetry is already used by disaggregated serving; our question (does calibration add anything over queue depth, and does that depend on the phase mix) has to be shown to be new. | 2 to 3 days of reading and writing | J | related-work section drafted with the gap stated |
 
 ### Strengthens it
 
@@ -185,13 +185,13 @@ Ordered by what a reviewer would ask first. Cost is machine time plus people tim
 
 | Block | Hours |
 |---|---:|
-| P1 | 1.6 |
-| P2 | 8 to 12 |
+| P1 | done |
+| P2 | done (about 11 h) |
 | P3 | 8 to 12 |
 | P5 | 3 |
 | P6 reruns | 4 |
 | S1 | 3 |
-| **Total** | **28 to 36** |
+| **Remaining** | **18 to 22** |
 
 ---
 
@@ -209,6 +209,7 @@ Ordered by what a reviewer would ask first. Cost is machine time plus people tim
 | Short trace, 200 requests per run | p99 noise | P5 repeats and CIs |
 | Novelty (spec R1) | the whole contribution | P8 |
 | llama-server's host prompt cache (`--cache-ram`, 8 GB by default) | host memory grew to 5.8 GB on the 1650 Ti laptop and pushed it into swap; a cache hit would also skip prefill | engine logs show every prompt evaluated at full length, so no hit occurred; both engines restarted with the identical command between runs at campaign boundaries; pass `--cache-ram 0` from the next calibration on and record it |
+| Anchor and shape traces use different arrivals | comparing the anchor row with the shape rows | compare the three shape traces with each other; the anchor only loosely |
 
 ---
 
@@ -216,4 +217,5 @@ Ordered by what a reviewer would ask first. Cost is machine time plus people tim
 
 - **2026-09-15** Second node brought up on the RTX 3050 laptop from the X9. 3050 calibrated.
   Capability changed from decode tok/s to service rate in both vehicles. P1 started.
-- **2026-09-15, overnight** P1 done, all 45 valid; H1 interaction grows with load. Generation-shape campaign done, all 30 valid. Engines restarted between runs because llama-server's default host prompt cache exhausted memory; no cache hit found in the logs. Fixed the `node-utilization` and `phase-advantage` figures (tests pending).
+- **2026-09-15, overnight** P1 done, all 45 valid; H1 interaction grows with load. Generation-shape campaign done, all 30 valid. Engines restarted between runs because llama-server's default host prompt cache exhausted memory; no cache hit found in the logs. Fixed the `node-utilization` and `phase-advantage` figures; suite 733 passed, 1 skipped, 100% coverage, no test changed.
+- **2026-09-15, morning** Balanced (30 of 30) and summarisation (27 of 30) done, so P2 is done. The best policy moves from WJSQ to Threshold as the prompt share grows; Threshold collapses on generation at 3.2 req/s. Paper figures rendered for all four shapes. Pool shut down; the 3050 laptop returned to its owner and its worker and engine logs copied to `runs/`. Results written up in `docs/writing-brief.md`.

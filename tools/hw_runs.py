@@ -56,7 +56,7 @@ from dataplane.harness import replay as replay_mod
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SNAPSHOT_ROOT = REPO_ROOT / "contracts" / "cost_models"
-POLICIES = ("round_robin", "jsq", "static_weighted", "wjsq", "threshold")
+POLICIES = ("round_robin", "jsq", "jsq_fastfirst", "static_weighted", "static_weighted_wrr", "wjsq", "threshold", "ect")
 READY_LINE = "Live Control Plane active"
 RESOLVED_LINE = "Resolving snapshot"
 
@@ -88,6 +88,7 @@ class Campaign:
     bind: str = "0.0.0.0:50071"
     advertise: str | None = None
     clock_sync: dict[str, Any] | None = None
+    capability_mode: str = "service"
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Campaign:
@@ -110,6 +111,7 @@ class Campaign:
             scheduler_host=d.get("scheduler_host", "127.0.0.1"),
             bind=d.get("bind", "0.0.0.0:50071"),
             advertise=d.get("advertise"),
+            capability_mode=str(d.get("capability_mode", "service")),
         )
 
 
@@ -213,6 +215,8 @@ def pre_run_manifest(c: Campaign, run: Run, header: dict[str, Any]) -> dict[str,
         "repeat": run.repeat,
         "sequence_no": run.sequence_no,
         "campaign": c.tag,
+        # S3: recorded so the run set can tell service-rate and decode-only apart.
+        "capability_mode": c.capability_mode,
     }
     if run.policy == "threshold":
         config["threshold_t"] = c.threshold_t

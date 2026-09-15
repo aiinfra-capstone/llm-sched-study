@@ -7,7 +7,7 @@ import java.io.PrintWriter;
 import java.io.IOException;
 import java.io.File;
 
-public class ClientLogger {
+public class ClientLogger implements AutoCloseable {
     private final PrintWriter pw;
     private final ObjectMapper mapper = new ObjectMapper();
 

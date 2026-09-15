@@ -178,4 +178,50 @@ class ServiceSamplerTest {
         assertTrue(s.getPrefillShare("n1", 4096, 32, 1) < 0);
         assertTrue(s.getPrefillShare("missing", 64, 32, 1) < 0);
     }
+
+    @Test
+    @DisplayName("per-node service streams do not move with policy draws")
+    void perNodeStreamsAreIndependentOfPolicyDraws() {
+        // Issue #21 item 1: two SimApp runs with the same seed and different
+        // policies must draw identical service times for the same request on
+        // the same node. Policies consume different numbers of draws, so a
+        // shared stream would shift every service time with the policy.
+        CostModelSnapshot noisy = snapshot("noisy", 0.4, List.of(cell(1, 128, 1, 64, 1, 1000.0)));
+
+        ServiceSampler first = new ServiceSampler(Map.of("n1", noisy),
+                new Random(7), Map.of("n1", new Random(42)));
+        ServiceSampler second = new ServiceSampler(Map.of("n1", noisy),
+                new Random(7), Map.of("n1", new Random(42)));
+
+        // One policy draws heavily before the first service sample, the other barely.
+        Random policyA = new Random(7);
+        Random policyB = new Random(7);
+        for (int i = 0; i < 1000; i++) policyA.nextDouble();
+        policyB.nextDouble();
+
+        for (int i = 0; i < 20; i++) {
+            assertEquals(first.sampleServiceNs("n1", 64, 32, 1),
+                    second.sampleServiceNs("n1", 64, 32, 1),
+                    "same node seed must give the same service time whatever the policy drew");
+        }
+    }
+
+    @Test
+    @DisplayName("different nodes draw from different streams")
+    void nodesHaveSeparateStreams() {
+        CostModelSnapshot noisy = snapshot("noisy", 0.4, List.of(cell(1, 128, 1, 64, 1, 1000.0)));
+        Map<String, CostModelSnapshot> snaps = Map.of("n1", noisy, "n2", noisy);
+        ServiceSampler s = new ServiceSampler(snaps, new Random(7),
+                Map.of("n1", new Random(42), "n2", new Random(43)));
+
+        // Same seed parity would give identical sequences; distinct seeds must not.
+        boolean anyDifference = false;
+        for (int i = 0; i < 20; i++) {
+            if (s.sampleServiceNs("n1", 64, 32, 1) != s.sampleServiceNs("n2", 64, 32, 1)) {
+                anyDifference = true;
+                break;
+            }
+        }
+        assertTrue(anyDifference, "two nodes must not share one service stream");
+    }
 }

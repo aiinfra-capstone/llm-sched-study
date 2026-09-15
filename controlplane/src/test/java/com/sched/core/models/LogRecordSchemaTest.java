@@ -143,13 +143,14 @@ class LogRecordSchemaTest {
     @Test
     @DisplayName("the policy name written to the log is one the schema's enum allows")
     void policyNamesMatchTheSchemaEnum() throws IOException {
-        // Same five names as Policies.fromName. If the two lists ever diverge, a run completes
+        // Same eight names as Policies.fromName. If the two lists ever diverge, a run completes
         // and then its log fails validation, which is the most expensive moment to find out.
         Set<String> allowed = new TreeSet<>();
         schema("log_scheduler.schema.json").get("$defs").get("decision")
                 .get("properties").get("policy").get("enum").forEach(n -> allowed.add(n.asText()));
 
-        assertEquals(Set.of("round_robin", "jsq", "static_weighted", "wjsq", "threshold"), allowed);
+        assertEquals(Set.of("round_robin", "jsq", "jsq_fastfirst", "static_weighted",
+                "static_weighted_wrr", "wjsq", "threshold", "ect"), allowed);
 
         for (String name : allowed) {
             com.sched.core.policies.Policies.fromName(

@@ -20,6 +20,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -121,14 +122,31 @@ public class SimApp {
             StalenessVeil vl = new StalenessVeil(stalenessNs, clk);
             AdmissionFilter flt = new AdmissionFilter(admBounds);
             
-            // Seed config and RNG
+            // Seed config and RNG (issue #21 item 1: separate streams per purpose)
             int rngSeed = 42;
             if (manifest.config() != null && manifest.config().containsKey("seed")) {
                 rngSeed = ((Number) manifest.config().get("seed")).intValue();
             }
-            Random rng = new Random(rngSeed);
-            
-            ServiceSampler smp = new ServiceSampler(loadedSnaps, rng);
+            Random policyRng = new Random(rngSeed);
+            // Per-node service noise streams so policy contrasts use common
+            // random numbers (two SimApp runs with same seed and different
+            // policies draw identical service times for the same request).
+            // The fallback stream is also service-side so policyRng is never
+            // consumed by sampling, even for a node missing from the map.
+            Random serviceFallbackRng = new Random(rngSeed + 1000);
+            Map<String, Random> serviceRngByNode = new HashMap<>();
+            List<Manifest.SimNode> poolNodes = manifest.nodes().stream()
+                    .filter(n -> "pool".equals(n.role()))
+                    .sorted(Comparator.comparing(Manifest.SimNode::nodeId))
+                    .toList();
+            int nodeIdx = 0;
+            for (Manifest.SimNode n : poolNodes) {
+                serviceRngByNode.put(n.nodeId(),
+                        new Random(rngSeed + 100 + nodeIdx++));
+            }
+
+            ServiceSampler smp = new ServiceSampler(loadedSnaps, serviceFallbackRng,
+                    serviceRngByNode);
             if (deterministic) {
                 smp.setDeterministic(true);
             }
@@ -136,18 +154,38 @@ public class SimApp {
             // Transport gets its own stream so that adding or removing it cannot shift the
             // service draws and silently change a dispatch sequence F-20 is checking.
             TransportOverhead overhead = TransportOverhead.NONE;
-            if (manifest.transportOverheadMeanMs() > 0.0) {
-                overhead = new TransportOverhead(
-                    manifest.transportOverheadMeanMs(),
-                    manifest.transportOverheadSdMs(),
-                    new Random(rngSeed + 1),
-                    deterministic);
-                System.out.printf("Transport overhead from manifest: %.2f +/- %.2f ms%n",
-                    overhead.meanMs(), overhead.sdMs());
+            Map<String, TransportOverhead> perNodeTransport = new HashMap<>();
+            if (manifest.transportOverhead() != null) {
+                if (manifest.transportOverhead().containsKey("mean_ms")) {
+                    overhead = new TransportOverhead(
+                        manifest.transportOverheadMeanMs(),
+                        manifest.transportOverheadSdMs(),
+                        new Random(rngSeed + 1),
+                        deterministic);
+                    System.out.printf("Transport overhead from manifest: %.2f +/- %.2f ms%n",
+                        overhead.meanMs(), overhead.sdMs());
+                } else {
+                    int tIdx = 0;
+                    for (Map.Entry<String, Object> entry : manifest.transportOverhead().entrySet()) {
+                        String nId = entry.getKey();
+                        if (entry.getValue() instanceof Map<?, ?> nodeMap) {
+                            double meanMs = nodeMap.get("mean_ms") instanceof Number n ? n.doubleValue() : 0.0;
+                            double sdMs = nodeMap.get("sd_ms") instanceof Number n ? n.doubleValue() : 0.0;
+                            if (meanMs > 0.0) {
+                                TransportOverhead to = new TransportOverhead(meanMs, sdMs,
+                                    new Random(rngSeed + 500 + tIdx++), deterministic);
+                                perNodeTransport.put(nId, to);
+                                System.out.printf("Transport overhead for node %s: %.2f +/- %.2f ms%n",
+                                    nId, meanMs, sdMs);
+                            }
+                        }
+                    }
+                }
             } else {
                 System.out.println("Transport overhead: none recorded in manifest, applying 0 ms");
             }
             des.setTransportOverhead(overhead);
+            des.setPerNodeTransportOverhead(perNodeTransport);
 
             DecisionLogger log = new DecisionLogger(outputDir, rId);
             WorkerLogger wLog = new WorkerLogger(outputDir, rId);
@@ -159,11 +197,10 @@ public class SimApp {
                 CostModelSnapshot snap = loadedSnaps.get(n.nodeId());
                 if (snap == null)
                     throw new IllegalStateException("node " + n.nodeId() + " is a pool member but has no snapshot");
-                
-                if (!Capability.usesServiceRate(snap))
-                    System.out.println("Capability for " + n.nodeId() + ": " + snap.snapshotId()
-                        + " has no prefill/decode split, so it falls back to decode tok/s");
-                NodeView seed = new NodeView(n.nodeId(), 0, 0, Capability.referenceTokS(snap), 0L, true);
+
+                double cap = Capability.resolve(n.nodeId(), snap, manifest.config());
+                System.out.println("Capability for " + n.nodeId() + ": " + cap + " tok/s");
+                NodeView seed = new NodeView(n.nodeId(), 0, 0, cap, 0L, true);
                 st.updateNode(seed);
                 vl.seed(seed, -stalenessNs);
 
@@ -173,12 +210,18 @@ public class SimApp {
 
             AtomicLong seq = new AtomicLong(0);
             double thresholdT = manifest.config() != null && manifest.config().containsKey("threshold_t") ? ((Number) manifest.config().get("threshold_t")).doubleValue() : 0.0;
-            Policy pol = Policies.fromName(manifest.policy(), new AtomicInteger(0), thresholdT);
+            Map<String, Integer> capacities = new HashMap<>();
+            for (Manifest.SimNode n : manifest.nodes()) {
+                if (!"pool".equals(n.role())) continue;
+                capacities.put(n.nodeId(), n.batchCapacity());
+            }
+            Policy pol = Policies.fromName(manifest.policy(), new AtomicInteger(0), thresholdT,
+                    loadedSnaps, capacities, manifest.config());
 
             for (TraceRequest rq : reqs) {
                 long arr = (long) (rq.arrivalOffsetS() * 1_000_000_000L);
                 RequestArrivalEvent ev = new RequestArrivalEvent(
-                        arr, rq, pol, vl, flt, des, rng, smp, st, log, rId, manifest.policy(), stalenessS, seq);
+                        arr, rq, pol, vl, flt, des, policyRng, smp, st, log, rId, manifest.policy(), stalenessS, seq);
                 des.scheduleEvent(ev);
             }
 

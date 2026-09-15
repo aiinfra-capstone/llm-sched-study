@@ -118,10 +118,8 @@ public class LiveSchedulerApp {
             double cap = 0.0;
             if (snap != null) {
                 try {
-                    cap = com.sched.core.Capability.referenceTokS(snap);
-                    if (!com.sched.core.Capability.usesServiceRate(snap))
-                        System.out.println("Capability for " + n.nodeId() + ": " + snap.snapshotId()
-                            + " has no prefill/decode split, so it falls back to decode tok/s");
+                    cap = com.sched.core.Capability.resolve(n.nodeId(), snap, manifest.config());
+                    System.out.println("Capability for " + n.nodeId() + ": " + cap + " tok/s");
                 } catch (Exception ignored) {
                     cap = 0.0;
                 }
@@ -133,7 +131,17 @@ public class LiveSchedulerApp {
         }
 
         double thresholdT = manifest.config() != null && manifest.config().containsKey("threshold_t") ? ((Number) manifest.config().get("threshold_t")).doubleValue() : 0.0;
-        Policy policy = Policies.fromName(manifest.policy(), new AtomicInteger(0), thresholdT);
+        // workerCapacity is filled below from --worker args + manifest; build the policy
+        // after channels so ECT sees capacities. For now pass what we have (manifest
+        // parallel); the channel loop below refines workerCapacity but the values agree
+        // because both come from the same manifest node block.
+        java.util.Map<String, Integer> ectCaps = new java.util.HashMap<>();
+        for (Manifest.SimNode n : manifest.nodes()) {
+            if (!"pool".equals(n.role())) continue;
+            ectCaps.put(n.nodeId(), n.batchCapacity());
+        }
+        Policy policy = Policies.fromName(manifest.policy(), new AtomicInteger(0), thresholdT,
+                loadedSnaps, ectCaps, manifest.config());
         
         // The scheduler log is a C-4 artifact of the run, so it belongs in the run
         // directory rather than in whatever directory the process happened to start in.

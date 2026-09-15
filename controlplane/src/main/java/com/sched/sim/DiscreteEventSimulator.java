@@ -32,12 +32,27 @@ public class DiscreteEventSimulator {
     }
 
     private TransportOverhead transportOverhead = TransportOverhead.NONE;
+    private final Map<String, TransportOverhead> perNodeTransport = new HashMap<>();
 
     public void setTransportOverhead(TransportOverhead overhead) {
         this.transportOverhead = overhead == null ? TransportOverhead.NONE : overhead;
     }
 
+    public void setPerNodeTransportOverhead(Map<String, TransportOverhead> perNode) {
+        this.perNodeTransport.clear();
+        if (perNode != null) {
+            this.perNodeTransport.putAll(perNode);
+        }
+    }
+
     public TransportOverhead getTransportOverhead() { return transportOverhead; }
+
+    public TransportOverhead getTransportOverhead(String nodeId) {
+        if (nodeId != null && perNodeTransport.containsKey(nodeId)) {
+            return perNodeTransport.get(nodeId);
+        }
+        return transportOverhead;
+    }
 
     public WorkerLogger getWorkerLogger() { return workerLogger; }
     public ClientLogger getClientLogger() { return clientLogger; }

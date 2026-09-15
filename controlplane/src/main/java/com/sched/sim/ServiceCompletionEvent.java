@@ -78,7 +78,7 @@ public class ServiceCompletionEvent extends SimulationEvent {
             // It deliberately does not enter serviceNs: the hop overlaps other requests
             // rather than occupying a batch slot, so charging it to the node would inflate
             // queueing that the hardware does not have.
-            long overheadNs = des.getTransportOverhead().sampleNs();
+            long overheadNs = des.getTransportOverhead(server.getNodeId()).sampleNs();
             long e2e = scheduledTimeNs + overheadNs - (long)(request.req().arrivalOffsetS() * 1_000_000_000L);
             clientLogger.logRecord(new ClientRecord(
                 runId, request.req().reqId(), request.req().arrivalOffsetS(), request.req().arrivalOffsetS(), 0.0, e2e, "ok",

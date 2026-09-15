@@ -1,0 +1,9 @@
+{
+  "grid": {
+    "policies": ["round_robin", "jsq", "static_weighted", "wjsq", "threshold", "ect"],
+    "R": [1, 2, 4, 8, 16, 32, 64, 100],
+    "phase_skew": [0.5, 1.0, 2.0],
+    "staleness_s": [0.0, 0.1, 0.5, 1.0],
+    "rate_scale": [1.15, 1.45]
+  }
+}

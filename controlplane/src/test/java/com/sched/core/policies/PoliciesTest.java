@@ -11,24 +11,28 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * F-1: all five policies selectable from one config value, with no code change between runs.
+ * F-1: all eight policies selectable from one config value, with no code change between runs.
  * The names are also a C-4 enum, so a typo here is a log that fails schema validation after
  * the run rather than a scheduler that fails to start before it.
  */
 class PoliciesTest {
 
     @Test
-    @DisplayName("all five C-6 names resolve")
+    @DisplayName("all eight C-6 names resolve")
     void everyNameResolves() {
         assertInstanceOf(RoundRobin.class, Policies.fromName("round_robin", new AtomicInteger(0), 0.0));
         assertInstanceOf(JSQ.class, Policies.fromName("jsq", new AtomicInteger(0), 0.0));
+        assertInstanceOf(JSQFastFirst.class, Policies.fromName("jsq_fastfirst", new AtomicInteger(0), 0.0));
         assertInstanceOf(StaticWeighted.class, Policies.fromName("static_weighted", new AtomicInteger(0), 0.0));
+        assertInstanceOf(StaticWeightedWRR.class, Policies.fromName("static_weighted_wrr", new AtomicInteger(0), 0.0));
         assertInstanceOf(WJSQ.class, Policies.fromName("wjsq", new AtomicInteger(0), 0.0));
         assertInstanceOf(Threshold.class, Policies.fromName("threshold", new AtomicInteger(0), 10.0));
+        assertInstanceOf(ECT.class, Policies.fromName("ect", new AtomicInteger(0), 0.0,
+                java.util.Map.of(), java.util.Map.of()));
     }
 
     @Test
-    @DisplayName("an unknown name fails at startup and says what the five are")
+    @DisplayName("an unknown name fails at startup and says what the eight are")
     void unknownNameIsRejected() {
         IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
                 () -> Policies.fromName("least_loaded", new AtomicInteger(0), 0.0));

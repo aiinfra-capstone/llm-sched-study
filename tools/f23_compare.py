@@ -1,15 +1,23 @@
 #!/usr/bin/env python3
-"""Compare one simulated anchor against its hardware measurement (F-23).
+"""Compare one simulated run against its hardware measurement (F-23).
 
 Exit codes are three-valued on purpose. 0 is within tolerance, 2 is a real comparison that
 came out outside tolerance, and 1 is a failure to compare at all. The caller counts 0 and 2
 towards the three-point minimum and counts 1 towards neither, so a broken run can never be
 mistaken for a passing one nor quietly reduce the number of points F-23 rests on.
 
-The hardware baseline is `runs/anchors/load_band.json`. That file is committed, it is what
-`figures/plots.py` draws the hardware curve from, and it was produced by
-`pipeline/loadband.py` from the anchor logs. Reading it here rather than hardcoding numbers
-from an issue thread keeps one hardware p50 in the repo instead of two that can drift apart.
+Two hardware baselines, one convention:
+
+  --load-band runs/anchors/load_band.json
+    The single-node baseline. That file is committed, it is what
+    `figures/plots.py` draws the hardware curve from, and it was produced by
+    `pipeline/loadband.py` from the anchor logs. Reading it here rather than hardcoding numbers
+    from an issue thread keeps one hardware p50 in the repo instead of two that can drift apart.
+
+  --hardware-run-dir runs/exp/<run_id>
+    The two-node baseline (P4). The run's own client log in that directory is reduced
+    with the same warmup and nearest-rank rules as the simulator, so a heterogeneous
+    pool with five policies needs no committed band file per policy and point.
 
 Both vehicles are reduced with the same two conventions, because F-23 is a comparison and a
 comparison of two differently-computed percentiles measures the conventions:
@@ -38,11 +46,16 @@ def percentile(values: list[float], q: float) -> float:
     return ordered[rank - 1]
 
 
-def sim_latencies_ms(sim_dir: Path, warmup_s: float) -> list[float]:
-    """End-to-end latencies from the simulator's client log, warmup excluded, ok only."""
-    logs = sorted(glob.glob(str(sim_dir / "client_*.jsonl")))
+def client_latencies_ms(run_dir: Path, warmup_s: float) -> list[float]:
+    """End-to-end latencies from a client log, warmup excluded, ok only.
+
+    Shared by both vehicles: the simulator's output and the hardware run's own log
+    are reduced identically, so the comparison measures the vehicles and not the
+    reduction. `sim_latencies_ms` stays as an alias so existing callers keep working.
+    """
+    logs = sorted(glob.glob(str(run_dir / "client_*.jsonl")))
     if not logs:
-        raise FileNotFoundError(f"no client log in {sim_dir}")
+        raise FileNotFoundError(f"no client log in {run_dir}")
     out = []
     with open(logs[0]) as f:
         for line in f:
@@ -58,15 +71,69 @@ def sim_latencies_ms(sim_dir: Path, warmup_s: float) -> list[float]:
     return out
 
 
+def sim_latencies_ms(sim_dir: Path, warmup_s: float) -> list[float]:
+    """End-to-end latencies from the simulator's client log, warmup excluded, ok only."""
+    return client_latencies_ms(sim_dir, warmup_s)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="F-23 comparison for one operating point")
-    ap.add_argument("--manifest", type=Path, required=True)
+    ap.add_argument("--manifest", type=Path, required=True,
+                    help="hardware manifest for this run (warmup, policy, lambda, operating point)")
     ap.add_argument("--sim-dir", type=Path, required=True)
-    ap.add_argument("--load-band", type=Path, required=True)
+    ap.add_argument("--load-band", type=Path, required=False, default=None,
+                    help="single-node baseline (runs/anchors/load_band.json)")
+    ap.add_argument("--hardware-run-dir", type=Path, required=False, default=None,
+                    help="two-node baseline (P4): directory with this run's own client_*.jsonl")
     ap.add_argument("--tolerance", type=float, default=25.0)
     args = ap.parse_args()
 
+    if (args.load_band is None) == (args.hardware_run_dir is None):
+        print("FAIL: pass exactly one of --load-band (single-node) or --hardware-run-dir (two-node P4)")
+        return 1
+
     manifest = json.loads(args.manifest.read_text())
+    warmup_s = float(manifest.get("warmup_s", 0.0))
+
+    try:
+        sim = client_latencies_ms(args.sim_dir, warmup_s)
+    except (FileNotFoundError, KeyError, ValueError) as exc:
+        print(f"FAIL: could not read the simulated run: {exc}")
+        return 1
+    if not sim:
+        print("FAIL: no simulated requests survived the warmup filter")
+        return 1
+    sim_p50, sim_p95 = percentile(sim, 0.50), percentile(sim, 0.95)
+
+    if args.hardware_run_dir is not None:
+        # P4: baseline is the run's own hardware log, same warmup and nearest-rank.
+        try:
+            hw = client_latencies_ms(args.hardware_run_dir, warmup_s)
+        except (FileNotFoundError, KeyError, ValueError) as exc:
+            print(f"FAIL: could not read the hardware run: {exc}")
+            return 1
+        if not hw:
+            print("FAIL: no hardware requests survived the warmup filter")
+            return 1
+        hw_p50, hw_p95 = percentile(hw, 0.50), percentile(hw, 0.95)
+        name = manifest.get("config", {}).get("operating_point") or manifest.get("run_id", "?")
+        policy = manifest.get("policy", "?")
+        run_id = manifest.get("run_id", "?")
+        lam = manifest.get("lambda", "?")
+        print(f"Run: {run_id}  policy={policy}  point={name}  lambda={lam} rps")
+        print(f"  Hardware: p50={hw_p50:9.1f} ms  p95={hw_p95:9.1f} ms  (n={len(hw)})")
+        print(f"  Sim:      p50={sim_p50:9.1f} ms  p95={sim_p95:9.1f} ms  (n={len(sim)})")
+        err_p50 = (sim_p50 - hw_p50) / hw_p50 * 100.0 if hw_p50 else float("inf")
+        err_p95 = (sim_p95 - hw_p95) / hw_p95 * 100.0 if hw_p95 else float("inf")
+        print(
+            f"  Error:    p50={err_p50:+7.1f}%   p95={err_p95:+7.1f}%   tolerance +/-{args.tolerance:.0f}%"
+        )
+        if abs(err_p50) > args.tolerance or abs(err_p95) > args.tolerance:
+            print(f"  FAIL: {run_id} outside tolerance")
+            return 2
+        print(f"  PASS: {run_id} within tolerance")
+        return 0
+
     name = manifest.get("config", {}).get("operating_point")
     if not name:
         print(f"FAIL: {args.manifest} has no config.operating_point to match against the band")
@@ -78,17 +145,7 @@ def main() -> int:
         print(f"FAIL: no point named {name!r} in {args.load_band}")
         return 1
 
-    try:
-        sim = sim_latencies_ms(args.sim_dir, float(manifest.get("warmup_s", 0.0)))
-    except (FileNotFoundError, KeyError, ValueError) as exc:
-        print(f"FAIL: could not read the simulated run: {exc}")
-        return 1
-    if not sim:
-        print("FAIL: no simulated requests survived the warmup filter")
-        return 1
-
     hw_p50, hw_p95 = float(point["p50_ms"]), float(point["p95_ms"])
-    sim_p50, sim_p95 = percentile(sim, 0.50), percentile(sim, 0.95)
     err_p50 = (sim_p50 - hw_p50) / hw_p50 * 100.0
     err_p95 = (sim_p95 - hw_p95) / hw_p95 * 100.0
 

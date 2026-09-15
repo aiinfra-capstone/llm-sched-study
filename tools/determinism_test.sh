@@ -1,5 +1,6 @@
 #!/bin/bash
 set -euo pipefail
+export MSYS2_ARG_CONV_EXCL="-Dexec.args="
 
 # F-20: the dispatch sequence is a property of (trace, seed, policy) and of nothing else.
 # Two SimApp runs into separate directories from identical inputs with --deterministic,
@@ -45,9 +46,13 @@ popd > /dev/null
 # which points at the comparison step instead of at the stack trace that caused it.
 run_sim() {
   local out=$1 log=$2
+  local out_arg=$out
+  if command -v cygpath > /dev/null 2>&1; then
+    out_arg=$(cygpath -m "$out")
+  fi
   if ! mvn -q -f controlplane/pom.xml exec:java \
         -Dexec.mainClass=com.sched.sim.SimApp \
-        -Dexec.args="$TRACE $MANIFEST $out --deterministic --cost-models contracts/cost_models" \
+        -Dexec.args="$TRACE $MANIFEST $out_arg --deterministic --cost-models contracts/cost_models" \
         > "$log" 2>&1; then
     echo "FAIL: SimApp exited non-zero"
     tail -n 20 "$log"
@@ -71,7 +76,7 @@ echo "Run 2 -> $OUT2"
 run_sim "$OUT2" "$LOG2"
 
 echo "Comparing dispatch sequences (decision_seq, req_id, chosen_node)..."
-python3 - "$OUT1" "$OUT2" << 'PY'
+python - "$OUT1" "$OUT2" << 'PY'
 import glob
 import json
 import pathlib

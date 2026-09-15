@@ -9,7 +9,7 @@ import java.io.File;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
-public class WorkerLogger {
+public class WorkerLogger implements AutoCloseable {
     private final String outputDir;
     private final String runId;
     private final Map<String, PrintWriter> writers = new ConcurrentHashMap<>();

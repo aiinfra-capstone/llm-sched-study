@@ -8,11 +8,18 @@ import java.util.Random;
 public class ServiceSampler {
     private final Map<String, CostModelSnapshot> snaps;
     private final Random rng;
+    private final Map<String, Random> nodeRng;
     private boolean deterministic = false;
 
     public ServiceSampler(Map<String, CostModelSnapshot> snaps, Random rng) {
+        this(snaps, rng, null);
+    }
+
+    public ServiceSampler(Map<String, CostModelSnapshot> snaps, Random rng,
+            Map<String, Random> nodeRng) {
         this.snaps = snaps;
         this.rng = rng;
+        this.nodeRng = nodeRng;
     }
 
     public void setDeterministic(boolean deterministic) {
@@ -87,7 +94,9 @@ public class ServiceSampler {
         double finMs = meanMs;
         if (!deterministic) {
             double sig = snap.stochastic().sigma();
-            double noise = Math.exp(rng.nextGaussian() * sig - (sig * sig) / 2.0);
+            Random drawRng = nodeRng != null && nodeRng.containsKey(nId)
+                    ? nodeRng.get(nId) : rng;
+            double noise = Math.exp(drawRng.nextGaussian() * sig - (sig * sig) / 2.0);
             finMs = meanMs * noise;
         }
         return (long) (finMs * 1_000_000L);

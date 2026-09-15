@@ -59,7 +59,7 @@ class SimNodeServerTest {
     }
 
     /** One node, one snapshot, loggers pointed at a temp dir, everything wired as SimApp wires it. */
-    private static final class Harness {
+    private static final class Harness implements AutoCloseable {
         final DiscreteEventSimulator des = new DiscreteEventSimulator(new SimClock());
         final InMemoryStateStore store = new InMemoryStateStore();
         final StalenessVeil veil;
@@ -89,11 +89,16 @@ class SimNodeServerTest {
             server.admit(r, (long) (atMs * MS), des, sampler, store, veil, null, "t");
         }
 
+        @Override
+        public void close() {
+            clientLogger.close();
+            workerLogger.close();
+        }
+
         /** req_id -> completion time in ms, recovered from the client log. */
         Map<String, Double> completionsMs() throws IOException {
             des.run();
-            clientLogger.close();
-            workerLogger.close();
+            close();
 
             ObjectMapper mapper = new ObjectMapper();
             Map<String, Double> out = new java.util.LinkedHashMap<>();
@@ -195,13 +200,13 @@ class SimNodeServerTest {
         // hole in the measurement into a plausible-looking latency. It is reachable whenever a
         // snapshot's admissibility is wider than the grid it actually sampled, which is the
         // case for the committed 1B snapshot today.
-        Harness h = new Harness(dir, withSplit(), 4);
+        try (Harness h = new Harness(dir, withSplit(), 4)) {
+            IllegalStateException e = assertThrows(IllegalStateException.class,
+                    () -> h.admit(req("huge", 0.0, 4096, 32), 0.0));
 
-        IllegalStateException e = assertThrows(IllegalStateException.class,
-                () -> h.admit(req("huge", 0.0, 4096, 32), 0.0));
-
-        assertTrue(e.getMessage().contains("4096"), "the message should name the shape it could not price");
-        assertTrue(e.getMessage().contains("n1"), "and the node it could not price it for");
+            assertTrue(e.getMessage().contains("4096"), "the message should name the shape it could not price");
+            assertTrue(e.getMessage().contains("n1"), "and the node it could not price it for");
+        }
     }
 
     @Test
@@ -209,14 +214,15 @@ class SimNodeServerTest {
     void stateIsPublishedToTheStore(@TempDir Path dir) {
         // The policy reads the pool through the veil, so a node whose depth never reaches it
         // is a node every policy believes is idle.
-        Harness h = new Harness(dir, withSplit(), 1);
-        h.admit(req("r1", 0.0, 64, 32), 0.0);
-        h.admit(req("r2", 0.0, 64, 32), 0.0);
+        try (Harness h = new Harness(dir, withSplit(), 1)) {
+            h.admit(req("r1", 0.0, 64, 32), 0.0);
+            h.admit(req("r2", 0.0, 64, 32), 0.0);
 
-        NodeView seen = h.store.getAllNodes().get(0);
-        assertEquals(1, seen.inflight());
-        assertEquals(1, seen.queueDepth());
-        assertEquals(1, h.veil.getAllNodes().get(0).queueDepth());
+            NodeView seen = h.store.getAllNodes().get(0);
+            assertEquals(1, seen.inflight());
+            assertEquals(1, seen.queueDepth());
+            assertEquals(1, h.veil.getAllNodes().get(0).queueDepth());
+        }
     }
 
     @Test

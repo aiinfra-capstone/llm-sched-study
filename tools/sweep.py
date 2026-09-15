@@ -50,7 +50,7 @@ TRACE_DEFAULT = REPO_ROOT / "runs" / "traces" / "anchor_1b.trace.jsonl"
 
 # Minimal sweep config. Can be overridden by a JSON file passed via --config
 DEFAULT_GRID = {
-    "policies": ["round_robin", "jsq", "static_weighted", "wjsq", "threshold"],
+    "policies": ["round_robin", "jsq", "static_weighted", "wjsq", "threshold", "ect"],
     "staleness_s": [0.0, 0.1, 0.5, 1.0],
     "rate_scale": [0.8, 1.15, 1.45],  # quiet/light/mid, heavy is saturated and excluded from H2/H3
     "R": [1, 2, 4],  # small subset for smoke; full grid up to 100 for paper
@@ -330,6 +330,12 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="run remaining points after a failure instead of stopping at the first one",
     )
+    ap.add_argument(
+        "--k-slow",
+        type=int,
+        default=1,
+        help="number of slow nodes in pool (1 fast + k slow, N >= 2)",
+    )
     args = ap.parse_args(argv)
 
     # Load sweep grid
@@ -537,16 +543,18 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  wrote synthesised {synth['snapshot_id']} -> {synth_path}")
         index[synth["snapshot_id"]] = synth
         extra_for_this_run = [synth]
+        k_slow = int(sweep_cfg.get("k_slow", getattr(args, "k_slow", 1)))
         nodes = list(base_manifest["nodes"])
         skew_tag = "" if skew == 1.0 else f"_skew{skew:g}"
-        slow_node_id = f"slow_{R:g}x{skew_tag}"
-        cost_snaps[slow_node_id] = synth["snapshot_id"]
-        if nodes:
-            slow_node = dict(nodes[0])
-            slow_node["node_id"] = slow_node_id
-            slow_node["host"] = f"slow-{R:g}x{skew_tag}"
-            slow_node["gpu"] = "synthesised"
-            nodes = nodes + [slow_node]
+        for i in range(1, k_slow + 1):
+            slow_node_id = f"slow_{R:g}x{skew_tag}" if k_slow == 1 else f"slow_{R:g}x{skew_tag}_{i}"
+            cost_snaps[slow_node_id] = synth["snapshot_id"]
+            if base_manifest["nodes"]:
+                slow_node = dict(base_manifest["nodes"][0])
+                slow_node["node_id"] = slow_node_id
+                slow_node["host"] = f"slow-{R:g}x{skew_tag}-{i}" if k_slow > 1 else f"slow-{R:g}x{skew_tag}"
+                slow_node["gpu"] = "synthesised"
+                nodes.append(slow_node)
         manifest = build_sweep_manifest(
             base_manifest,
             policy,

@@ -4,7 +4,7 @@ For the writing team. What the study now is, what we can claim and on what evide
 contrast against, and every figure and table with its provenance. Snapshot of
 **2026-09-15**, after all four hardware campaigns on the first pair finished (132 valid runs).
 Sections marked **pending** need work that has not run yet; nothing in them should be written
-into the paper yet.
+into the paper yet. Section 10 lays out what stands between these results and a journal submission.
 
 Numbers here come from committed code and the run sets named beside them. If a number in the
 draft disagrees with a run set's `summary.json`, the run set wins.
@@ -390,3 +390,38 @@ no RoundRobin at 3.2, so its zig-zag is an artefact of pooling. F5 is the correc
 | Per-request cost-model policy | 6.1, 6.3 | control plane, about a day |
 | Capability sensitivity | 3 item 3 | about 1 h of runs |
 | Five repeats at the deciding points | 5.4, 5.6 | generation 2.4, balanced 2.4, anchor 1.3 |
+
+## 10. Path to a journal
+
+Where we stand: a clean, interval-backed result on one real pair of machines, with the
+elevation shown on hardware. That is enough for a workshop or an IISWC-style
+characterisation paper. A mid-tier journal needs the result on more than one pair, a
+simulator we have validated on the heterogeneous pool, and a calibrated policy strong enough
+that "queue depth recovers most of it" is not a claim against a strawman.
+
+| Target | Needs | Where we are |
+|---|---|---|
+| Workshop, or an IISWC-style characterisation paper | P1, P2, P5, P8 | P1 and P2 done; P5 has intervals, five repeats pending; P8 drafted from abstracts |
+| Mid-tier journal (for example Journal of Supercomputing, Future Generation Computer Systems, Cluster Computing) | the above plus P3, P4, P6, P7 | not started |
+| A noticeably stronger submission | the above plus S2 (a pair where the faster node flips by phase) and S3 (capability sensitivity) | not started; S2 needs a machine we do not have |
+
+What each remaining must-have changes in the paper (IDs match `docs/checkpoint.md`):
+
+| ID | Work | Owner | Cost | What it changes in the paper |
+|---|---|---|---|---|
+| P3 | Two more real pairs: CPU calibrations on both laptops, then 1650 Ti CPU + 3050 GPU and one more | Divyansh calibrates, both run | 8 to 12 h machine | 5.4 and 5.6 become a range across R instead of one pair; H1 and the elevation either hold or visibly change |
+| P4 | Replay each hardware run through the simulator and compare per policy (F-23 on the two-node pool) | Aditya | about a day of code, minutes of simulator time | 5.5 extends from one node to the heterogeneous pool; every simulator result becomes citable |
+| P6 | A policy that prices each request from the full cost model, rerun as an extra arm on P1 and P3 | Aditya writes, both run | about a day of code, 4 h machine | 6.1 gains the strongest calibrated baseline; 6.3 claim 1 is earned against it |
+| P7 | Simulator sweeps over R 1 to 100, phase skew and staleness | Aditya | half a day to configure, hours of simulator time | new 5.7 (H2) and 5.8 (H3); settles whether 5.6 item 5 is H2 |
+| P5 | Five repeats at the deciding points (generation 2.4, balanced 2.4, anchor 1.3 req/s) | Divyansh | about 3 h machine | narrows the three intervals that sit near zero or overlap |
+| P8 | Read the related work in full, not only abstracts | writing team | 2 to 3 days | 6.2 and 6.3 become citable |
+
+Order: P4 and P6 need no hardware and start now, alongside the P3 calibrations. P3's
+campaigns follow, with P6's arm included so it does not need a separate rerun. P7 runs once
+P4 passes. P5 repeats come last, once we know which points decide the result. About 18 to 22
+hours of machine time remain, plus the control-plane code.
+
+What the writing team can draft now: the method (sections 3 and 4), results 5.1 to 5.6 as
+single-pair results, and related work from 6.2. Hold the discussion and conclusion until P3
+and P7, since both can change the headline. If the journal items slip, sections 1 to 8 as
+they stand are the workshop paper.

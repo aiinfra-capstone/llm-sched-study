@@ -28,6 +28,10 @@ G0, G1, G2 and G3 gate the hardware campaigns. G4 gates only the simulator sweep
 
 - **The 3050 laptop is not here.** It went back to its owner on 2026-09-15. Every hardware
   campaign below needs it back, and the whole set fits in two nights once it is.
+- **The rebuild needs a person.** `pool-install.sh` installs packages, writes a chrony
+  drop-in and restarts a service, all with sudo, and it stops for confirmation. It is not
+  run unattended, so G1's rebuild is a supervised step and everything gated behind it waits
+  for one.
 - **The harness shares a host with the 1650 Ti.** The scheduler and the replay client sit on
   the same 6-core laptop as that node's engine. Acceptable for a fully offloaded GPU node,
   and not acceptable for a CPU node, which is why a third machine gates any CPU pair.
@@ -57,7 +61,8 @@ G0 and G3 hold. One item found while closing E0.2 moved to `test-plan.md` sectio
 
 | # | Work | Cost | Owner | Closes |
 |---|---|---|---|---|
-| E1.1 | `engine_bench.sh` on the 1650 Ti, rebuild with `pool-install.sh`, bench again, compare pp512 and tg128 against published figures for the card | 1 h | D | G1 |
+| E1.1a | `engine_bench.sh` on the 1650 Ti as it stands, which also records the CMake flags the installed engine was built with | 15 min | D | G1, first half |
+| E1.1b | Rebuild with `pool-install.sh`, bench again, compare pp512 and tg128 with E1.1a and with published figures for the card | 45 min, supervised | D | G1 |
 | E1.2 | Recalibrate the 1650 Ti on the 24-cell grid under the campaign engine settings | 25 min | D | G2 |
 | E1.3 | The 80-minute sustained segment on the CPU 1B class, then `tools/tau_interval.py` | 1.5 h | D | K6 |
 
@@ -80,7 +85,7 @@ paper carries, and that is worth knowing before the rest of the machine time is 
 
 | # | Campaign | Runs | Replay | Closes |
 |---|---|---:|---:|---|
-| E3.1 | `hw_heavytail_3050.json` | 60 | 3.1 h | K5, size-variability half |
+| E3.1 | `hw_heavytail_3050.json` | 72 | 3.7 h | K5, size-variability half |
 | E3.2 | `hw_shapes_matched_3050.json` | 45 | 4.0 h | K4 |
 
 ### Block 4: after the hardware, if time allows
@@ -102,7 +107,7 @@ and what would make it a wasted night.
 | `hw_calibration_ablation_3050` | The value-of-calibration curve (K2) | Believed capability ratio as the independent variable; `jsq_fastfirst` as the ordinal-only control; `ect` in both modes; `static_weighted_wrr` in place of the random draw | The arms are not all in one run set with the arm recorded, or `ect`'s unknown-mode prior is left at a value nobody chose |
 | `hw_seeded_anchor_3050` | K3 with honest intervals | Five independent arrival seeds and scheduler seeds; load set as 0.2, 0.3 and 0.4 of pool capacity | `arrivals_independent` comes out false, or a point lands transient because the capacity estimate was off |
 | `hw_staleness_h1_3050` | K5, queue staleness | The veil at 0, 1 and 5 s with staleness 0 in the same set so contrasts stay paired | Anyone reads it as an H3 measurement |
-| `hw_heavytail_3050` | K5, size variability | 66 length buckets from clamped lognormals, output coefficient of variation about 0.9; MMPP bursts beside Poisson at the same utilisation | Lengths fall outside calibrated cost-model cells, or the comparison trace is not at matched utilisation |
+| `hw_heavytail_3050` | K5, size variability | 66 length buckets from clamped lognormals, output coefficient of variation about 0.9; MMPP bursts beside Poisson at the same utilisation; `ect` in unknown mode with a prior of 44 tokens, this mix's mean output | Lengths fall outside calibrated cost-model cells, or the comparison trace is not at matched utilisation |
 | `hw_shapes_matched_3050` | K4 | Slow-node utilisation held at 0.7 across all three shapes; shapes interleaved within each point; shared repeat seeds | The realised slow-node load still differs across shapes, which the summary will show |
 
 **One thing to set before E2.1.** `ECT` in unknown mode uses a fixed prior output length,
@@ -143,9 +148,9 @@ Done in order, before the next campaign starts. A campaign that skips this is no
 |---|---:|
 | Block 1, this laptop | 3 |
 | Block 2, night one | 7 |
-| Block 3, night two | 7 |
+| Block 3, night two | 8 |
 | Block 4, optional | 11 to 15 |
-| **To the full claims ladder** | **17** |
+| **To the full claims ladder** | **18** |
 
 ## 8. Log
 

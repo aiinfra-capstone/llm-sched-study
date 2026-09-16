@@ -476,6 +476,57 @@ def contrast(
     return out
 
 
+def comparisons(
+    cells: dict[str, Cell],
+    steady: dict[str, bool],
+    invalid: dict[str, dict[str, list[str]]],
+    n_boot: int,
+    block: int,
+    seed: int,
+    stale: float,
+    lam: float,
+) -> dict:
+    """Every cell at a point as a ratio to one reference cell, paired by arrival.
+
+    This is the value-of-calibration curve's primary statistic: mean latency per arm over the
+    same statistic for the JSQ arm at the same point. It is also what decides whether a
+    calibrated policy is separated from the ordinal-only control, and whether the
+    deterministic weighted round-robin differs from the random-draw StaticWeighted.
+
+    The reference is a JSQ cell when the point holds one, since JSQ is the policy that reads
+    no capability at all, and otherwise the first cell by name. Ratios below 1 mean the arm
+    finished sooner than the reference.
+    """
+    ref = min(cells, key=lambda p: (p.split("@")[0] != "jsq", p))
+    out: dict = {"reference": ref, "policies": {}}
+    for policy in sorted(cells):
+        if policy == ref:
+            continue
+        restricted, entry = paired(cells, steady, invalid, (ref, policy))
+        if restricted is not None:
+            draws = cell_draws(
+                restricted,
+                n_boot,
+                block,
+                stream(seed, "arm", ref, policy, stale, lam),
+                restricted[ref].e2e.shape[1],
+            )
+            vr, va = point_values(restricted[ref]), point_values(restricted[policy])
+            for stat in ("mean", "p95"):
+                lo, hi = interval(draws[policy][stat] / draws[ref][stat])
+                entry[f"{stat}_ratio"] = r4(va[stat] / vr[stat])
+                entry[f"{stat}_ratio_ci95"] = [r4(lo), r4(hi)]
+                entry[f"{stat}_separated"] = bool(lo > 1.0 or hi < 1.0)
+            # SLO attainment is a share, so the arms are compared by difference in
+            # percentage points. A ratio of shares divides by zero as soon as a reference
+            # arm misses every deadline, which RoundRobin does at the heavier points.
+            lo, hi = interval(draws[policy]["slo_e2e_2x"] - draws[ref]["slo_e2e_2x"])
+            entry["slo_e2e_2x_delta"] = r4(va["slo_e2e_2x"] - vr["slo_e2e_2x"])
+            entry["slo_e2e_2x_delta_ci95"] = [r4(lo), r4(hi)]
+        out["policies"][policy] = entry
+    return out
+
+
 def climb(c: Cell, block: int, n_boot: int, rng: np.random.Generator) -> dict:
     """Last-third mean over first-third mean, with a block-bootstrap interval per third."""
     n = c.e2e.shape[1]
@@ -543,9 +594,18 @@ def utilisation(
                 "measured_utilisation": r4(busy / nodes[nid]["slots"]),
             }
         per_cell[policy] = entry
+    achieved = {
+        policy: sum(e["arrival_rps"] for e in entry.values()) for policy, entry in per_cell.items()
+    }
     return {
         "nodes": nodes,
         "fast_node": fast,
+        # What the pool actually saw, beside what the config asked for. They differ when a
+        # run's window is shorter than its trace, and the plan reports the achieved figure.
+        "achieved_rps_by_policy": {p: r4(v) for p, v in achieved.items()},
+        "achieved_pool_utilisation": r4(
+            (sum(achieved.values()) / len(achieved)) / sum(caps.values())
+        ),
         "slow_node": slow,
         "pool_capacity_rps": r4(sum(caps.values())),
         "pool_utilisation": r4(lam / sum(caps.values())),
@@ -641,6 +701,10 @@ def summarise(frame: pd.DataFrame, n_boot: int, seed: int, runset_path: Path | N
                 "served_by_worker_but_not_delivered": int((bad["service_ms"] > 0).sum()),
                 "statuses": bad["status"].value_counts().to_dict(),
             }
+
+    # A run the harness rejected contributes no number. It is named in the summary and in
+    # every cell it belonged to, and its rows stop here (analysis plan, section 2).
+    frame = frame[~frame["run_id"].isin(set(invalid_runs))]
 
     ok_rows = measured(frame)
     fast = ok_rows.groupby("chosen_node")["service_ms"].mean().idxmin()
@@ -793,6 +857,9 @@ def summarise(frame: pd.DataFrame, n_boot: int, seed: int, runset_path: Path | N
                 / point_values(aware_cells["jsq"])["mean"],
             }
 
+        against_reference = comparisons(
+            cells, steady, invalid, n_boot, block, seed, float(stale), float(lam)
+        )
         man = next((mans[r] for r in at_point["run_id"].unique() if r in mans), None)
         util = (
             utilisation(window[window["status"] == "ok"], man, snaps, float(lam)) if man else None
@@ -833,6 +900,7 @@ def summarise(frame: pd.DataFrame, n_boot: int, seed: int, runset_path: Path | N
                         stream(seed, "queue_aware", stale, lam),
                     ),
                 },
+                "against_reference": against_reference,
                 "utilisation": util,
                 "operating_R_steady_cells": oper,
                 "_queue_aware": queue_aware,
@@ -970,6 +1038,23 @@ def markdown(summary: dict) -> str:
                 f"{_cell(r, 'slo_ttft_2x', True)} | {_cell(r, 'slo_ttft_5x', True)} |"
             )
         out.append("")
+        ar = pt.get("against_reference", {"reference": "", "policies": {}})
+        if ar["policies"]:
+            out += [
+                f"| Against `{ar['reference']}` | Mean ratio | p95 ratio | E2E SLO 2x, points | Separated on the mean |",
+                "|---|---|---|---|---|",
+            ]
+            for policy, e in ar["policies"].items():
+                if e["status"] != "defined":
+                    out.append(f"| {policy} | {e['status']} | | | |")
+                    continue
+                out.append(
+                    f"| {policy} | {e['mean_ratio']:.3f} [{e['mean_ratio_ci95'][0]:.3f}, {e['mean_ratio_ci95'][1]:.3f}] | "
+                    f"{e['p95_ratio']:.3f} [{e['p95_ratio_ci95'][0]:.3f}, {e['p95_ratio_ci95'][1]:.3f}] | "
+                    f"{e['slo_e2e_2x_delta']:+.3f} [{e['slo_e2e_2x_delta_ci95'][0]:+.3f}, {e['slo_e2e_2x_delta_ci95'][1]:+.3f}] | "
+                    f"{'yes' if e['mean_separated'] else 'no'} |"
+                )
+            out.append("")
         if pt["h1"]:
             out += [
                 "| H1 on | Gain, queue-blind ms | Gain, queue-aware ms | Interaction ms | SW/RR | WJSQ/JSQ | Interaction, log | Excludes 0 (log) |",

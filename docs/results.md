@@ -49,6 +49,12 @@ efficiency. The memory-bandwidth explanation is dropped.
 The one-slot intervals are narrow because the engine is close to deterministic at fixed load.
 They carry no day-to-day variation, since each class was calibrated once.
 
+Every number in this section comes from the snapshots the first pair ran on, which predate
+the context pin, the campaign driver and the 1650 Ti rebuild. G2 replaces the 1650 Ti's
+snapshot, and when it does, this table, the capability figures below it and the utilisation
+targets in every campaign config are re-derived from the new one. Whether the ratios move is
+itself the answer to the open question above.
+
 **Open.** The 1650 Ti's prefill, about 735 tok/s on this model, has not been checked against
 published figures for the card, and its build flags are unknown. Until `tools/engine_bench.sh`
 has run on both nodes before and after a rebuild, the 10x prefill ratio is not established as

@@ -1,5 +1,5 @@
 {
-  "_comment": "C6 of the audit. Prompt and output lengths from clamped lognormals over 66 buckets (tools/make_length_mix.py) instead of three near-identical buckets, once with Poisson arrivals and once with MMPP bursts (quiet 0.6 req/s for 40 s on average, bursts of 2.4 req/s for 10 s, mean 0.96 before scaling). None of the five policies reads output length. This is the regime where a queue count stops tracking remaining work, so it is the direct test of whether 'queue depth recovers most of what calibration offers' carries past the uniform-length traces. The two workloads share each repeat's seed and interleave.",
+  "_comment": "C6 of the audit. Prompt and output lengths from clamped lognormals over 66 buckets (tools/make_length_mix.py) instead of three near-identical buckets, once with Poisson arrivals and once with MMPP bursts (quiet 0.6 req/s for 40 s on average, bursts of 2.4 req/s for 10 s, mean 0.96 before scaling). None of the five policies reads output length. This is the regime where a queue count stops tracking remaining work, so it is the direct test of whether 'queue depth recovers most of what calibration offers' carries past the uniform-length traces. The two workloads share each repeat's seed and interleave. ECT runs here in unknown mode with a prior of 44 tokens, the mean output of this length mix: on a trace whose sizes vary by more than an order of magnitude, a policy that reads each request's true output length knows something no router knows at dispatch, and the prior is the honest version of that knowledge. It is the strongest calibrated baseline, so K5 is worth asking of it and not only of WJSQ.",
   "tag": "heavytail_1650ti_3050",
   "workloads": [
     {
@@ -76,7 +76,8 @@
     "jsq",
     "static_weighted",
     "wjsq",
-    "threshold"
+    "threshold",
+    "ect"
   ],
   "points": [
     {
@@ -96,5 +97,7 @@
     20260941,
     20260942,
     20260943
-  ]
+  ],
+  "ect_mode": "unknown",
+  "ect_prior_output_len": 44
 }

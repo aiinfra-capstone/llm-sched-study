@@ -87,36 +87,57 @@ def latency_by_policy(label: str, summary: dict, out: Path) -> Path:
 
 
 def h1_interaction(campaigns: dict[str, dict], out: Path) -> Path:
+    """The H1 interaction at every point where all four 2x2 cells are steady.
+
+    Left: on log mean latency, the primary statistic, where 0 means calibration saves the
+    same fraction with and without queue depth. Right: the same contrast in ms, which grows
+    with the queue-blind router's latency whether or not anything interacts. Points where a
+    2x2 cell is transient or saturated are not drawn; the caption counts them.
+    """
     fig, axes = plt.subplots(1, 2, figsize=(10, 3.8))
-    for ax, stat in zip(axes, ["mean", "p95"], strict=True):
-        for label, summary in campaigns.items():
-            pts = [(pt["lambda_rps"], pt["h1"][stat]) for pt in summary["points"] if pt["h1"]]
-            xs = [x for x, _ in pts]
-            ys = [h["interaction"] for _, h in pts]
-            errs = list(
-                zip(
-                    *[
-                        [h["interaction"] - h["ci95"][0], h["ci95"][1] - h["interaction"]]
-                        for _, h in pts
-                    ],
-                    strict=True,
-                )
-            )
+    skipped = []
+    for label, summary in campaigns.items():
+        pts = [pt for pt in summary["points"] if pt["h1"] and not pt.get("staleness_s")]
+        skipped += [
+            f"{label} {pt['lambda_rps']:g}"
+            for pt in summary["points"]
+            if not pt["h1"] and not pt.get("staleness_s")
+        ]
+        if not pts:
+            continue
+        xs = [pt["lambda_rps"] for pt in pts]
+        for ax, key, ci_key in (
+            (axes[0], "interaction_log", "interaction_log_ci95"),
+            (axes[1], "interaction", "ci95"),
+        ):
+            ys = [pt["h1"]["mean"][key] for pt in pts]
+            errs = [
+                [y - pt["h1"]["mean"][ci_key][0] for y, pt in zip(ys, pts, strict=True)],
+                [pt["h1"]["mean"][ci_key][1] - y for y, pt in zip(ys, pts, strict=True)],
+            ]
             ax.errorbar(xs, ys, yerr=errs, marker="o", capsize=3, label=label)
+    for ax, title, unit in (
+        (axes[0], "on log mean latency (primary)", "log(WJSQ/JSQ) - log(SW/RR)"),
+        (axes[1], "on mean latency in ms (secondary)", "ms"),
+    ):
         ax.axhline(0, color="black", linewidth=0.8)
-        ax.set_title(f"H1 interaction on {stat} latency")
+        ax.set_title(f"H1 interaction {title}", fontsize=10)
         ax.set_xlabel("offered load (req/s)")
-        ax.set_ylabel("interaction (ms)")
+        ax.set_ylabel(unit)
         ax.grid(alpha=0.3)
     axes[0].legend(fontsize=8)
     fig.suptitle(
-        "H1: (wjsq - jsq) - (static_weighted - round_robin). Above 0, calibration buys less once"
-        " queue depth is known. 95% bootstrap intervals",
-        fontsize=10,
+        "H1 at steady-state points only. Above 0, calibration buys less once queue depth is known."
+        + (
+            f"\nNot drawn (a 2x2 cell transient or saturated): {', '.join(skipped)}"
+            if skipped
+            else ""
+        ),
+        fontsize=8,
     )
     vehicles = {v for s in campaigns.values() for v in s["vehicle"]}
     footer(fig, list(campaigns), vehicles)
-    fig.tight_layout(rect=(0, 0.03, 1, 1))
+    fig.tight_layout(rect=(0, 0.03, 1, 0.9))
     path = out / "h1_interaction.png"
     fig.savefig(path, dpi=160)
     plt.close(fig)
@@ -124,21 +145,38 @@ def h1_interaction(campaigns: dict[str, dict], out: Path) -> Path:
 
 
 def calibration_gain_by_shape(campaigns: dict[str, dict], out: Path) -> Path | None:
+    """What calibration buys each router on each workload, as a ratio and in ms.
+
+    A bar is drawn only where both of the router's cells are steady. The ratio panel is the
+    one to read across workloads: calibrated latency over uncalibrated latency, so 0.8 means
+    calibration removed 20% of the latency, whatever the latency was.
+    """
     shapes = [lbl for lbl in campaigns if lbl in SHAPE_RHO]
     if len(shapes) < 2:
         return None
     shapes.sort(key=lambda lbl: SHAPE_RHO[lbl])
-    # Only load points that two or more shapes share: a row with one bar pair compares
-    # nothing across shapes.
-    counts: dict[float, int] = {}
-    for lbl in shapes:
-        for pt in campaigns[lbl]["points"]:
-            if pt["h1"]:
-                counts[pt["lambda_rps"]] = counts.get(pt["lambda_rps"], 0) + 1
-    lambdas = sorted(lam for lam, n in counts.items() if n >= 2)
+    lambdas = sorted(
+        {
+            pt["lambda_rps"]
+            for lbl in shapes
+            for pt in campaigns[lbl]["points"]
+            if not pt.get("staleness_s")
+        }
+    )
+    lambdas = [
+        lam
+        for lam in lambdas
+        if sum(any(pt["lambda_rps"] == lam for pt in campaigns[lbl]["points"]) for lbl in shapes)
+        >= 2
+    ]
     fig, axes = plt.subplots(len(lambdas), 2, figsize=(10, 3.2 * len(lambdas)), squeeze=False)
     for row, lam in enumerate(lambdas):
-        for col, stat in enumerate(["mean", "p95"]):
+        for col, (field, ci_field, ylabel) in enumerate(
+            (
+                ("ratio", "ratio_ci95", "calibrated / uncalibrated mean latency"),
+                ("gain_ms", "gain_ms_ci95", "ms saved by calibration"),
+            )
+        ):
             ax = axes[row][col]
             for kind, color, offset in (
                 ("queue_blind", "#1f77b4", -0.18),
@@ -147,26 +185,29 @@ def calibration_gain_by_shape(campaigns: dict[str, dict], out: Path) -> Path | N
                 xs, ys, errs = [], [], [[], []]
                 for i, lbl in enumerate(shapes):
                     pt = next(
-                        (p for p in campaigns[lbl]["points"] if p["lambda_rps"] == lam and p["h1"]),
+                        (
+                            p
+                            for p in campaigns[lbl]["points"]
+                            if p["lambda_rps"] == lam and not p.get("staleness_s")
+                        ),
                         None,
                     )
                     if pt is None:
-                        # Measured at this load but some H1 policy has no valid run.
-                        ran = any(p["lambda_rps"] == lam for p in campaigns[lbl]["points"])
-                        if ran and kind == "queue_blind":
-                            ax.text(
-                                i,
-                                0,
-                                "H1 undefined:\na policy saturated",
-                                ha="center",
-                                va="bottom",
-                                fontsize=7,
-                                color="#555",
-                            )
                         continue
-                    h = pt["h1"][stat]
-                    v = h[f"calibration_gain_{kind}"]
-                    lo, hi = h[f"calibration_gain_{kind}_ci95"]
+                    g = pt["calibration_gain"][kind]
+                    if g["status"] != "defined":
+                        ax.text(
+                            i + offset,
+                            0.02 if field == "ratio" else 0,
+                            "n/d",
+                            ha="center",
+                            va="bottom",
+                            fontsize=7,
+                            color=color,
+                        )
+                        continue
+                    v = g["mean"][field]
+                    lo, hi = g["mean"][ci_field]
                     xs.append(i + offset)
                     ys.append(v)
                     errs[0].append(v - lo)
@@ -180,16 +221,24 @@ def calibration_gain_by_shape(campaigns: dict[str, dict], out: Path) -> Path | N
                     capsize=3,
                     label=kind.replace("_", "-"),
                 )
-            ax.axhline(0, color="black", linewidth=0.8)
+            if field == "ratio":
+                ax.axhline(1, color="black", linewidth=0.8)
+                ax.set_ylim(0, 1.1)
+            else:
+                ax.axhline(0, color="black", linewidth=0.8)
             ax.set_xticks(range(len(shapes)), [f"{s}\nrho {SHAPE_RHO[s]:g}" for s in shapes])
-            ax.set_title(f"{lam:g} req/s, {stat} latency")
-            ax.set_ylabel("ms saved by calibration")
+            ax.set_title(f"{lam:g} req/s", fontsize=10)
+            ax.set_ylabel(ylabel, fontsize=8)
             ax.grid(alpha=0.3, axis="y")
     axes[0][0].legend(fontsize=8)
-    fig.suptitle("What calibration buys, by workload shape (95% bootstrap intervals)")
+    fig.suptitle(
+        "What calibration buys, by workload shape. n/d: a cell of that router was transient or"
+        " saturated. Load in req/s is not matched across shapes.",
+        fontsize=9,
+    )
     vehicles = {v for lbl in shapes for v in campaigns[lbl]["vehicle"]}
     footer(fig, shapes, vehicles)
-    fig.tight_layout(rect=(0, 0.02, 1, 1))
+    fig.tight_layout(rect=(0, 0.02, 1, 0.97))
     path = out / "calibration_gain_by_shape.png"
     fig.savefig(path, dpi=160)
     plt.close(fig)

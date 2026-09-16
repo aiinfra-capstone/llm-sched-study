@@ -13,8 +13,10 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 from pathlib import Path
+from typing import ClassVar
 
 import grpc
 import pytest
@@ -553,3 +555,114 @@ def test_a_stop_driven_cancel_is_a_clean_exit_and_an_external_one_is_not(tmp_pat
         await svc.drain()
 
     asyncio.run(go())
+
+
+# ----------------------------------------------------------------- undelivered responses
+#
+# A response the worker could not hand to the client is an instrument failure, not a
+# latency. The client times it out on its own clock, which is the only clock allowed to
+# measure it; the worker's job is to keep its record, still tell the scheduler the slot is
+# free, and count the loss where a person will see it.
+
+
+def _rpc_error(code=grpc.StatusCode.UNAVAILABLE) -> grpc.aio.AioRpcError:
+    return grpc.aio.AioRpcError(code, grpc.aio.Metadata(), grpc.aio.Metadata(), "refused")
+
+
+class _Stub:
+    """ClientStub whose Deliver fails for the req_ids named, and records how it was called."""
+
+    calls: ClassVar[list] = []
+    fail: ClassVar[set] = set()
+
+    def __init__(self, channel) -> None:
+        pass
+
+    async def Deliver(self, delivery, **kwargs):
+        _Stub.calls.append((delivery.req_id, kwargs))
+        if delivery.req_id in _Stub.fail:
+            raise _rpc_error()
+        return sched_pb2.ExecuteAck(req_id=delivery.req_id, queued=True)
+
+
+@pytest.fixture
+def stub(monkeypatch):
+    _Stub.calls, _Stub.fail = [], set()
+    monkeypatch.setattr(serve.sched_grpc, "ClientStub", _Stub)
+    return _Stub
+
+
+def _serve_through_execute(tmp_path, requests, adapter=None):
+    async def go():
+        sched = _Scheduler()
+        sched_server, sched_ep = await _start(sched, sched_grpc.add_SchedulerServicer_to_server)
+        svc = serve.WorkerService(
+            _config(tmp_path, scheduler_endpoint=sched_ep), adapter or _FakeAdapter()
+        )
+        tasks = []
+        for req in requests:
+            await svc.Execute(req, None)
+            tasks.extend(svc._tasks)
+        await svc.drain()
+        outcomes = [t.exception() for t in tasks if t.done()]
+        await sched_server.stop(None)
+        return svc, sched, outcomes
+
+    return asyncio.run(go())
+
+
+def test_an_undelivered_response_is_counted_and_its_record_kept(tmp_path, stub, capsys) -> None:
+    stub.fail = {"r0001"}
+    svc, sched, outcomes = _serve_through_execute(
+        tmp_path, [_request("r0001", client_endpoint="10.9.9.9:50071")]
+    )
+    assert svc.counters.undelivered == 1
+    assert (svc.counters.served, svc.counters.failed) == (1, 0)
+    written = json.loads((tmp_path / "worker_n1_run_a.jsonl").read_text().strip())
+    assert (written["req_id"], written["status"]) == ("r0001", "ok")
+    assert [c.req_id for c in sched.completions] == ["r0001"]
+    assert outcomes == [None]
+    printed = capsys.readouterr().out
+    assert "r0001" in printed and "10.9.9.9:50071" in printed and "UNAVAILABLE" in printed
+
+
+def test_a_delivered_response_leaves_undelivered_at_zero(tmp_path, stub) -> None:
+    svc, sched, _ = _serve_through_execute(tmp_path, [_request("r0001", client_endpoint="c:1")])
+    assert svc.counters.undelivered == 0
+    assert [c.req_id for c in sched.completions] == ["r0001"]
+
+
+def test_delivery_waits_for_the_channel_with_a_bounded_timeout(tmp_path, stub) -> None:
+    """A cached channel to the previous run's client sits in reconnect backoff, and a call
+    made then fails at once unless it waits for the channel."""
+    _serve_through_execute(tmp_path, [_request("r0001", client_endpoint="c:1")])
+    assert stub.calls == [("r0001", {"timeout": serve.DELIVERY_TIMEOUT_S, "wait_for_ready": True})]
+
+
+def test_the_shutdown_line_counts_every_outcome(tmp_path, monkeypatch, stub, capsys) -> None:
+    class _Mixed(_FakeAdapter):
+        async def complete(self, prompt_tokens, output_len):
+            result = await super().complete(prompt_tokens, output_len)
+            return dataclasses.replace(result, status="timeout" if output_len == 3 else "ok")
+
+    adapter = _Mixed(service_s=0.01)
+    monkeypatch.setattr(serve, "LlamaCppAdapter", lambda *a, **k: adapter)
+    stub.fail = {"r0002"}
+
+    async def go():
+        stop = asyncio.Event()
+        task = asyncio.create_task(
+            serve.run_worker(_config(tmp_path), bind="127.0.0.1:50078", stop=stop)
+        )
+        await asyncio.sleep(0.2)
+        async with grpc.aio.insecure_channel("127.0.0.1:50078") as ch:
+            worker = sched_grpc.WorkerStub(ch)
+            await worker.Execute(_request("r0001", client_endpoint="c:1"))
+            await worker.Execute(_request("r0002", client_endpoint="c:1"))
+            await worker.Execute(_request("r0003", client_endpoint="c:1", output_len=3))
+            await asyncio.sleep(0.3)
+        stop.set()
+        return await task
+
+    assert asyncio.run(go()) == 0
+    assert "worker n1: 3 served, 1 failed, 1 undelivered" in capsys.readouterr().out

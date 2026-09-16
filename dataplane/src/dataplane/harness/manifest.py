@@ -35,7 +35,13 @@ class Validity:
     `valid` is computed, never set. The conditions that invalidate a run outright: the
     load generator drifted (`send_lag_violations`), requests never came back
     (`dropped_requests`), or the pool was not what the manifest says it was
-    (`colocated_nodes`, `engine_restarts`). `heartbeat_gaps` is reported but not fatal —
+    (`colocated_nodes`, `engine_restarts`, `engine_unchecked`).
+
+    `engine_unchecked` is fatal for the reason `engine_restarts: 0` was never evidence on
+    its own. That field was written by a driver that could not observe an engine at all, so
+    its zero meant "nobody looked" while reading as "nothing happened". A driver that reads
+    each engine's process before and after a run can now say which of the two it is, and a
+    run where it could not look is not a measurement of the pool the manifest names. `heartbeat_gaps` is reported but not fatal —
     a missed heartbeat degrades the scheduler's estimate, which is a thing H3 is *about*,
     not a thing that ruins the measurement.
 
@@ -54,6 +60,7 @@ class Validity:
     dropped_requests: int = 0
     heartbeat_gaps: int = 0
     engine_restarts: int = 0
+    engine_unchecked: int = 0
     colocated_nodes: int = 0
     clock_unsynced_hosts: int = 0
 
@@ -64,6 +71,7 @@ class Validity:
             and self.dropped_requests == 0
             and self.colocated_nodes == 0
             and self.engine_restarts == 0
+            and self.engine_unchecked == 0
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -73,6 +81,7 @@ class Validity:
             "dropped_requests": self.dropped_requests,
             "heartbeat_gaps": self.heartbeat_gaps,
             "engine_restarts": self.engine_restarts,
+            "engine_unchecked": self.engine_unchecked,
             "valid": self.valid,
             "colocated_nodes": self.colocated_nodes,
             "clock_unsynced_hosts": self.clock_unsynced_hosts,
@@ -97,6 +106,12 @@ class Validity:
             )
         if self.engine_restarts:
             out.append(f"{self.engine_restarts} engine restart(s) mid-run")
+        if self.engine_unchecked:
+            out.append(
+                f"{self.engine_unchecked} node(s) whose engine process could not be read "
+                "before and after the run, so a restart can be neither confirmed nor ruled "
+                "out and the pool was not shown to be the one the manifest claims"
+            )
         return out
 
 

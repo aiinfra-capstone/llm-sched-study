@@ -1,0 +1,184 @@
+{
+  "_comment": "M7 in docs/checkpoint.md: the value-of-calibration curve, and S3. One campaign, one load point, several arms that change only what the calibrated policies are told about the nodes. The baseline arm is the pool's own capability (1.57x at one slot) and adds the two ordinal controls: jsq_fastfirst is JSQ with ties broken toward the fast node, which is the ranking bit without the magnitude, and ect prices each request from the full cost model. The ratio arms hold the 1650 Ti at its measured 103.947 output tok/s of service and scale the 3050, so 1.0 is a pool the policy believes is homogeneous and 3.35 is the ratio the pair actually has at four slots. cap1000 stands in for an infinite ratio: WJSQ sends everything to the 3050 until its queue is enormous, which is Threshold by another route. The decode arm reproduces the pre-2026-09-15 capability definition (S3), and c4 reads the reference cell at four slots instead of one. ectunknown gives ECT the anchor trace's mean output length (77 tokens) instead of each request's, which is what a router knows in advance.",
+  "tag": "ablation_1650ti_3050",
+  "trace_config": "dataplane/configs/trace_anchor_1b.json",
+  "out_root": "runs/exp/ablation_1650ti_3050",
+  "nodes": [
+    {
+      "node_id": "gtx1650ti",
+      "host": "fedora",
+      "role": "pool",
+      "engine": "llamacpp",
+      "engine_version": "b10569+p1+cuda13.2",
+      "model": "Llama-3.2-1B-Instruct",
+      "quant": "Q4_K_M",
+      "gpu": "NVIDIA GeForce GTX 1650 Ti",
+      "driver": "580.178.04",
+      "prefix_caching": false,
+      "max_batch": 4,
+      "engine_config": {
+        "ngl": 99,
+        "threads": 6,
+        "parallel": 4
+      }
+    },
+    {
+      "node_id": "rtx3050",
+      "host": "rtx3050",
+      "role": "pool",
+      "engine": "llamacpp",
+      "engine_version": "b10569+p1+cuda13.2",
+      "model": "Llama-3.2-1B-Instruct",
+      "quant": "Q4_K_M",
+      "gpu": "NVIDIA GeForce RTX 3050 6GB Laptop GPU",
+      "driver": "580.178.04",
+      "prefix_caching": false,
+      "max_batch": 4,
+      "engine_config": {
+        "ngl": 99,
+        "threads": 6,
+        "parallel": 4
+      }
+    }
+  ],
+  "workers": {
+    "gtx1650ti": {
+      "endpoint": "10.42.0.1:50061",
+      "logs": "runs/worker_logs"
+    },
+    "rtx3050": {
+      "endpoint": "10.42.0.12:50061",
+      "logs": "divyansh@10.42.0.12:Documents/capstone/runs/worker_logs"
+    }
+  },
+  "cost_model_snapshots": {
+    "gtx1650ti": "cm_gtx1650ti_ngl99_p4_q4km_llama32_1b_20260831T153652Z_008",
+    "rtx3050": "cm_rtx3050_ngl99_p4_q4km_llama32_1b_20260914T200053Z_008"
+  },
+  "threshold_t": 130.0,
+  "warmup_s": 10.0,
+  "settle_s": 20.0,
+  "scheduler_port": 50051,
+  "bind": "0.0.0.0:50071",
+  "advertise": "10.42.0.1",
+  "policies": [
+    "jsq",
+    "jsq_fastfirst",
+    "static_weighted",
+    "static_weighted_wrr",
+    "wjsq",
+    "threshold",
+    "ect"
+  ],
+  "capability_arms": [
+    {
+      "name": "cap157",
+      "policies": [
+        "jsq",
+        "jsq_fastfirst",
+        "wjsq",
+        "ect",
+        "static_weighted_wrr"
+      ]
+    },
+    {
+      "name": "cap100",
+      "policies": [
+        "wjsq"
+      ],
+      "capability_override": {
+        "gtx1650ti": 103.947,
+        "rtx3050": 103.947
+      }
+    },
+    {
+      "name": "cap120",
+      "policies": [
+        "wjsq"
+      ],
+      "capability_override": {
+        "gtx1650ti": 103.947,
+        "rtx3050": 124.736
+      }
+    },
+    {
+      "name": "cap250",
+      "policies": [
+        "wjsq"
+      ],
+      "capability_override": {
+        "gtx1650ti": 103.947,
+        "rtx3050": 259.868
+      }
+    },
+    {
+      "name": "cap335",
+      "policies": [
+        "wjsq"
+      ],
+      "capability_override": {
+        "gtx1650ti": 103.947,
+        "rtx3050": 348.222
+      }
+    },
+    {
+      "name": "cap500",
+      "policies": [
+        "wjsq"
+      ],
+      "capability_override": {
+        "gtx1650ti": 103.947,
+        "rtx3050": 519.735
+      }
+    },
+    {
+      "name": "cap1000",
+      "policies": [
+        "wjsq"
+      ],
+      "capability_override": {
+        "gtx1650ti": 103.947,
+        "rtx3050": 10394.7
+      }
+    },
+    {
+      "name": "decode",
+      "policies": [
+        "wjsq",
+        "static_weighted",
+        "threshold"
+      ],
+      "capability_mode": "decode"
+    },
+    {
+      "name": "c4",
+      "policies": [
+        "wjsq"
+      ],
+      "capability_concurrency": 4
+    },
+    {
+      "name": "ectunknown",
+      "policies": [
+        "ect"
+      ],
+      "ect_mode": "unknown",
+      "ect_prior_output_len": 77
+    }
+  ],
+  "points": [
+    {
+      "name": "u30",
+      "pool_utilisation": 0.3
+    }
+  ],
+  "staleness_s": [
+    0.0
+  ],
+  "repeats": 3,
+  "repeat_seeds": [
+    20260961,
+    20260962,
+    20260963
+  ]
+}

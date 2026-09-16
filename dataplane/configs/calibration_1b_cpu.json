@@ -1,4 +1,5 @@
 {
+  "_comment": "M4 of the 2026-09-15 audit: the sustained segment is 80 minutes, so a tau near the CPU 8B class's 70 s is covered about 70 times and tools/tau_interval.py can put a block-bootstrap interval on it. Snapshots every 300 s keep the committed series to about 17 files. Start the engine with -c 55296 --cache-ram 0, and run nothing else on the host.",
   "node_class": "cpu_ngl0_p4_q4km_llama32_1b",
   "model": "Llama-3.2-1B-Instruct",
   "host": "fedora",
@@ -14,10 +15,10 @@
     "prompt_len": 128,
     "output_len": 64,
     "concurrency": 4,
-    "duration_s": 600,
+    "duration_s": 4800,
     "window_s": 30.0
   },
-  "snapshot_every_s": 60.0,
+  "snapshot_every_s": 300.0,
   "snapshot_window_s": 180.0,
   "vocab_size": 128000,
   "seed": 20260903,

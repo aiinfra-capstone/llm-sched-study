@@ -349,3 +349,41 @@ def test_a_manifest_with_no_clock_measurement_omits_the_block_entirely() -> None
     )
     assert "clock_sync" not in man
     assert man["validity"]["clock_unsynced_hosts"] == 0
+
+
+# ------------------------------------------------------------------ engine_unchecked
+#
+# A restart check that could not read a node's engine after the run knows nothing about
+# that node. A restart while no request is in flight drops nothing, so no other counter
+# catches it, and its cost has no bound the way an unsynchronised clock's does. So "could
+# not check" invalidates the run, under its own name, so the stated reason is the true one.
+
+
+def test_an_unchecked_engine_invalidates_the_run() -> None:
+    v = Validity(engine_unchecked=1)
+    assert not v.valid
+    assert v.engine_restarts == 0
+
+
+def test_the_unchecked_reason_does_not_claim_a_restart() -> None:
+    (reason,) = Validity(engine_unchecked=2).reasons()
+    assert "2" in reason
+    assert "could not" in reason
+    assert "restart(s) mid-run" not in reason
+
+
+def test_engine_unchecked_is_written_and_conforms(schema) -> None:
+    from conftest import assert_conforms
+
+    v = Validity(engine_unchecked=1)
+    assert v.to_dict()["engine_unchecked"] == 1
+    assert v.to_dict()["valid"] is False
+    man = build(
+        run_id="run_0001",
+        config=CONFIG,
+        trace_path="traces/t.jsonl",
+        trace_sha256="0" * 64,
+        validity=v,
+        nodes=_nodes(),
+    )
+    assert_conforms(schema("manifest"), [man], "manifest")

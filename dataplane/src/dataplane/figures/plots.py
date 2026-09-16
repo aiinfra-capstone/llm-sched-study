@@ -57,6 +57,7 @@ __all__ = [
     "HARDWARE_BLIND",
     "MIN_VALIDATION_POINTS",
     "ROUTING_ERROR_MATERIALITY",
+    "THRESHOLD_BASELINE",
     "achieved_rps",
     "analysable",
     "annotations",
@@ -71,6 +72,7 @@ __all__ = [
     "h1_interaction",
     "h2_advantage",
     "h2_advantage_curve",
+    "h2_calibration_curve",
     "h3_axis",
     "h3_staleness",
     "mpr2_interaction_range",
@@ -101,6 +103,14 @@ CELLS = ("round_robin", "static_weighted", "jsq", "wjsq")
 
 HARDWARE_AWARE = ("static_weighted", "wjsq")
 HARDWARE_BLIND = ("round_robin", "jsq")
+
+# H2's degenerate baseline: round-robin over the nodes above a calibrated cutoff. It is
+# deliberately in none of the three sets above. `advantage_ms` is `blind.min() -
+# aware.min()`, so putting Threshold(T) in HARDWARE_AWARE because it reads a calibrated
+# cutoff would let the baseline win that minimum, and H2's headline would stop being about
+# StaticWeighted and WJSQ with nothing failing. The baseline is what the tuned policies are
+# measured against, not one of them.
+THRESHOLD_BASELINE = "threshold"
 
 # F-23 requires a *stated* tolerance and the observed error against it. This is that
 # number, and it is set by the anchors rather than chosen for roundness.
@@ -667,6 +677,21 @@ def h2_advantage_curve(sweep: pd.DataFrame) -> list[dict[str, float]]:
             f"R = {r_values}; one point cannot be non-monotonic"
         )
 
+    ran_baseline = {
+        r_value
+        for r_value in r_values
+        if not sweep[(sweep["R"] == r_value) & (sweep["policy"] == THRESHOLD_BASELINE)].empty
+    }
+    if ran_baseline and ran_baseline != set(r_values):
+        missing = sorted(set(r_values) - ran_baseline)
+        raise ValueError(
+            f"{THRESHOLD_BASELINE!r} ran at some values of R and not at {missing}. H2's "
+            "second claim "
+            "is that the gap to the baseline closes as R grows, and a gap that exists at "
+            "one end of the range and is absent at the other is not a curve; run the "
+            "baseline at every R or at none"
+        )
+
     rows = []
     for r_value in r_values:
         at_r = sweep[sweep["R"] == r_value]
@@ -680,9 +705,52 @@ def h2_advantage_curve(sweep: pd.DataFrame) -> list[dict[str, float]]:
         # Positive means hardware-awareness helped: the best aware policy finished sooner
         # than the best blind one. Best-against-best, because H2 is about what awareness
         # is worth at its best, not about the average of a policy set I chose.
-        rows.append({"R": r_value, "advantage_ms": float(blind.min() - aware.min())})
+        #
+        # `threshold_gap_ms` carries the same sign convention against the static rule: how
+        # much sooner the best of the 2x2 finished than Threshold(T). It is positive while
+        # tuning is still buying something and approaches zero as the two converge, which
+        # is H2's second claim. A sweep that never ran the baseline reports None, because
+        # zero is the value that means converged and the two are opposite statements.
+        best_tuned = at_r[at_r["policy"].isin(CELLS)]["mean_latency_ms"].min()
+        baseline = at_r[at_r["policy"] == THRESHOLD_BASELINE]["mean_latency_ms"]
+        rows.append(
+            {
+                "R": r_value,
+                "advantage_ms": float(blind.min() - aware.min()),
+                "threshold_gap_ms": None if baseline.empty else float(baseline.min() - best_tuned),
+            }
+        )
     # A list of points rather than a frame: the curve is short, it is read point by point
     # when the shape is argued about, and it goes into the report as a table of numbers.
+    return rows
+
+
+def h2_calibration_curve(sweep: pd.DataFrame) -> list[dict[str, float]]:
+    """H2 in the specification's own terms: WJSQ minus JSQ against R, beside the baseline.
+
+    `h2_advantage_curve` reports best-aware minus best-blind, which is the quantity the
+    figures have always drawn and is not what the frozen specification names. The spec's
+    observable is the gap WJSQ still has over JSQ, converging on Threshold(T) as R grows.
+    Both are reported, and the difference between them is recorded as a deviation rather
+    than resolved silently, because a reviewer reading the spec will look for this one.
+
+    Positive `calibration_gain_ms` means WJSQ finished sooner than JSQ, the same sign
+    convention as everywhere else.
+    """
+    for column in ("R", "policy", "mean_latency_ms"):
+        if column not in sweep.columns:
+            raise ValueError(f"an H2 sweep needs a {column!r} column; got {list(sweep.columns)}")
+    rows = []
+    for r_value in sorted({float(v) for v in sweep["R"]}):
+        at_r = sweep[sweep["R"] == r_value]
+        jsq = at_r[at_r["policy"] == "jsq"]["mean_latency_ms"]
+        wjsq = at_r[at_r["policy"] == "wjsq"]["mean_latency_ms"]
+        if jsq.empty or wjsq.empty:
+            raise ValueError(
+                f"R = {r_value} is missing jsq or wjsq, and the specification's H2 "
+                "observable is the difference between exactly those two policies"
+            )
+        rows.append({"R": r_value, "calibration_gain_ms": float(jsq.mean() - wjsq.mean())})
     return rows
 
 
@@ -790,6 +858,15 @@ def sweep_from(frame: pd.DataFrame) -> pd.DataFrame:
                 "mean_latency_ms": float(e2e.mean()),
                 "p95_ms": percentile(e2e.tolist(), 0.95),
                 "routing_error_rate": routing_error_rate(rows),
+                # H3's dependent variable once the simulator can compute it: the realised
+                # cost of the placement against the best alternative. `routing_error_ms`
+                # cannot serve, being WJSQ's own score on the view WJSQ saw. Absent until
+                # the simulator logs it, and absent is not zero.
+                **(
+                    {"regret_ms": float(rows["regret_ms"].astype(float).mean())}
+                    if "regret_ms" in rows and rows["regret_ms"].notna().any()
+                    else {}
+                ),
             }
         )
     if not out:
@@ -890,12 +967,27 @@ def h2_advantage(frame: pd.DataFrame, out_dir: Path) -> Path:
     falls" is the entire hypothesis and the peak's R is the number that goes in the
     abstract.
     """
-    curve = h2_advantage_curve(sweep_from(frame))  # raises on a single-R sweep
+    sweep = sweep_from(frame)
+    curve = h2_advantage_curve(sweep)  # raises on a single-R sweep
+    spec = h2_calibration_curve(sweep)
     r_values = [point["R"] for point in curve]
     advantage = [point["advantage_ms"] for point in curve]
+    gap = [point["threshold_gap_ms"] for point in curve]
 
-    fig, ax = plt.subplots(figsize=(6.5, 4.2))
-    ax.plot(r_values, advantage, marker="o")
+    fig, (ax, ax_spec) = plt.subplots(1, 2, figsize=(11, 4.2))
+    ax.plot(r_values, advantage, marker="o", label="best aware minus best blind")
+    if all(g is not None for g in gap):
+        # H2's second claim on the same axes: the gap to the one-line static rule closing
+        # as R grows is what "hardware-awareness collapses into thresholding" looks like.
+        ax.plot(
+            r_values,
+            gap,
+            marker="s",
+            linestyle="--",
+            color="#9467bd",
+            label=f"best of the 2x2 minus {THRESHOLD_BASELINE}",
+        )
+        ax.legend(fontsize=8)
     ax.axhline(0.0, linestyle="--", color="#999999", linewidth=1)
     peak = max(range(len(advantage)), key=lambda i: advantage[i])
     # Below and to the right of the marker: above it collides with the title, which is
@@ -908,10 +1000,38 @@ def h2_advantage(frame: pd.DataFrame, out_dir: Path) -> Path:
         fontsize=9,
     )
     _r_axis(ax, r_values)
-    ax.set_ylabel("best aware minus best blind (ms)")
-    ax.set_title("H2: the advantage of hardware-aware routing against R")
+    ax.set_ylabel("ms")
+    ax.set_title("H2 as the figures have drawn it")
     ax.margins(y=0.15)
     ax.grid(alpha=0.3)
+
+    # The specification's own observable beside it, so the deviation is visible rather
+    # than argued about in prose.
+    ax_spec.plot(
+        [point["R"] for point in spec],
+        [point["calibration_gain_ms"] for point in spec],
+        marker="o",
+        color="#2ca02c",
+        label="jsq minus wjsq",
+    )
+    if all(g is not None for g in gap):
+        ax_spec.plot(
+            r_values,
+            gap,
+            marker="s",
+            linestyle="--",
+            color="#9467bd",
+            label=f"best of the 2x2 minus {THRESHOLD_BASELINE}",
+        )
+    ax_spec.axhline(0.0, linestyle="--", color="#999999", linewidth=1)
+    _r_axis(ax_spec, [point["R"] for point in spec])
+    ax_spec.set_ylabel("ms")
+    ax_spec.set_title("H2 as the specification states it")
+    ax_spec.margins(y=0.15)
+    ax_spec.legend(fontsize=8)
+    ax_spec.grid(alpha=0.3)
+    fig.suptitle("H2: the advantage of hardware-aware routing against R", fontsize=11)
+    fig.tight_layout(rect=(0, 0, 1, 0.95))
     return _finish(fig, frame, out_dir, "h2_advantage")
 
 
@@ -1069,10 +1189,19 @@ def h3_staleness(frame: pd.DataFrame, out_dir: Path) -> Path:
     should already be underway: an estimate as old as the autocorrelation time carries
     little information about the node's present state.
 
-    Routing error rate is the dependent variable rather than latency, because H3 is a
-    claim about decision quality given the information available, and latency also moves
-    with load. Runs whose scheduler wrote no decision record report `None` and are absent
-    here rather than plotted as perfect routing.
+    The dependent variable is decision quality rather than latency, because latency also
+    moves with load. Which measure of quality depends on what the run set carries:
+
+    `regret_ms`, when the simulator logged it, is the realised cost of the placement against
+    the best alternative, and it is the measure this figure wants. `routing_error_rate` is
+    the fallback, and it is a weak one: it scores each decision with WJSQ's own formula on
+    the veiled view the policy saw, so WJSQ cannot register an error at any staleness and
+    the policy with the highest rate can be the one with the lowest latency. The caption
+    says which was drawn, so a figure built on the fallback cannot be read as if it were
+    built on regret.
+
+    Runs whose scheduler wrote no decision record report `None` and are absent here rather
+    than plotted as perfect routing.
     """
     sweep = sweep_from(frame)
     if "tau_s" not in sweep.columns:
@@ -1086,7 +1215,8 @@ def h3_staleness(frame: pd.DataFrame, out_dir: Path) -> Path:
     tau = float(sweep["tau_s"].iloc[0])
     sweep = sweep.assign(estimate_age_over_tau=h3_axis(sweep, autocorr_time_s=tau))
 
-    plotted = sweep[sweep["routing_error_rate"].notna()]
+    metric = "regret_ms" if "regret_ms" in sweep.columns else "routing_error_rate"
+    plotted = sweep[sweep[metric].notna()]
     if plotted.empty:
         raise ValueError(
             "no run in this set carries a scheduler decision record, so routing error "
@@ -1100,7 +1230,7 @@ def h3_staleness(frame: pd.DataFrame, out_dir: Path) -> Path:
     # staleness. H3 is a claim about the age axis alone, so the other axes are collapsed
     # here rather than smuggled into the line.
     points = (
-        plotted.groupby(["policy", "estimate_age_over_tau"], as_index=False)["routing_error_rate"]
+        plotted.groupby(["policy", "estimate_age_over_tau"], as_index=False)[metric]
         .mean()
         .sort_values("estimate_age_over_tau")
     )
@@ -1109,7 +1239,7 @@ def h3_staleness(frame: pd.DataFrame, out_dir: Path) -> Path:
     for policy, rows in points.groupby("policy", sort=True):
         ax.plot(
             rows["estimate_age_over_tau"],
-            rows["routing_error_rate"],
+            rows[metric],
             marker="o",
             label=str(policy),
         )
@@ -1123,8 +1253,21 @@ def h3_staleness(frame: pd.DataFrame, out_dir: Path) -> Path:
         fontsize=9,
     )
     ax.set_xlabel(f"estimate age / \u03c4    (\u03c4 = {tau:g} s, measured)")
-    ax.set_ylabel("routing error rate")
+    ax.set_ylabel("counterfactual regret (ms)" if metric == "regret_ms" else "routing error rate")
     ax.set_title("H3: routing quality against the age of the estimate")
+    if metric != "regret_ms":
+        # Said on the figure, not only in the docstring: this measure is WJSQ's own score,
+        # so WJSQ sits at zero here whatever the staleness.
+        ax.text(
+            0.5,
+            -0.22,
+            "fallback measure: routing error rate is the policy's own score, and WJSQ "
+            "cannot register an error on it",
+            transform=ax.transAxes,
+            ha="center",
+            fontsize=7,
+            color="#a33",
+        )
     ax.legend()
     ax.grid(alpha=0.3)
     return _finish(fig, frame, out_dir, "h3_staleness")

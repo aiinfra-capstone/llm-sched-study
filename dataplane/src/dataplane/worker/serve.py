@@ -69,6 +69,13 @@ _LEAK_CONFIRMATIONS = 3
 # several seconds to come up; a report that outlives this is dropped, as before.
 COMPLETION_REPORT_TIMEOUT_S = 30.0
 
+# How long a response delivery waits for the client's channel. The replay client's server
+# stops at the end of every run, so the cached channel to it sits in reconnect backoff when
+# the next run starts, and a call made during backoff fails at once without trying. On the
+# first pair that lost three responses at the head of one run (phase_summarisation, jsq,
+# heavy, r3): the worker served them in 2 to 3 s and the client recorded 60 s timeouts.
+DELIVERY_TIMEOUT_S = 30.0
+
 
 @dataclass
 class WorkerConfig:
@@ -111,6 +118,7 @@ class _Counters:
     inflight: int = 0
     served: int = 0
     failed: int = 0
+    undelivered: int = 0
     leaked_slots: int = 0
 
 
@@ -261,12 +269,20 @@ class WorkerService(sched_grpc.WorkerServicer):
             worker_queue_wait_ns=queue_wait_ns,
         )
         try:
-            await sched_grpc.ClientStub(self._channel(request.client_endpoint)).Deliver(delivery)
-        except grpc.aio.AioRpcError:
+            await sched_grpc.ClientStub(self._channel(request.client_endpoint)).Deliver(
+                delivery, timeout=DELIVERY_TIMEOUT_S, wait_for_ready=True
+            )
+        except grpc.aio.AioRpcError as exc:
             # The client records this as a timeout on its own clock, which is the only
             # clock allowed to measure it. Raising here would kill the task and lose the
-            # C-4 record for a request that actually ran.
-            pass
+            # C-4 record for a request that actually ran. It is counted and printed, not
+            # swallowed: a response lost here is an instrument failure, not a latency.
+            self.counters.undelivered += 1
+            print(
+                f"could not deliver {request.req_id} to {request.client_endpoint}: "
+                f"{exc.code().name}",
+                flush=True,
+            )
 
     async def _report(self, request, result: ServiceResult) -> None:
         """C-1 `Completion` — so the scheduler learns about a finish now, not at the next beat.
@@ -464,7 +480,7 @@ async def run_worker(
         await adapter.aclose()
     print(
         f"worker {config.node_id}: {service.counters.served} served, "
-        f"{service.counters.failed} failed"
+        f"{service.counters.failed} failed, {service.counters.undelivered} undelivered"
         + (
             f", {service.counters.leaked_slots} ENGINE SLOT(S) LEAKED — this node was not "
             "running at the --parallel the manifest claims"

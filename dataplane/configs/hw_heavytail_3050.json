@@ -1,0 +1,100 @@
+{
+  "_comment": "C6 of the audit. Prompt and output lengths from clamped lognormals over 66 buckets (tools/make_length_mix.py) instead of three near-identical buckets, once with Poisson arrivals and once with MMPP bursts (quiet 0.6 req/s for 40 s on average, bursts of 2.4 req/s for 10 s, mean 0.96 before scaling). None of the five policies reads output length. This is the regime where a queue count stops tracking remaining work, so it is the direct test of whether 'queue depth recovers most of what calibration offers' carries past the uniform-length traces. The two workloads share each repeat's seed and interleave.",
+  "tag": "heavytail_1650ti_3050",
+  "workloads": [
+    {
+      "name": "poisson",
+      "trace_config": "dataplane/configs/trace_heavytail_1b.json",
+      "out_root": "runs/exp/heavytail_poisson_1650ti_3050"
+    },
+    {
+      "name": "mmpp",
+      "trace_config": "dataplane/configs/trace_heavytail_mmpp_1b.json",
+      "out_root": "runs/exp/heavytail_mmpp_1650ti_3050"
+    }
+  ],
+  "nodes": [
+    {
+      "node_id": "gtx1650ti",
+      "host": "fedora",
+      "role": "pool",
+      "engine": "llamacpp",
+      "engine_version": "b10569+p1+cuda13.2",
+      "model": "Llama-3.2-1B-Instruct",
+      "quant": "Q4_K_M",
+      "gpu": "NVIDIA GeForce GTX 1650 Ti",
+      "driver": "580.178.04",
+      "prefix_caching": false,
+      "max_batch": 4,
+      "engine_config": {
+        "ngl": 99,
+        "threads": 6,
+        "parallel": 4
+      }
+    },
+    {
+      "node_id": "rtx3050",
+      "host": "rtx3050",
+      "role": "pool",
+      "engine": "llamacpp",
+      "engine_version": "b10569+p1+cuda13.2",
+      "model": "Llama-3.2-1B-Instruct",
+      "quant": "Q4_K_M",
+      "gpu": "NVIDIA GeForce RTX 3050 6GB Laptop GPU",
+      "driver": "580.178.04",
+      "prefix_caching": false,
+      "max_batch": 4,
+      "engine_config": {
+        "ngl": 99,
+        "threads": 6,
+        "parallel": 4
+      }
+    }
+  ],
+  "workers": {
+    "gtx1650ti": {
+      "endpoint": "10.42.0.1:50061",
+      "logs": "runs/worker_logs"
+    },
+    "rtx3050": {
+      "endpoint": "10.42.0.12:50061",
+      "logs": "divyansh@10.42.0.12:Documents/capstone/runs/worker_logs"
+    }
+  },
+  "cost_model_snapshots": {
+    "gtx1650ti": "cm_gtx1650ti_ngl99_p4_q4km_llama32_1b_20260831T153652Z_008",
+    "rtx3050": "cm_rtx3050_ngl99_p4_q4km_llama32_1b_20260914T200053Z_008"
+  },
+  "threshold_t": 130.0,
+  "warmup_s": 10.0,
+  "settle_s": 20.0,
+  "scheduler_port": 50051,
+  "bind": "0.0.0.0:50071",
+  "advertise": "10.42.0.1",
+  "policies": [
+    "round_robin",
+    "jsq",
+    "static_weighted",
+    "wjsq",
+    "threshold"
+  ],
+  "points": [
+    {
+      "name": "u30",
+      "pool_utilisation": 0.3
+    },
+    {
+      "name": "u40",
+      "pool_utilisation": 0.4
+    }
+  ],
+  "staleness_s": [
+    0.0
+  ],
+  "repeats": 3,
+  "repeat_seeds": [
+    20260941,
+    20260942,
+    20260943
+  ]
+}

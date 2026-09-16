@@ -309,7 +309,7 @@ say "quant            Q4_K_M"
 say ""
 say "Start the engine on loopback only, then the worker wrapper in front of it:"
 say "  $SERVER --host 127.0.0.1 --port 18080 \\"
-say "    -m $MODEL_DIR/$STUDY_MODEL -ngl 99 --threads 6 --parallel 4 -c 55296"
+say "    -m $MODEL_DIR/$STUDY_MODEL -ngl 99 --threads 6 --parallel 4 -c 55296 --cache-ram 0"
 say "  uv run worker --node-id <id> --engine http://127.0.0.1:18080 \\"
 say "    --bind 0.0.0.0:50061 --engine-version ${LLAMA_TAG}+p1+${SUFFIX}"
 echo

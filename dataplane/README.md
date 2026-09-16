@@ -498,7 +498,7 @@ two-host pool, the laptop's GTX 1650 Ti and the RTX 4070 box. Both run the same 
 quant, because F-9 holds those constant across a pool and `launch.build_nodes` refuses
 otherwise; heterogeneity comes from the hardware and from `ngl`, which is F-9a.
 `preflight_lan.json` carries the same two nodes plus the LAN addresses, and
-`hw_mpr2_lan.json` is the MPR-2 campaign over them for `tools/hw_runs.py`. The Crucial X9
+`hw_mpr2_lan_3050.json` is the MPR-2 campaign over the pair we ran, for `tools/hw_runs.py`. The Crucial X9
 boots whichever second machine we have, so each of these three has a `_3050` twin for the
 Dell RTX 3050 6GB laptop, which joins as hostname `rtx3050` on `.12`. The second node's
 snapshot in both campaigns is a placeholder until that class is calibrated, and the driver

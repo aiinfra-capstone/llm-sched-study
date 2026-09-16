@@ -394,6 +394,11 @@
         "engine_restarts": {
           "type": "integer"
         },
+        "engine_unchecked": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Pool nodes whose engine process could not be read before and after the run, so a restart inside the run can be neither confirmed nor ruled out. Optional, and absent means the run predates the field.\\n\\nFatal, like `engine_restarts`, and for the reason `engine_restarts: 0` was never evidence on its own: a driver that cannot see the engine cannot report that it stayed up, and a run whose pool was not shown to be the one the manifest claims is not a measurement of that pool."
+        },
         "valid": {
           "type": "boolean"
         },

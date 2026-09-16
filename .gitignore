@@ -63,3 +63,8 @@ dataplane/src/dataplane/_generated/
 
 # trash
 trash/
+
+# The per-run-set summary, because every number in docs/results.md cites it and the
+# parquet it is derived from is not committed. A cited number nobody else can open is
+# not evidence.
+!runs/**/summary.json

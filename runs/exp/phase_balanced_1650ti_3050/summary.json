@@ -1,0 +1,1701 @@
+{
+  "run_ids": [
+    "phase_balanced_1650ti_3050_jsq_s0_heavy_r1",
+    "phase_balanced_1650ti_3050_jsq_s0_heavy_r2",
+    "phase_balanced_1650ti_3050_jsq_s0_heavy_r3",
+    "phase_balanced_1650ti_3050_jsq_s0_mid_r1",
+    "phase_balanced_1650ti_3050_jsq_s0_mid_r2",
+    "phase_balanced_1650ti_3050_jsq_s0_mid_r3",
+    "phase_balanced_1650ti_3050_round_robin_s0_heavy_r1",
+    "phase_balanced_1650ti_3050_round_robin_s0_heavy_r2",
+    "phase_balanced_1650ti_3050_round_robin_s0_heavy_r3",
+    "phase_balanced_1650ti_3050_round_robin_s0_mid_r1",
+    "phase_balanced_1650ti_3050_round_robin_s0_mid_r2",
+    "phase_balanced_1650ti_3050_round_robin_s0_mid_r3",
+    "phase_balanced_1650ti_3050_static_weighted_s0_heavy_r1",
+    "phase_balanced_1650ti_3050_static_weighted_s0_heavy_r2",
+    "phase_balanced_1650ti_3050_static_weighted_s0_heavy_r3",
+    "phase_balanced_1650ti_3050_static_weighted_s0_mid_r1",
+    "phase_balanced_1650ti_3050_static_weighted_s0_mid_r2",
+    "phase_balanced_1650ti_3050_static_weighted_s0_mid_r3",
+    "phase_balanced_1650ti_3050_threshold_s0_heavy_r1",
+    "phase_balanced_1650ti_3050_threshold_s0_heavy_r2",
+    "phase_balanced_1650ti_3050_threshold_s0_heavy_r3",
+    "phase_balanced_1650ti_3050_threshold_s0_mid_r1",
+    "phase_balanced_1650ti_3050_threshold_s0_mid_r2",
+    "phase_balanced_1650ti_3050_threshold_s0_mid_r3",
+    "phase_balanced_1650ti_3050_wjsq_s0_heavy_r1",
+    "phase_balanced_1650ti_3050_wjsq_s0_heavy_r2",
+    "phase_balanced_1650ti_3050_wjsq_s0_heavy_r3",
+    "phase_balanced_1650ti_3050_wjsq_s0_mid_r1",
+    "phase_balanced_1650ti_3050_wjsq_s0_mid_r2",
+    "phase_balanced_1650ti_3050_wjsq_s0_mid_r3"
+  ],
+  "vehicle": [
+    "hardware"
+  ],
+  "R_headline": 2.456,
+  "trace_sha256": [
+    "2bf0d0afe27a870540152365ae24d570c1e9d52e23bd70762c550a13094a647e"
+  ],
+  "gen_seeds": [
+    20260903
+  ],
+  "capability_arms": [],
+  "capability_modes": [
+    "service"
+  ],
+  "scheduler_seeds": [],
+  "arrivals_independent": false,
+  "scheduler_seed_varied": false,
+  "fast_node": "rtx3050",
+  "primary_statistic": "H1 interaction on log mean end-to-end latency, steady-state points",
+  "bootstrap": {
+    "draws": 2000,
+    "seed": 20260915,
+    "method": "repeats resampled jointly across policies, then a circular block bootstrap over arrival positions shared by every policy and repeat",
+    "block_length_requests": {
+      "s0_l2.385": 39,
+      "s0_l3.195": 10
+    }
+  },
+  "steady_state_rule": "transient when last-third mean over first-third mean >= 1.1 and its 95% interval excludes 1",
+  "slo_reference": "fastest pool node's concurrency-1 cost-model cell for the request's bucket",
+  "failures": {},
+  "invalid_runs": {},
+  "load_trend_queue_aware": {
+    "from_lambda": 2.385,
+    "to_lambda": 3.195,
+    "queue_aware_gain_ms": [
+      157.6,
+      209.8
+    ],
+    "wjsq_over_jsq": [
+      0.8661,
+      0.8444
+    ],
+    "lambdas": [
+      2.385,
+      3.195
+    ],
+    "change_ms": 52.2,
+    "change_ms_ci95": [
+      -4.6,
+      110.9
+    ],
+    "change_in_ratio": 0.9749,
+    "change_in_ratio_ci95": [
+      0.9268,
+      1.023
+    ],
+    "reading": "H1's load clause predicts the queue-aware gain shrinks with load: change_ms below zero, change_in_ratio above one"
+  },
+  "points": [
+    {
+      "lambda_rps": 2.385,
+      "staleness_s": 0.0,
+      "block_length_requests": 39,
+      "measured_arrivals": 570,
+      "policies": {
+        "jsq": {
+          "runs": 3,
+          "not_ok": 0,
+          "runs_differ_at_point": false,
+          "requests": 1710,
+          "share_to_fast_node": 0.615,
+          "queue_wait_ms_mean_reference_only": 8.4,
+          "lag1_autocorrelation": 0.0589,
+          "tau_int_requests": 2.1166,
+          "steady_state": {
+            "last_over_first_third": 1.0434,
+            "ci95": [
+              0.9505,
+              1.1445
+            ],
+            "rise_ms": 47.3,
+            "transient": false
+          },
+          "repeats": [
+            1,
+            2,
+            3
+          ],
+          "mean": {
+            "value": 1176.8,
+            "ci95": [
+              1115.2,
+              1241.7
+            ]
+          },
+          "p50": {
+            "value": 1013.1,
+            "ci95": [
+              955.2,
+              1059.1
+            ]
+          },
+          "p95": {
+            "value": 2271.7,
+            "ci95": [
+              2168.4,
+              2393.0
+            ]
+          },
+          "p99": {
+            "value": 2602.1,
+            "ci95": [
+              2431.4,
+              2939.6
+            ]
+          },
+          "ttft_mean": {
+            "value": 139.6,
+            "ci95": [
+              130.3,
+              152.2
+            ]
+          },
+          "ttft_p95": {
+            "value": 312.8,
+            "ci95": [
+              307.7,
+              322.2
+            ]
+          },
+          "tpot_mean": {
+            "value": 10.6,
+            "ci95": [
+              10.0,
+              11.2
+            ]
+          },
+          "slo_e2e_2x": {
+            "value": 0.7918,
+            "ci95": [
+              0.7596,
+              0.824
+            ]
+          },
+          "slo_e2e_5x": {
+            "value": 0.9994,
+            "ci95": [
+              0.9977,
+              1.0
+            ]
+          },
+          "slo_ttft_2x": {
+            "value": 0.6029,
+            "ci95": [
+              0.5877,
+              0.6181
+            ]
+          },
+          "slo_ttft_5x": {
+            "value": 0.6064,
+            "ci95": [
+              0.593,
+              0.6211
+            ]
+          }
+        },
+        "round_robin": {
+          "runs": 3,
+          "not_ok": 0,
+          "runs_differ_at_point": false,
+          "requests": 1710,
+          "share_to_fast_node": 0.5,
+          "queue_wait_ms_mean_reference_only": 376.0,
+          "lag1_autocorrelation": -0.4823,
+          "tau_int_requests": 18.5972,
+          "steady_state": {
+            "last_over_first_third": 1.2288,
+            "ci95": [
+              0.9923,
+              1.5066
+            ],
+            "rise_ms": 308.6,
+            "transient": false
+          },
+          "repeats": [
+            1,
+            2,
+            3
+          ],
+          "mean": {
+            "value": 1858.7,
+            "ci95": [
+              1547.3,
+              2213.7
+            ]
+          },
+          "p50": {
+            "value": 1112.8,
+            "ci95": [
+              1025.9,
+              1240.7
+            ]
+          },
+          "p95": {
+            "value": 5127.4,
+            "ci95": [
+              3578.6,
+              6491.1
+            ]
+          },
+          "p99": {
+            "value": 6737.0,
+            "ci95": [
+              4457.3,
+              6842.2
+            ]
+          },
+          "ttft_mean": {
+            "value": 534.9,
+            "ci95": [
+              300.5,
+              827.0
+            ]
+          },
+          "ttft_p95": {
+            "value": 2897.0,
+            "ci95": [
+              1319.3,
+              4157.6
+            ]
+          },
+          "tpot_mean": {
+            "value": 13.7,
+            "ci95": [
+              12.6,
+              14.7
+            ]
+          },
+          "slo_e2e_2x": {
+            "value": 0.5901,
+            "ci95": [
+              0.5462,
+              0.6392
+            ]
+          },
+          "slo_e2e_5x": {
+            "value": 0.8982,
+            "ci95": [
+              0.8088,
+              0.9731
+            ]
+          },
+          "slo_ttft_2x": {
+            "value": 0.4965,
+            "ci95": [
+              0.486,
+              0.5053
+            ]
+          },
+          "slo_ttft_5x": {
+            "value": 0.4977,
+            "ci95": [
+              0.4895,
+              0.5053
+            ]
+          }
+        },
+        "static_weighted": {
+          "runs": 3,
+          "not_ok": 0,
+          "runs_differ_at_point": false,
+          "requests": 1710,
+          "share_to_fast_node": 0.661,
+          "queue_wait_ms_mean_reference_only": 82.0,
+          "lag1_autocorrelation": 0.212,
+          "tau_int_requests": 8.2949,
+          "steady_state": {
+            "last_over_first_third": 1.123,
+            "ci95": [
+              0.9735,
+              1.312
+            ],
+            "rise_ms": 138.2,
+            "transient": false
+          },
+          "repeats": [
+            1,
+            2,
+            3
+          ],
+          "mean": {
+            "value": 1290.2,
+            "ci95": [
+              1157.7,
+              1456.2
+            ]
+          },
+          "p50": {
+            "value": 1032.1,
+            "ci95": [
+              985.1,
+              1077.5
+            ]
+          },
+          "p95": {
+            "value": 2891.5,
+            "ci95": [
+              2398.8,
+              4012.3
+            ]
+          },
+          "p99": {
+            "value": 4404.1,
+            "ci95": [
+              2879.2,
+              4874.0
+            ]
+          },
+          "ttft_mean": {
+            "value": 204.9,
+            "ci95": [
+              142.8,
+              296.2
+            ]
+          },
+          "ttft_p95": {
+            "value": 845.2,
+            "ci95": [
+              325.0,
+              1882.6
+            ]
+          },
+          "tpot_mean": {
+            "value": 11.1,
+            "ci95": [
+              10.3,
+              12.0
+            ]
+          },
+          "slo_e2e_2x": {
+            "value": 0.7854,
+            "ci95": [
+              0.7281,
+              0.8444
+            ]
+          },
+          "slo_e2e_5x": {
+            "value": 0.9807,
+            "ci95": [
+              0.9473,
+              1.0
+            ]
+          },
+          "slo_ttft_2x": {
+            "value": 0.6111,
+            "ci95": [
+              0.5754,
+              0.6468
+            ]
+          },
+          "slo_ttft_5x": {
+            "value": 0.6327,
+            "ci95": [
+              0.5965,
+              0.669
+            ]
+          }
+        },
+        "threshold": {
+          "runs": 3,
+          "not_ok": 0,
+          "runs_differ_at_point": false,
+          "requests": 1710,
+          "share_to_fast_node": 1.0,
+          "queue_wait_ms_mean_reference_only": 106.0,
+          "lag1_autocorrelation": 0.6958,
+          "tau_int_requests": 19.1812,
+          "steady_state": {
+            "last_over_first_third": 1.0942,
+            "ci95": [
+              1.0154,
+              1.1837
+            ],
+            "rise_ms": 88.3,
+            "transient": false
+          },
+          "repeats": [
+            1,
+            2,
+            3
+          ],
+          "mean": {
+            "value": 1038.0,
+            "ci95": [
+              976.3,
+              1109.8
+            ]
+          },
+          "p50": {
+            "value": 997.6,
+            "ci95": [
+              958.3,
+              1038.9
+            ]
+          },
+          "p95": {
+            "value": 1566.9,
+            "ci95": [
+              1368.3,
+              1825.1
+            ]
+          },
+          "p99": {
+            "value": 1977.9,
+            "ci95": [
+              1598.0,
+              2425.4
+            ]
+          },
+          "ttft_mean": {
+            "value": 143.5,
+            "ci95": [
+              91.3,
+              210.1
+            ]
+          },
+          "ttft_p95": {
+            "value": 618.9,
+            "ci95": [
+              415.0,
+              906.4
+            ]
+          },
+          "tpot_mean": {
+            "value": 9.2,
+            "ci95": [
+              9.0,
+              9.4
+            ]
+          },
+          "slo_e2e_2x": {
+            "value": 0.9526,
+            "ci95": [
+              0.9047,
+              0.9889
+            ]
+          },
+          "slo_e2e_5x": {
+            "value": 1.0,
+            "ci95": [
+              1.0,
+              1.0
+            ]
+          },
+          "slo_ttft_2x": {
+            "value": 0.714,
+            "ci95": [
+              0.6105,
+              0.8099
+            ]
+          },
+          "slo_ttft_5x": {
+            "value": 0.7708,
+            "ci95": [
+              0.6789,
+              0.8568
+            ]
+          }
+        },
+        "wjsq": {
+          "runs": 3,
+          "not_ok": 0,
+          "runs_differ_at_point": false,
+          "requests": 1710,
+          "share_to_fast_node": 0.7,
+          "queue_wait_ms_mean_reference_only": 6.6,
+          "lag1_autocorrelation": 0.1908,
+          "tau_int_requests": 3.2212,
+          "steady_state": {
+            "last_over_first_third": 1.0665,
+            "ci95": [
+              0.9878,
+              1.1513
+            ],
+            "rise_ms": 63.0,
+            "transient": false
+          },
+          "repeats": [
+            1,
+            2,
+            3
+          ],
+          "mean": {
+            "value": 1019.2,
+            "ci95": [
+              965.3,
+              1074.4
+            ]
+          },
+          "p50": {
+            "value": 949.5,
+            "ci95": [
+              928.9,
+              998.3
+            ]
+          },
+          "p95": {
+            "value": 1851.0,
+            "ci95": [
+              1571.8,
+              1982.9
+            ]
+          },
+          "p99": {
+            "value": 2296.7,
+            "ci95": [
+              2056.1,
+              2443.6
+            ]
+          },
+          "ttft_mean": {
+            "value": 114.1,
+            "ci95": [
+              107.7,
+              121.8
+            ]
+          },
+          "ttft_p95": {
+            "value": 305.5,
+            "ci95": [
+              299.0,
+              310.9
+            ]
+          },
+          "tpot_mean": {
+            "value": 9.3,
+            "ci95": [
+              8.8,
+              9.8
+            ]
+          },
+          "slo_e2e_2x": {
+            "value": 0.9251,
+            "ci95": [
+              0.8959,
+              0.9526
+            ]
+          },
+          "slo_e2e_5x": {
+            "value": 1.0,
+            "ci95": [
+              1.0,
+              1.0
+            ]
+          },
+          "slo_ttft_2x": {
+            "value": 0.6702,
+            "ci95": [
+              0.6421,
+              0.6936
+            ]
+          },
+          "slo_ttft_5x": {
+            "value": 0.6819,
+            "ci95": [
+              0.662,
+              0.7
+            ]
+          }
+        }
+      },
+      "h1_status": "defined",
+      "h1_repeats_used": [
+        1,
+        2,
+        3
+      ],
+      "h1_repeats_dropped": {},
+      "h1": {
+        "mean": {
+          "calibration_gain_queue_blind": 568.5,
+          "calibration_gain_queue_blind_ci95": [
+            334.6,
+            824.1
+          ],
+          "calibration_gain_queue_aware": 157.6,
+          "calibration_gain_queue_aware_ci95": [
+            116.4,
+            196.8
+          ],
+          "ratio_static_weighted_over_round_robin": 0.6942,
+          "ratio_static_weighted_over_round_robin_ci95": [
+            0.6169,
+            0.7889
+          ],
+          "ratio_wjsq_over_jsq": 0.8661,
+          "ratio_wjsq_over_jsq_ci95": [
+            0.835,
+            0.8981
+          ],
+          "interaction": 410.9,
+          "ci95": [
+            175.0,
+            668.5
+          ],
+          "excludes_zero": true,
+          "interaction_log": 0.2213,
+          "interaction_log_ci95": [
+            0.0891,
+            0.3458
+          ],
+          "interaction_log_excludes_zero": true,
+          "repeats_used": [
+            1,
+            2,
+            3
+          ]
+        },
+        "p50": {
+          "calibration_gain_queue_blind": 80.7,
+          "calibration_gain_queue_blind_ci95": [
+            9.6,
+            203.2
+          ],
+          "calibration_gain_queue_aware": 63.6,
+          "calibration_gain_queue_aware_ci95": [
+            8.9,
+            108.2
+          ],
+          "ratio_static_weighted_over_round_robin": 0.9274,
+          "ratio_static_weighted_over_round_robin_ci95": [
+            0.8365,
+            0.9909
+          ],
+          "ratio_wjsq_over_jsq": 0.9372,
+          "ratio_wjsq_over_jsq_ci95": [
+            0.8982,
+            0.9907
+          ],
+          "interaction": 17.1,
+          "ci95": [
+            -57.7,
+            157.8
+          ],
+          "excludes_zero": false,
+          "interaction_log": 0.0105,
+          "interaction_log_ci95": [
+            -0.0608,
+            0.135
+          ],
+          "interaction_log_excludes_zero": false,
+          "repeats_used": [
+            1,
+            2,
+            3
+          ]
+        },
+        "p95": {
+          "calibration_gain_queue_blind": 2235.9,
+          "calibration_gain_queue_blind_ci95": [
+            977.6,
+            3009.0
+          ],
+          "calibration_gain_queue_aware": 420.7,
+          "calibration_gain_queue_aware_ci95": [
+            311.2,
+            623.1
+          ],
+          "ratio_static_weighted_over_round_robin": 0.5639,
+          "ratio_static_weighted_over_round_robin_ci95": [
+            0.4857,
+            0.725
+          ],
+          "ratio_wjsq_over_jsq": 0.8148,
+          "ratio_wjsq_over_jsq_ci95": [
+            0.7157,
+            0.8635
+          ],
+          "interaction": 1815.2,
+          "ci95": [
+            484.1,
+            2572.7
+          ],
+          "excludes_zero": true,
+          "interaction_log": 0.368,
+          "interaction_log_ci95": [
+            0.0384,
+            0.5183
+          ],
+          "interaction_log_excludes_zero": true,
+          "repeats_used": [
+            1,
+            2,
+            3
+          ]
+        },
+        "p99": {
+          "calibration_gain_queue_blind": 2332.9,
+          "calibration_gain_queue_blind_ci95": [
+            1353.1,
+            3241.8
+          ],
+          "calibration_gain_queue_aware": 305.3,
+          "calibration_gain_queue_aware_ci95": [
+            121.2,
+            600.3
+          ],
+          "ratio_static_weighted_over_round_robin": 0.6537,
+          "ratio_static_weighted_over_round_robin_ci95": [
+            0.5171,
+            0.7329
+          ],
+          "ratio_wjsq_over_jsq": 0.8827,
+          "ratio_wjsq_over_jsq_ci95": [
+            0.7894,
+            0.9522
+          ],
+          "interaction": 2027.6,
+          "ci95": [
+            1022.8,
+            2962.3
+          ],
+          "excludes_zero": true,
+          "interaction_log": 0.3003,
+          "interaction_log_ci95": [
+            0.0994,
+            0.5547
+          ],
+          "interaction_log_excludes_zero": true,
+          "repeats_used": [
+            1,
+            2,
+            3
+          ]
+        }
+      },
+      "calibration_gain": {
+        "queue_blind": {
+          "status": "defined",
+          "repeats_used": [
+            1,
+            2,
+            3
+          ],
+          "repeats_dropped": {},
+          "single_repeat": false,
+          "mean": {
+            "gain_ms": 568.5,
+            "gain_ms_ci95": [
+              338.5,
+              811.4
+            ],
+            "ratio": 0.6942,
+            "ratio_ci95": [
+              0.6207,
+              0.7861
+            ],
+            "gain_share": 0.3058
+          },
+          "p95": {
+            "gain_ms": 2235.9,
+            "gain_ms_ci95": [
+              1028.3,
+              2960.0
+            ],
+            "ratio": 0.5639,
+            "ratio_ci95": [
+              0.4925,
+              0.7134
+            ],
+            "gain_share": 0.4361
+          }
+        },
+        "queue_aware": {
+          "status": "defined",
+          "repeats_used": [
+            1,
+            2,
+            3
+          ],
+          "repeats_dropped": {},
+          "single_repeat": false,
+          "mean": {
+            "gain_ms": 157.6,
+            "gain_ms_ci95": [
+              119.1,
+              200.4
+            ],
+            "ratio": 0.8661,
+            "ratio_ci95": [
+              0.8338,
+              0.8961
+            ],
+            "gain_share": 0.1339
+          },
+          "p95": {
+            "gain_ms": 420.7,
+            "gain_ms_ci95": [
+              316.9,
+              610.9
+            ],
+            "ratio": 0.8148,
+            "ratio_ci95": [
+              0.7201,
+              0.8616
+            ],
+            "gain_share": 0.1852
+          }
+        }
+      },
+      "utilisation": {
+        "nodes": {
+          "gtx1650ti": {
+            "slots": 4,
+            "capability_tok_s": 103.9472,
+            "cost_model_service_ms_c1": 1248.1,
+            "cost_model_service_ms_c4": 2904.9,
+            "capacity_rps": 1.377
+          },
+          "rtx3050": {
+            "slots": 4,
+            "capability_tok_s": 163.6071,
+            "cost_model_service_ms_c1": 791.7,
+            "cost_model_service_ms_c4": 1130.1,
+            "capacity_rps": 3.5395
+          }
+        },
+        "fast_node": "rtx3050",
+        "slow_node": "gtx1650ti",
+        "pool_capacity_rps": 4.9165,
+        "pool_utilisation": 0.4851,
+        "slow_node_utilisation_at_half_load": 0.866,
+        "static_weighted_nominal_share_to_fast": 0.6115,
+        "cost_model_R_service_c1": 1.5765,
+        "cost_model_R_service_at_slots": 2.5704,
+        "per_cell": {
+          "jsq": {
+            "gtx1650ti": {
+              "transport_residual_ms_mean": 5.7,
+              "arrival_rps": 0.99,
+              "service_ms_mean": 1645.7,
+              "offered_over_capacity": 0.719,
+              "busy_slots": 1.6293,
+              "measured_utilisation": 0.4073
+            },
+            "rtx3050": {
+              "transport_residual_ms_mean": 12.0,
+              "arrival_rps": 1.5828,
+              "service_ms_mean": 854.2,
+              "offered_over_capacity": 0.4472,
+              "busy_slots": 1.352,
+              "measured_utilisation": 0.338
+            }
+          },
+          "round_robin": {
+            "gtx1650ti": {
+              "transport_residual_ms_mean": 5.8,
+              "arrival_rps": 1.2864,
+              "service_ms_mean": 2180.6,
+              "offered_over_capacity": 0.9342,
+              "busy_slots": 2.8051,
+              "measured_utilisation": 0.7013
+            },
+            "rtx3050": {
+              "transport_residual_ms_mean": 15.0,
+              "arrival_rps": 1.2864,
+              "service_ms_mean": 764.0,
+              "offered_over_capacity": 0.3634,
+              "busy_slots": 0.9828,
+              "measured_utilisation": 0.2457
+            }
+          },
+          "static_weighted": {
+            "gtx1650ti": {
+              "transport_residual_ms_mean": 5.8,
+              "arrival_rps": 0.8712,
+              "service_ms_mean": 1807.8,
+              "offered_over_capacity": 0.6326,
+              "busy_slots": 1.5749,
+              "measured_utilisation": 0.3937
+            },
+            "rtx3050": {
+              "transport_residual_ms_mean": 12.5,
+              "arrival_rps": 1.7017,
+              "service_ms_mean": 885.7,
+              "offered_over_capacity": 0.4808,
+              "busy_slots": 1.5072,
+              "measured_utilisation": 0.3768
+            }
+          },
+          "threshold": {
+            "gtx1650ti": {
+              "transport_residual_ms_mean": null,
+              "arrival_rps": 0.0,
+              "service_ms_mean": null,
+              "offered_over_capacity": 0.0,
+              "busy_slots": 0.0,
+              "measured_utilisation": 0.0
+            },
+            "rtx3050": {
+              "transport_residual_ms_mean": 11.1,
+              "arrival_rps": 2.5728,
+              "service_ms_mean": 920.8,
+              "offered_over_capacity": 0.7269,
+              "busy_slots": 2.369,
+              "measured_utilisation": 0.5923
+            }
+          },
+          "wjsq": {
+            "gtx1650ti": {
+              "transport_residual_ms_mean": 5.5,
+              "arrival_rps": 0.7719,
+              "service_ms_mean": 1310.7,
+              "offered_over_capacity": 0.5605,
+              "busy_slots": 1.0117,
+              "measured_utilisation": 0.2529
+            },
+            "rtx3050": {
+              "transport_residual_ms_mean": 11.5,
+              "arrival_rps": 1.801,
+              "service_ms_mean": 870.9,
+              "offered_over_capacity": 0.5088,
+              "busy_slots": 1.5685,
+              "measured_utilisation": 0.3921
+            }
+          }
+        }
+      },
+      "operating_R_steady_cells": {
+        "buckets": {
+          "p176_o88": {
+            "n_fast": 1786,
+            "n_slow": 809,
+            "R_service": 2.0645,
+            "R_prefill": 8.1358,
+            "R_decode": 1.7739
+          },
+          "p192_o96": {
+            "n_fast": 2392,
+            "n_slow": 1073,
+            "R_service": 1.9989,
+            "R_prefill": 8.1022,
+            "R_decode": 1.7369
+          },
+          "p208_o104": {
+            "n_fast": 1767,
+            "n_slow": 723,
+            "R_service": 2.1542,
+            "R_prefill": 8.3163,
+            "R_decode": 1.8842
+          }
+        },
+        "pooled": {
+          "R_service": 2.0596,
+          "R_prefill": 8.1606,
+          "R_decode": 1.7875
+        }
+      }
+    },
+    {
+      "lambda_rps": 3.195,
+      "staleness_s": 0.0,
+      "block_length_requests": 10,
+      "measured_arrivals": 565,
+      "policies": {
+        "jsq": {
+          "runs": 3,
+          "not_ok": 0,
+          "runs_differ_at_point": false,
+          "requests": 1695,
+          "share_to_fast_node": 0.647,
+          "queue_wait_ms_mean_reference_only": 47.8,
+          "lag1_autocorrelation": 0.0135,
+          "tau_int_requests": 1.3057,
+          "steady_state": {
+            "last_over_first_third": 1.0481,
+            "ci95": [
+              0.9498,
+              1.15
+            ],
+            "rise_ms": 59.5,
+            "transient": false
+          },
+          "repeats": [
+            1,
+            2,
+            3
+          ],
+          "mean": {
+            "value": 1348.3,
+            "ci95": [
+              1288.7,
+              1407.0
+            ]
+          },
+          "p50": {
+            "value": 1072.2,
+            "ci95": [
+              1038.1,
+              1108.0
+            ]
+          },
+          "p95": {
+            "value": 2629.3,
+            "ci95": [
+              2480.1,
+              2815.4
+            ]
+          },
+          "p99": {
+            "value": 3232.2,
+            "ci95": [
+              2977.0,
+              4182.7
+            ]
+          },
+          "ttft_mean": {
+            "value": 177.1,
+            "ci95": [
+              152.7,
+              206.5
+            ]
+          },
+          "ttft_p95": {
+            "value": 545.7,
+            "ci95": [
+              325.1,
+              743.9
+            ]
+          },
+          "tpot_mean": {
+            "value": 12.0,
+            "ci95": [
+              11.5,
+              12.5
+            ]
+          },
+          "slo_e2e_2x": {
+            "value": 0.7174,
+            "ci95": [
+              0.6909,
+              0.7446
+            ]
+          },
+          "slo_e2e_5x": {
+            "value": 0.9941,
+            "ci95": [
+              0.9853,
+              1.0
+            ]
+          },
+          "slo_ttft_2x": {
+            "value": 0.574,
+            "ci95": [
+              0.5398,
+              0.6053
+            ]
+          },
+          "slo_ttft_5x": {
+            "value": 0.5994,
+            "ci95": [
+              0.5687,
+              0.6265
+            ]
+          }
+        },
+        "round_robin": {
+          "runs": 3,
+          "not_ok": 0,
+          "runs_differ_at_point": false,
+          "requests": 1695,
+          "share_to_fast_node": 0.501,
+          "queue_wait_ms_mean_reference_only": 4776.6,
+          "lag1_autocorrelation": -0.4999,
+          "tau_int_requests": 1.0,
+          "steady_state": {
+            "last_over_first_third": 5.2334,
+            "ci95": [
+              4.6184,
+              5.9619
+            ],
+            "rise_ms": 8837.5,
+            "transient": true
+          },
+          "repeats": [
+            1,
+            2,
+            3
+          ],
+          "mean": {
+            "value": 6448.5,
+            "ci95": [
+              5453.1,
+              7472.8
+            ]
+          },
+          "p50": {
+            "value": 1365.2,
+            "ci95": [
+              1237.1,
+              1634.2
+            ]
+          },
+          "p95": {
+            "value": 21315.2,
+            "ci95": [
+              20327.0,
+              23150.6
+            ]
+          },
+          "p99": {
+            "value": 24029.5,
+            "ci95": [
+              21810.2,
+              24738.4
+            ]
+          },
+          "ttft_mean": {
+            "value": 4939.4,
+            "ci95": [
+              3960.6,
+              5966.2
+            ]
+          },
+          "ttft_p95": {
+            "value": 19046.3,
+            "ci95": [
+              18046.8,
+              21027.6
+            ]
+          },
+          "tpot_mean": {
+            "value": 15.6,
+            "ci95": [
+              15.3,
+              16.0
+            ]
+          },
+          "slo_e2e_2x": {
+            "value": 0.5068,
+            "ci95": [
+              0.4997,
+              0.5156
+            ]
+          },
+          "slo_e2e_5x": {
+            "value": 0.6236,
+            "ci95": [
+              0.5723,
+              0.6797
+            ]
+          },
+          "slo_ttft_2x": {
+            "value": 0.4897,
+            "ci95": [
+              0.4767,
+              0.4991
+            ]
+          },
+          "slo_ttft_5x": {
+            "value": 0.4914,
+            "ci95": [
+              0.4785,
+              0.5009
+            ]
+          }
+        },
+        "static_weighted": {
+          "runs": 3,
+          "not_ok": 0,
+          "runs_differ_at_point": false,
+          "requests": 1695,
+          "share_to_fast_node": 0.66,
+          "queue_wait_ms_mean_reference_only": 248.9,
+          "lag1_autocorrelation": 0.1767,
+          "tau_int_requests": 9.8491,
+          "steady_state": {
+            "last_over_first_third": 1.214,
+            "ci95": [
+              1.0122,
+              1.4507
+            ],
+            "rise_ms": 267.4,
+            "transient": true
+          },
+          "repeats": [
+            1,
+            2,
+            3
+          ],
+          "mean": {
+            "value": 1576.4,
+            "ci95": [
+              1421.3,
+              1745.2
+            ]
+          },
+          "p50": {
+            "value": 1083.3,
+            "ci95": [
+              1041.3,
+              1129.2
+            ]
+          },
+          "p95": {
+            "value": 3994.1,
+            "ci95": [
+              3408.3,
+              5312.0
+            ]
+          },
+          "p99": {
+            "value": 6087.8,
+            "ci95": [
+              4510.5,
+              6905.3
+            ]
+          },
+          "ttft_mean": {
+            "value": 371.6,
+            "ci95": [
+              271.0,
+              489.2
+            ]
+          },
+          "ttft_p95": {
+            "value": 1723.4,
+            "ci95": [
+              1213.2,
+              3155.8
+            ]
+          },
+          "tpot_mean": {
+            "value": 12.4,
+            "ci95": [
+              11.7,
+              13.1
+            ]
+          },
+          "slo_e2e_2x": {
+            "value": 0.7263,
+            "ci95": [
+              0.6779,
+              0.777
+            ]
+          },
+          "slo_e2e_5x": {
+            "value": 0.9487,
+            "ci95": [
+              0.9133,
+              0.9782
+            ]
+          },
+          "slo_ttft_2x": {
+            "value": 0.544,
+            "ci95": [
+              0.4985,
+              0.5912
+            ]
+          },
+          "slo_ttft_5x": {
+            "value": 0.5646,
+            "ci95": [
+              0.5215,
+              0.6088
+            ]
+          }
+        },
+        "threshold": {
+          "runs": 3,
+          "not_ok": 0,
+          "runs_differ_at_point": false,
+          "requests": 1695,
+          "share_to_fast_node": 1.0,
+          "queue_wait_ms_mean_reference_only": 658.0,
+          "lag1_autocorrelation": 0.9581,
+          "tau_int_requests": 31.564,
+          "steady_state": {
+            "last_over_first_third": 1.2711,
+            "ci95": [
+              1.0915,
+              1.4889
+            ],
+            "rise_ms": 290.3,
+            "transient": true
+          },
+          "repeats": [
+            1,
+            2,
+            3
+          ],
+          "mean": {
+            "value": 1614.8,
+            "ci95": [
+              1388.1,
+              1854.3
+            ]
+          },
+          "p50": {
+            "value": 1282.5,
+            "ci95": [
+              1141.0,
+              1506.1
+            ]
+          },
+          "p95": {
+            "value": 3783.6,
+            "ci95": [
+              2804.4,
+              4119.5
+            ]
+          },
+          "p99": {
+            "value": 4234.5,
+            "ci95": [
+              3755.2,
+              4510.6
+            ]
+          },
+          "ttft_mean": {
+            "value": 696.9,
+            "ci95": [
+              470.4,
+              932.4
+            ]
+          },
+          "ttft_p95": {
+            "value": 2867.2,
+            "ci95": [
+              1865.2,
+              3185.2
+            ]
+          },
+          "tpot_mean": {
+            "value": 9.4,
+            "ci95": [
+              9.3,
+              9.6
+            ]
+          },
+          "slo_e2e_2x": {
+            "value": 0.6496,
+            "ci95": [
+              0.5357,
+              0.7599
+            ]
+          },
+          "slo_e2e_5x": {
+            "value": 0.9599,
+            "ci95": [
+              0.9168,
+              0.9929
+            ]
+          },
+          "slo_ttft_2x": {
+            "value": 0.3622,
+            "ci95": [
+              0.2667,
+              0.459
+            ]
+          },
+          "slo_ttft_5x": {
+            "value": 0.4177,
+            "ci95": [
+              0.3115,
+              0.518
+            ]
+          }
+        },
+        "wjsq": {
+          "runs": 3,
+          "not_ok": 0,
+          "runs_differ_at_point": false,
+          "requests": 1695,
+          "share_to_fast_node": 0.712,
+          "queue_wait_ms_mean_reference_only": 35.0,
+          "lag1_autocorrelation": 0.0843,
+          "tau_int_requests": 4.5463,
+          "steady_state": {
+            "last_over_first_third": 1.0876,
+            "ci95": [
+              0.9906,
+              1.1847
+            ],
+            "rise_ms": 89.2,
+            "transient": false
+          },
+          "repeats": [
+            1,
+            2,
+            3
+          ],
+          "mean": {
+            "value": 1138.5,
+            "ci95": [
+              1089.5,
+              1188.9
+            ]
+          },
+          "p50": {
+            "value": 1026.3,
+            "ci95": [
+              979.0,
+              1052.5
+            ]
+          },
+          "p95": {
+            "value": 2037.1,
+            "ci95": [
+              1927.9,
+              2177.4
+            ]
+          },
+          "p99": {
+            "value": 2437.8,
+            "ci95": [
+              2312.6,
+              2963.5
+            ]
+          },
+          "ttft_mean": {
+            "value": 141.6,
+            "ci95": [
+              125.0,
+              160.4
+            ]
+          },
+          "ttft_p95": {
+            "value": 357.8,
+            "ci95": [
+              313.1,
+              452.4
+            ]
+          },
+          "tpot_mean": {
+            "value": 10.2,
+            "ci95": [
+              9.9,
+              10.6
+            ]
+          },
+          "slo_e2e_2x": {
+            "value": 0.856,
+            "ci95": [
+              0.8265,
+              0.885
+            ]
+          },
+          "slo_e2e_5x": {
+            "value": 0.9988,
+            "ci95": [
+              0.9959,
+              1.0
+            ]
+          },
+          "slo_ttft_2x": {
+            "value": 0.5894,
+            "ci95": [
+              0.544,
+              0.6348
+            ]
+          },
+          "slo_ttft_5x": {
+            "value": 0.6283,
+            "ci95": [
+              0.5905,
+              0.6643
+            ]
+          }
+        }
+      },
+      "h1_status": "undefined: transient cell(s) round_robin, static_weighted",
+      "h1_repeats_used": [],
+      "h1_repeats_dropped": {},
+      "h1": {},
+      "calibration_gain": {
+        "queue_blind": {
+          "status": "undefined: transient cell(s) round_robin, static_weighted"
+        },
+        "queue_aware": {
+          "status": "defined",
+          "repeats_used": [
+            1,
+            2,
+            3
+          ],
+          "repeats_dropped": {},
+          "single_repeat": false,
+          "mean": {
+            "gain_ms": 209.8,
+            "gain_ms_ci95": [
+              170.4,
+              248.4
+            ],
+            "ratio": 0.8444,
+            "ratio_ci95": [
+              0.82,
+              0.8704
+            ],
+            "gain_share": 0.1556
+          },
+          "p95": {
+            "gain_ms": 592.3,
+            "gain_ms_ci95": [
+              453.6,
+              762.6
+            ],
+            "ratio": 0.7748,
+            "ratio_ci95": [
+              0.7276,
+              0.8235
+            ],
+            "gain_share": 0.2252
+          }
+        }
+      },
+      "utilisation": {
+        "nodes": {
+          "gtx1650ti": {
+            "slots": 4,
+            "capability_tok_s": 103.9472,
+            "cost_model_service_ms_c1": 1248.1,
+            "cost_model_service_ms_c4": 2904.9,
+            "capacity_rps": 1.377
+          },
+          "rtx3050": {
+            "slots": 4,
+            "capability_tok_s": 163.6071,
+            "cost_model_service_ms_c1": 791.7,
+            "cost_model_service_ms_c4": 1130.1,
+            "capacity_rps": 3.5395
+          }
+        },
+        "fast_node": "rtx3050",
+        "slow_node": "gtx1650ti",
+        "pool_capacity_rps": 4.9165,
+        "pool_utilisation": 0.6499,
+        "slow_node_utilisation_at_half_load": 1.1601,
+        "static_weighted_nominal_share_to_fast": 0.6115,
+        "cost_model_R_service_c1": 1.5765,
+        "cost_model_R_service_at_slots": 2.5704,
+        "per_cell": {
+          "jsq": {
+            "gtx1650ti": {
+              "transport_residual_ms_mean": 5.6,
+              "arrival_rps": 1.2318,
+              "service_ms_mean": 1982.5,
+              "offered_over_capacity": 0.8946,
+              "busy_slots": 2.4421,
+              "measured_utilisation": 0.6105
+            },
+            "rtx3050": {
+              "transport_residual_ms_mean": 9.8,
+              "arrival_rps": 2.2539,
+              "service_ms_mean": 914.9,
+              "offered_over_capacity": 0.6368,
+              "busy_slots": 2.062,
+              "measured_utilisation": 0.5155
+            }
+          },
+          "round_robin": {
+            "gtx1650ti": {
+              "transport_residual_ms_mean": 5.9,
+              "arrival_rps": 1.7398,
+              "service_ms_mean": 2485.6,
+              "offered_over_capacity": 1.2634,
+              "busy_slots": 4.3243,
+              "measured_utilisation": 1.0811
+            },
+            "rtx3050": {
+              "transport_residual_ms_mean": 10.8,
+              "arrival_rps": 1.7459,
+              "service_ms_mean": 844.1,
+              "offered_over_capacity": 0.4933,
+              "busy_slots": 1.4737,
+              "measured_utilisation": 0.3684
+            }
+          },
+          "static_weighted": {
+            "gtx1650ti": {
+              "transport_residual_ms_mean": 5.8,
+              "arrival_rps": 1.1845,
+              "service_ms_mean": 2091.8,
+              "offered_over_capacity": 0.8602,
+              "busy_slots": 2.4778,
+              "measured_utilisation": 0.6194
+            },
+            "rtx3050": {
+              "transport_residual_ms_mean": 11.5,
+              "arrival_rps": 2.3012,
+              "service_ms_mean": 919.4,
+              "offered_over_capacity": 0.6501,
+              "busy_slots": 2.1158,
+              "measured_utilisation": 0.5289
+            }
+          },
+          "threshold": {
+            "gtx1650ti": {
+              "transport_residual_ms_mean": null,
+              "arrival_rps": 0.0,
+              "service_ms_mean": null,
+              "offered_over_capacity": 0.0,
+              "busy_slots": 0.0,
+              "measured_utilisation": 0.0
+            },
+            "rtx3050": {
+              "transport_residual_ms_mean": 10.3,
+              "arrival_rps": 3.4857,
+              "service_ms_mean": 946.4,
+              "offered_over_capacity": 0.9848,
+              "busy_slots": 3.2989,
+              "measured_utilisation": 0.8247
+            }
+          },
+          "wjsq": {
+            "gtx1650ti": {
+              "transport_residual_ms_mean": 5.4,
+              "arrival_rps": 1.0035,
+              "service_ms_mean": 1557.5,
+              "offered_over_capacity": 0.7288,
+              "busy_slots": 1.563,
+              "measured_utilisation": 0.3908
+            },
+            "rtx3050": {
+              "transport_residual_ms_mean": 10.2,
+              "arrival_rps": 2.4821,
+              "service_ms_mean": 907.4,
+              "offered_over_capacity": 0.7013,
+              "busy_slots": 2.2523,
+              "measured_utilisation": 0.5631
+            }
+          }
+        }
+      },
+      "operating_R_steady_cells": {
+        "buckets": {
+          "p176_o88": {
+            "n_fast": 710,
+            "n_slow": 328,
+            "R_service": 1.975,
+            "R_prefill": 7.8286,
+            "R_decode": 1.6952
+          },
+          "p192_o96": {
+            "n_fast": 931,
+            "n_slow": 437,
+            "R_service": 1.9102,
+            "R_prefill": 7.8086,
+            "R_decode": 1.6432
+          },
+          "p208_o104": {
+            "n_fast": 662,
+            "n_slow": 322,
+            "R_service": 2.0242,
+            "R_prefill": 8.0921,
+            "R_decode": 1.7508
+          }
+        },
+        "pooled": {
+          "R_service": 1.9669,
+          "R_prefill": 7.9102,
+          "R_decode": 1.694
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,101 @@
+{
+  "_comment": "C3 of the audit, the hardware check. The three shape traces at matched load rather than matched req/s, as two controls: slow_node_utilisation 0.7 puts the 1650 Ti at 0.7 of its own four-slot capacity under an even split on every shape, and pool_utilisation 0.45 matches the summed capacity. At 2.4 req/s the first campaigns had the 1650 Ti at 0.68, 0.87 and 0.98 under RoundRobin on generation, balanced and summarisation, so load and R moved together. Shapes interleave within each point and share each repeat's arrival seed (D2). Run this after the simulator has been checked on the held-out shape runs, or as the one hardware point if machine time allows.",
+  "tag": "matched_1650ti_3050",
+  "workloads": [
+    {
+      "name": "generation",
+      "trace_config": "dataplane/configs/trace_generation_1b.json",
+      "out_root": "runs/exp/matched_generation_1650ti_3050"
+    },
+    {
+      "name": "balanced",
+      "trace_config": "dataplane/configs/trace_balanced_1b.json",
+      "out_root": "runs/exp/matched_balanced_1650ti_3050"
+    },
+    {
+      "name": "summarisation",
+      "trace_config": "dataplane/configs/trace_summarisation_1b.json",
+      "out_root": "runs/exp/matched_summarisation_1650ti_3050"
+    }
+  ],
+  "nodes": [
+    {
+      "node_id": "gtx1650ti",
+      "host": "fedora",
+      "role": "pool",
+      "engine": "llamacpp",
+      "engine_version": "b10569+p1+cuda13.2",
+      "model": "Llama-3.2-1B-Instruct",
+      "quant": "Q4_K_M",
+      "gpu": "NVIDIA GeForce GTX 1650 Ti",
+      "driver": "580.178.04",
+      "prefix_caching": false,
+      "max_batch": 4,
+      "engine_config": {
+        "ngl": 99,
+        "threads": 6,
+        "parallel": 4
+      }
+    },
+    {
+      "node_id": "rtx3050",
+      "host": "rtx3050",
+      "role": "pool",
+      "engine": "llamacpp",
+      "engine_version": "b10569+p1+cuda13.2",
+      "model": "Llama-3.2-1B-Instruct",
+      "quant": "Q4_K_M",
+      "gpu": "NVIDIA GeForce RTX 3050 6GB Laptop GPU",
+      "driver": "580.178.04",
+      "prefix_caching": false,
+      "max_batch": 4,
+      "engine_config": {
+        "ngl": 99,
+        "threads": 6,
+        "parallel": 4
+      }
+    }
+  ],
+  "workers": {
+    "gtx1650ti": {
+      "endpoint": "10.42.0.1:50061",
+      "logs": "runs/worker_logs"
+    },
+    "rtx3050": {
+      "endpoint": "10.42.0.12:50061",
+      "logs": "divyansh@10.42.0.12:Documents/capstone/runs/worker_logs"
+    }
+  },
+  "cost_model_snapshots": {
+    "gtx1650ti": "cm_gtx1650ti_ngl99_p4_q4km_llama32_1b_20260831T153652Z_008",
+    "rtx3050": "cm_rtx3050_ngl99_p4_q4km_llama32_1b_20260914T200053Z_008"
+  },
+  "threshold_t": 130.0,
+  "warmup_s": 10.0,
+  "settle_s": 20.0,
+  "scheduler_port": 50051,
+  "bind": "0.0.0.0:50071",
+  "advertise": "10.42.0.1",
+  "policies": [
+    "round_robin",
+    "jsq",
+    "static_weighted",
+    "wjsq",
+    "threshold"
+  ],
+  "points": [
+    {
+      "name": "slow70",
+      "slow_node_utilisation": 0.7
+    }
+  ],
+  "staleness_s": [
+    0.0
+  ],
+  "repeats": 3,
+  "repeat_seeds": [
+    20260931,
+    20260932,
+    20260933
+  ]
+}

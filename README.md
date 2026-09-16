@@ -132,18 +132,27 @@ the engine's shared libraries. A pin a running node cannot prove is not a pin.
 
 ## What we have found
 
-**Throughput drift belongs to a particular kind of node.** τ = 69.5 s on the CPU class
-(*r²* = 0.989, integrated 89.0 s, 1/e crossing 72.1 s), and nothing measurable on either GPU
-class. The instrument limit explains the difference: a node whose τ is shorter than about
-five service times cannot show its own drift, and the GPU classes are too fast to resolve
-theirs with this workload. That last part is the reusable half. It tells anyone repeating
-this what their hardware has to be able to do before the question is even askable.
+**No node class has a resolved τ yet.** On the CPU 8B class the point estimate is τ = 69.5 s
+(*r²* = 0.989, integrated 89.0 s, 1/e crossing 72.1 s), but the calibration's own record
+marks it `tau_resolved: false`: 31 windows of 48 s, a segment only 21 τ long, and a fit that
+rests on two or three lags. `tools/tau_interval.py` puts a block-bootstrap interval on it:
+lag-1 correlation 0.48 [0.03, 0.60], τ 31 to 91 s, and censored at one window in 66% of
+draws. Removing a linear trend (throughput fell 2.3% across the segment) moves the point to
+61.8 s. So the number is an estimate of an upper-bound kind, not a measurement, and the
+80-minute segment in `calibration_1b_cpu.json` is how we intend to resolve it. On both GPU
+classes τ is censored at the 5 s floor. The instrument limit is still the reusable half: a
+node whose τ is shorter than about five service times cannot show its own drift.
 
-**Batching buys nothing on this card.** Per-request decode falls almost exactly as 1/c:
-143 / 71 / 58 / 39 tok/s at concurrency 1 through 4. Multiply those back out and aggregate
-decode throughput is constant. So on a 4 GB consumer GPU, concurrency does not buy
-throughput, and the effects the policies compete over here are queueing effects rather than
-throughput effects. That is a result about the hardware class the study is *about*.
+**Batching buys some throughput, and a different amount on each card.** An earlier version
+of this section said aggregate decode throughput was constant in concurrency on the 1650 Ti.
+The committed cost models used by every hardware run say otherwise. On the 1650 Ti snapshot
+per-request decode goes from about 140 to 147 tok/s at one slot to 67 to 70 at four in five
+of six cells, which is about 1.9x aggregate (1.4x in the one cell measured with 120 samples).
+On the RTX 3050 it goes from about 170 to 120, which is about 2.85x. The two cards differ
+in how much batching helps, so their gap at four slots is wider than at one: R on service
+time for the anchor trace's mix is 1.79 at one slot and 3.0 at four
+(`tools/cell_intervals.py`). The capability the policies route on comes from the one-slot
+cell, which is the least heterogeneous number the snapshots contain.
 
 **Prefill is flat in concurrency, but only under arrivals that are not synchronised.** The
 anchors measure it at 179 / 267 / 280 / 189 ms across batch sizes 1 to 4 for prompts under
@@ -185,9 +194,16 @@ prompt-to-output ratio never varied. Varying it is the experiment.
 **The admissible envelope is `prompt ≤ 512, output ≤ 128`**, with the load band at
 **1.03 to 1.30 req/s** on a one-node pool.
 
-**The simulator agrees with the hardware at all four anchors.** F-23 asks for three or more
-operating points inside ±25% on p50 and p95, and the observed error is −7.8% to −19.4% on
-p50 across 0.72 to 1.98 req/s, with the worst of the eight p50 and p95 comparisons at 21.7%.
+**The simulator agrees with the hardware at the single-node anchors, in sample.** F-23 asks
+for three or more operating points inside ±25% on p50 and p95. The p50 error is −16.5% to
+−19.4% at the three steady-state anchors (0.72 to 1.305 req/s) and −7.8% at 1.98 req/s. That
+last point is transient queue filling, so its percentiles are not quoted beside the others,
+and the "worst of eight comparisons, 21.7%" figure we used to give included its p95. Two
+limits apply to all of it. The fixes below were chosen while watching this same error, so
+the check is in sample. And it is a check on absolute latency per policy, which a simulator
+can pass while getting a 10 to 18% difference between two policies wrong; the two-node
+validation is being redefined to test those contrasts on the shape runs, which played no
+part in building the simulator.
 Getting there took recollecting the anchors against the recalibrated cost model rather than
 the superseded one they were first served by: parameterised from the old table the same
 simulator ran −58.7% to −93.8%, which was a statement about our calibration grid and not
@@ -208,8 +224,8 @@ concurrency changing *during* a request rather than service-time noise, which th
 already models as a queueing effect. So the residual is a queueing question and not a
 service-model one.
 
-*R* is currently **2.00× configured and 1.00× deployable**. That gap is the whole of what is
-left, and it is a hardware problem rather than a code one.
+The first real heterogeneous pair (GTX 1650 Ti and RTX 3050 laptops) is measured, and its
+results, with what they do and do not support, are in [`docs/writing-brief.md`](docs/writing-brief.md).
 
 ---
 
@@ -305,12 +321,17 @@ and the only thing exposed to the LAN.
 ~/opt/llama.cpp/b10569-cuda/bin/llama-server \
   --host 127.0.0.1 --port 18080 \
   -m ~/models/gguf/Llama-3.2-1B-Instruct-Q4_K_M.gguf \
-  -ngl 99 --threads 6 --parallel 4 -c 55296
+  -ngl 99 --threads 6 --parallel 4 -c 55296 --cache-ram 0
 
 uv run worker --node-id gtx1650ti --engine http://127.0.0.1:18080 \
   --bind 0.0.0.0:50061 --scheduler 10.42.0.1:50051 --slots 4 \
   --engine-version b10569+p1+cuda13.2 --log-dir runs/exp/<run_id>
 ```
+
+`--cache-ram 0` turns off llama-server's host-side prompt cache, which is 8 GiB by default
+and filled host memory during the first pair's shape campaigns. `tools/hw_runs.py` reads each
+engine's command line before every run, records it in the manifest, and warns when this flag
+is missing.
 
 `-c 55296` is 13824 tokens per slot. Without it llama-server sizes the context to fit the
 card's VRAM, so the same command gave the 4 GB 1650 Ti 13824 tokens per slot and the 6 GB
@@ -323,7 +344,7 @@ invariant exists to keep out of H3.
 
 **For a `tools/hw_runs.py` campaign, every worker logs to `~/Documents/capstone/runs/worker_logs`**
 (`--log-dir ~/Documents/capstone/runs/worker_logs`), on whichever host it runs. That is
-where `hw_mpr2_lan.json` looks for each node's log, and the driver copies it into the run
+where `hw_mpr2_lan_3050.json` looks for each node's log, and the driver copies it into the run
 directory after every run.
 
 For a run by hand, all three processes must log into the same run directory. `replay --out runs/exp`
@@ -377,8 +398,8 @@ manifest, starts a fresh scheduler per run, replays, stops the scheduler, pulls 
 worker log back over rsync, and writes the post-run manifest:
 
 ```bash
-uv run --project dataplane python tools/hw_runs.py dataplane/configs/hw_mpr2_lan.json --dry-run
-uv run --project dataplane python tools/hw_runs.py dataplane/configs/hw_mpr2_lan.json \
+uv run --project dataplane python tools/hw_runs.py dataplane/configs/hw_mpr2_lan_3050.json --dry-run
+uv run --project dataplane python tools/hw_runs.py dataplane/configs/hw_mpr2_lan_3050.json \
   --clock-sync clock_sync.json
 ```
 

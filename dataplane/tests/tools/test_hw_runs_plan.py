@@ -400,3 +400,137 @@ def test_trace_for_a_seeded_workload_needs_a_seed_and_a_fixed_one_does_not(tmp_p
     w = hw_runs.Workload(name="", out_root=tmp_path, trace=path, trace_sha256=sha)
     got = hw_runs.trace_for(w, None)
     assert (got.path, got.sha256, got.header["gen_seed"]) == (path, sha, cfg["gen_seed"])
+
+
+# ------------------------------------------------------------------- capability arms
+
+
+def _arms(tmp_path, arms: list[dict], **over) -> hw_runs.Campaign:
+    return _campaign(tmp_path, capability_arms=arms, **over)
+
+
+def test_an_arm_that_sets_something_no_policy_reads_is_refused(tmp_path) -> None:
+    """An arm is a setting of what the calibrated policies are told, and nothing else. A key
+    the control plane never reads would be recorded in the manifest and change nothing about
+    the run, which is a difference the run set would show and the pool would not.
+
+    Built as an `Arm` rather than from a config file: `Campaign.from_dict` drops keys outside
+    `ARM_KEYS` while parsing, so a config that misspells one reaches here looking empty.
+    """
+    c = _campaign(tmp_path)
+    c.arms = [hw_runs.Arm(name="a", config={"ngl": 40, "capability_override": {"rtx3050": 1.0}})]
+    _refused(c, r"capability arm 'a' sets \['ngl'\]")
+
+
+def test_an_arms_keys_are_the_ones_the_control_plane_reads() -> None:
+    assert set(hw_runs.ARM_KEYS) == {
+        "capability_override",
+        "capability_concurrency",
+        "capability_mode",
+        "ect_mode",
+        "ect_prior_output_len",
+        "threshold_t",
+    }
+
+
+def test_an_arm_that_names_a_policy_the_campaign_does_not_run_is_refused(tmp_path) -> None:
+    _refused(
+        _arms(tmp_path, [{"name": "a", "policies": ["jsq", "sita"]}], policies=["jsq", "wjsq"]),
+        r"capability arm 'a' names \['sita'\]",
+    )
+
+
+def test_duplicate_arm_names_are_refused(tmp_path) -> None:
+    _refused(_arms(tmp_path, [{"name": "cap157"}, {"name": "cap157"}]), "names must be distinct")
+
+
+def test_an_unnamed_arm_is_refused_only_among_several(tmp_path) -> None:
+    """One unnamed arm is the campaign's own setting and leaves run ids alone. Two arms where
+    one has no name would write both of them into the same run ids."""
+    _refused(_arms(tmp_path, [{"name": "cap157"}, {}]), "every arm in a multi-arm campaign")
+    _check(_arms(tmp_path, [{}]))
+
+
+def test_the_committed_ablation_campaign_passes_every_check(tmp_path) -> None:
+    d = json.loads((CONFIGS / "hw_calibration_ablation_3050.json").read_text())
+    d["trace_config"] = str(CONFIGS / "trace_anchor_1b.json")
+    d["out_root"] = str(tmp_path / "out")
+    c = hw_runs.Campaign.from_dict(d)
+    _check(c)
+    assert len(c.arms) > 1
+    runs = hw_runs.plan(c)
+    assert len({r.run_id for r in runs}) == len(runs)
+    for r in runs:
+        assert r.arm.name in r.run_id
+        assert r.arm.policies is None or r.policy in r.arm.policies
+
+
+def test_what_the_policies_are_told_reaches_the_manifest(tmp_path, monkeypatch) -> None:
+    """The five campaign-level settings and the arm's own. A run set has to be able to tell a
+    capability-ratio arm from the baseline without the campaign file beside it."""
+    monkeypatch.setattr(hw_runs, "REPO_ROOT", tmp_path / "repo")
+    c = _arms(
+        tmp_path,
+        [{"name": "cap250", "capability_override": {"gtx1650ti": 103.9, "rtx3050": 259.9}}],
+        capability_mode="decode",
+        capability_override={"gtx1650ti": 1.0, "rtx3050": 2.0},
+        capability_concurrency=4,
+        ect_mode="prior",
+        ect_prior_output_len=64,
+        policies=["wjsq"],
+        repeats=1,
+        repeat_seeds=[5],
+    )
+    run = hw_runs.plan(c)[0]
+    trace = hw_runs.trace_for(run.workload, run.gen_seed)
+    cfg = hw_runs.pre_run_manifest(c, run, trace.header, trace)["config"]
+
+    assert cfg["capability_mode"] == "decode"
+    assert cfg["capability_concurrency"] == 4
+    assert cfg["ect_mode"] == "prior"
+    assert cfg["ect_prior_output_len"] == 64
+    assert cfg["capability_arm"] == "cap250"
+    # The arm's own setting wins over the campaign's, which is the whole point of an arm.
+    assert cfg["capability_override"] == {"gtx1650ti": 103.9, "rtx3050": 259.9}
+    assert run.run_id.endswith("_wjsq_cap250_s0_u20_r1")
+
+
+def test_a_campaign_that_tells_the_policies_nothing_extra_records_nothing_extra(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(hw_runs, "REPO_ROOT", tmp_path / "repo")
+    c = _campaign(tmp_path, repeats=1, repeat_seeds=[5])
+    run = hw_runs.plan(c)[0]
+    trace = hw_runs.trace_for(run.workload, run.gen_seed)
+    cfg = hw_runs.pre_run_manifest(c, run, trace.header, trace)["config"]
+    assert cfg["capability_mode"] == "service"
+    for key in (
+        "capability_override",
+        "capability_concurrency",
+        "ect_mode",
+        "ect_prior_output_len",
+        "capability_arm",
+    ):
+        assert key not in cfg
+
+
+# ------------------------------------------------------------ a snapshot nobody has yet
+
+
+def _placeholder(tmp_path) -> hw_runs.Campaign:
+    snaps = {**SNAPSHOTS, "rtx3050": f"{hw_runs.PLACEHOLDER_SNAPSHOT}rtx4070-SNAPSHOT"}
+    return _campaign(tmp_path, cost_model_snapshots=snaps)
+
+
+def test_a_placeholder_snapshot_is_refused_when_the_campaign_would_run(tmp_path) -> None:
+    """A campaign for a node class nobody has calibrated is worth planning and costing, and
+    is not worth running: the scheduler admits no node without a C-3 snapshot."""
+    with pytest.raises(ValueError, match="still names the placeholder snapshot"):
+        hw_runs.check_campaign(_placeholder(tmp_path), hw_runs.snapshot_index(), False)
+
+
+def test_a_placeholder_snapshot_is_allowed_while_printing_the_plan(tmp_path, capsys) -> None:
+    hw_runs.check_campaign(
+        _placeholder(tmp_path), hw_runs.snapshot_index(), False, allow_placeholder=True
+    )
+    assert "rtx3050: names a placeholder snapshot" in capsys.readouterr().out

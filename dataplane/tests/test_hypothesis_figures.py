@@ -550,3 +550,83 @@ def test_a_zero_output_length_is_refused_rather_than_dividing_by_it() -> None:
     frame.loc[frame.index[0], "output_len"] = 0
     with pytest.raises(ValueError, match="output_len <= 0"):
         plots.phase_advantage_curve(frame)
+
+
+# --------------------------------------------------------------------------------------
+# H2 in the specification's own terms, and which measure H3 drew
+# --------------------------------------------------------------------------------------
+
+
+def test_the_spec_h2_curve_is_jsq_minus_wjsq_at_each_r() -> None:
+    """The frozen specification's H2 observable is the gap WJSQ still has over JSQ, and a
+    positive gain means WJSQ finished sooner. `h2_advantage_curve` reports a different
+    quantity, so a reviewer reading the spec has to find this one beside it."""
+    sweep = plots.sweep_from(_sweep_frame())
+    curve = plots.h2_calibration_curve(sweep)
+    assert [point["R"] for point in curve] == [1.0, 2.0, 8.0]
+    for point in curve:
+        at_r = sweep[sweep["R"] == point["R"]]
+        jsq = at_r[at_r["policy"] == "jsq"]["mean_latency_ms"].mean()
+        wjsq = at_r[at_r["policy"] == "wjsq"]["mean_latency_ms"].mean()
+        assert point["calibration_gain_ms"] == pytest.approx(jsq - wjsq)
+
+
+def test_the_spec_h2_curve_needs_the_columns_it_reads() -> None:
+    with pytest.raises(ValueError, match="needs a 'mean_latency_ms' column"):
+        plots.h2_calibration_curve(pd.DataFrame({"R": [1.0], "policy": ["jsq"]}))
+
+
+def test_the_spec_h2_curve_refuses_an_r_without_both_policies() -> None:
+    """Averaging over whatever policies happened to run at that R would report a number the
+    specification does not define."""
+    sweep = plots.sweep_from(_sweep_frame())
+    without_wjsq = sweep[~((sweep["R"] == 2.0) & (sweep["policy"] == "wjsq"))]
+    with pytest.raises(ValueError, match="R = 2.0 is missing jsq or wjsq"):
+        plots.h2_calibration_curve(without_wjsq)
+
+
+def _rendered(monkeypatch) -> list[Any]:
+    """Every figure drawn during the test, so its labels can be read back."""
+    import matplotlib.figure
+
+    figures: list[Any] = []
+    original = matplotlib.figure.Figure.savefig
+
+    def savefig(self, path, *args, **kwargs):
+        figures.append(
+            "\n".join(
+                [t.get_text() for t in self.texts]
+                + [
+                    text
+                    for ax in self.axes
+                    for text in (ax.get_ylabel(), ax.get_title(), *(t.get_text() for t in ax.texts))
+                ]
+            )
+        )
+        return original(self, path, *args, **kwargs)
+
+    monkeypatch.setattr(matplotlib.figure.Figure, "savefig", savefig)
+    return figures
+
+
+def test_h3_draws_regret_when_the_simulator_logged_it(tmp_path: Path, monkeypatch) -> None:
+    """Regret is the realised cost of the placement against the best alternative, and it is
+    the measure H3 wants. With it present, the fallback's health warning is not drawn."""
+    drawn = _rendered(monkeypatch)
+    frame = _sweep_frame().assign(tau_s=TAU_S, regret_ms=12.0)
+    plots.h3_staleness(frame, tmp_path)
+    assert "counterfactual regret (ms)" in drawn[-1]
+    assert "fallback measure" not in drawn[-1]
+
+
+def test_h3_says_on_the_figure_when_it_fell_back_to_routing_error(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The fallback scores each decision with WJSQ's own formula on the view WJSQ saw, so
+    WJSQ cannot register an error at any staleness. A figure built on it must not be
+    readable as one built on regret."""
+    drawn = _rendered(monkeypatch)
+    plots.h3_staleness(_sweep_frame().assign(tau_s=TAU_S), tmp_path)
+    assert "routing error rate" in drawn[-1]
+    assert "fallback measure" in drawn[-1]
+    assert "WJSQ cannot register an error" in drawn[-1].replace("\n", " ")

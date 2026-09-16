@@ -49,6 +49,10 @@ Blocks run top to bottom. Inside a block, order is fixed.
 | E0.3 | Simulator sweep for the value-of-calibration curve, so the hardware arm lands on a curve we already understand | A | K2, first half |
 | E0.4 | P4 on contrasts against the three held-out shape run sets | A | G4 |
 
+E0.1 and E0.2 are done (2026-09-16). The tree and this doc set are committed, `p4_validate.py`
+is in the coverage omit list, and `hw_runs.py` and `campaign_summary.py` are back at 100%, so
+G0 and G3 hold. One item found while closing E0.2 moved to `test-plan.md` section 2.
+
 ### Block 1: this laptop only, about 3 hours
 
 | # | Work | Cost | Owner | Closes |

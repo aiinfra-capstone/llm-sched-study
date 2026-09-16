@@ -194,3 +194,22 @@ def test_interval_of_nothing_is_nan_and_rounding_keeps_none() -> None:
 def test_repeat_of_reads_the_suffix_and_defaults_to_one() -> None:
     assert cs.repeat_of("t_jsq_s0_heavy_r12") == 12
     assert cs.repeat_of("anchor1b_heavy_1788376820") == 1
+
+
+def test_a_short_series_sums_every_lag_because_the_window_cannot_close() -> None:
+    """The Sokal window closes at k >= 5 * tau, and tau is at least 1, so it cannot close
+    before lag 5. A ten-point window has four lags to give, so the sum runs to exhaustion
+    and the estimate lands on its floor. This is the branch a run set with very few measured
+    arrivals per repeat takes."""
+    n = 10
+    x = _ar1(n, 0.9, 2)
+    t = np.arange(n, dtype=float)
+    slope, intercept = np.polyfit(t, x, 1)
+    r = x - (slope * t + intercept)
+    denom = float(np.dot(r, r))
+    total = 1.0
+    for k in range(1, n // 2):
+        total += 2.0 * float(np.dot(r[: n - k], r[k:]) / denom)
+        assert k < cs.SOKAL_C * max(total, 1.0), f"the window closed at lag {k}"
+    assert cs.integrated_tau(x) == pytest.approx(max(total, 1.0))
+    assert cs.integrated_tau(x) == 1.0, "a window this short cannot evidence a long tau"

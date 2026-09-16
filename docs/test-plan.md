@@ -34,9 +34,14 @@ commit that adds its tests.
 
 | Item | Owner | Note |
 |---|---|---|
-| `tools/p4_validate.py`, 155 lines, no tests | A | Belongs in the omit list beside `sweep.py` and `f23_compare.py` until ownership is agreed, so that one half's gate does not fail on the other's code |
-| `tools/hw_runs.py`, 10 uncovered lines | D | The four capability-arm refusals (unknown key, unknown policy, duplicate arm names, an unnamed arm in a multi-arm campaign), the placeholder-snapshot refusal outside `--dry-run`, and the five campaign-level capability keys reaching the manifest |
-| `tools/campaign_summary.py`, 2 uncovered branches | D | The Sokal sum running to exhaustion, and a repeat with no rows at all |
+| An arm key no policy reads is dropped while parsing | D | `Campaign.from_dict` filters an arm's config to `ARM_KEYS`, so a misspelled key never reaches the refusal in `check_campaign` and that arm runs as the baseline under its own name. The refusal is tested on a `Campaign` built in code; the parse has to stop dropping the key before a config file can be refused |
+| Policies and both vehicles, `test-plan.md` 3.8 | A | The control-plane suite is the gate for it, and the cross-seam workflow is where the two halves meet |
+
+Closed on 2026-09-16: `tools/p4_validate.py` is in the omit list beside `sweep.py` and
+`f23_compare.py` until ownership is agreed, and `hw_runs.py` and `campaign_summary.py` are
+back at 100% (the four capability-arm refusals, the placeholder-snapshot refusal, the
+campaign-level capability keys in the manifest, the Sokal sum running to exhaustion, and a
+repeat with no rows at the point's positions).
 
 ## 3. What must be covered, by area
 

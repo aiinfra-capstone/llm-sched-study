@@ -309,3 +309,25 @@ def test_cell_draws_refuses_cells_whose_repeats_differ() -> None:
     }
     with pytest.raises(ValueError):
         cs.cell_draws(cells, 10, 1, np.random.default_rng(0), len(positions))
+
+
+def test_a_repeat_with_no_row_at_any_position_is_absent_rather_than_a_hole() -> None:
+    """A repeat that shares no arrival with the point is a run that measured nothing here,
+    not a record with a hole in it. Every position is absent for it, so it contributes
+    nothing and refuses nothing."""
+    here = pd.DataFrame(cell_rows("jsq", _noise(6, 80)))
+    elsewhere = pd.DataFrame(cell_rows("jsq", _noise(6, 81), repeat=2))
+    elsewhere["req_id"] = [f"r{i:06d}" for i in range(100, 106)]
+    for g in (here, elsewhere):
+        g["ref_service_ms"] = 400.0
+        g["ref_prefill_ms"] = 20.0
+    positions = pd.Index(sorted(here["req_id"]))
+
+    cell = cs.Cell("jsq", {1: here, 2: elsewhere}, positions)
+
+    assert cell.repeats == [1, 2]
+    assert cell.present[0].all()
+    assert not cell.present[1].any()
+    assert not cell.failed[1].any()
+    assert np.isnan(cell.e2e[1]).all()
+    assert cs.point_values(cell)["mean"] == pytest.approx(here["e2e_ms"].mean())

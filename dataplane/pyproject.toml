@@ -105,6 +105,7 @@ omit = [
     # edits, so they stay out until we agree who owns them.
     "*/tools/sweep.py",
     "*/tools/f23_compare.py",
+    "*/tools/p4_validate.py",
 ]
 
 [tool.coverage.report]

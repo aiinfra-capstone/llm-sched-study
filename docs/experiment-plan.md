@@ -160,4 +160,11 @@ Append one line per campaign, newest last. Numbers go in `results.md`, not here.
   runs, one trace and one scheduler seed per campaign. Pool shut down and the 3050 returned.
 - **2026-09-15, evening** Audit of the first pair's design and analysis. All 132 runs
   re-derived under the rules now in `analysis-plan.md`. Five campaigns configured, unrun.
-- **2026-09-16** Doc set replaced. Plan locked. Nothing has run since.
+- **2026-09-16** Doc set replaced. Plan locked.
+- **2026-09-16, night** E1.1a done: the 1650 Ti benched as installed, and again from a build
+  with forced MMQ, which changes nothing. Its build flags turn out to be recorded in the build
+  tree and are ordinary; only the build number was missing. The card runs at its 50 W limit
+  while prefilling. Published figures put a tensor-core-less Turing card about 7.7x below an
+  RTX 3050 on prompt processing, against our 9 to 10x, so the prefill ratio is the hardware.
+  G1's rebuild is now provenance rather than a risk to K1. E1.3 started: the CPU 1B
+  calibration with the 80-minute sustained segment.

@@ -55,10 +55,8 @@ snapshot, and when it does, this table, the capability figures below it and the 
 targets in every campaign config are re-derived from the new one. Whether the ratios move is
 itself the answer to the open question above.
 
-**Open.** The 1650 Ti's prefill, about 735 tok/s on this model, has not been checked against
-published figures for the card, and its build flags are unknown. Until `tools/engine_bench.sh`
-has run on both nodes before and after a rebuild, the 10x prefill ratio is not established as
-a pure hardware property.
+**The 1650 Ti's prefill is the card, not the build.** Measured on 2026-09-16 and written up in
+section 10. What remains is the rebuild for provenance and the same bench on the 3050.
 
 Capability as the scheduler seeds it: 103.947 and 163.607 output tok/s of service, 1.57x. That
 is the least heterogeneous number the snapshots contain.
@@ -241,6 +239,39 @@ Determinism: 200 of 200 decisions identical across two simulator runs of one man
 ## 10. Supporting measurements
 
 Carried forward because later decisions rest on them.
+
+**The slow node's engine, benched (G1, first half).** `tools/engine_bench.sh` on the 1650 Ti,
+2026-09-16, `runs/bench/gtx1650ti_before_rebuild.json`. The engine serving every campaign
+reports `0.2.0-dev (build 1, commit 5a32f7b)`, which is the pinned commit with the build
+number missing.
+
+| Build | pp512 tok/s | tg128 tok/s |
+|---|---:|---:|
+| As installed (CUDA Release, `sm_75`, native) | 754.6 ± 1.8 | 149.8 ± 0.5 |
+| Same commit, `GGML_CUDA_FORCE_MMQ=ON` | 748.6 ± 1.6 | 148.6 ± 0.2 |
+
+Three things that together answer the open question in section 2.
+
+1. **The flags were never unknown.** The build tree that produced the installed engine is on
+   disk and configured: CUDA on, `CMAKE_CUDA_ARCHITECTURES=75`, Release, native. Only
+   `LLAMA_BUILD_NUMBER` is absent, which is the whole of why the server says build 1.
+2. **The kernel path llama.cpp itself suggests changes nothing.** The runtime prints a hint
+   that a card without tensor cores should be built with forced MMQ. Built that way, prefill
+   moves by 0.8%, which is the wrong direction and inside the run-to-run spread. The hint's
+   other half, `CMAKE_CUDA_ARCHITECTURES=61-virtual`, cannot be tested here: CUDA 13.2 has
+   dropped `compute_61`.
+3. **The card is at its power limit while doing it.** Sampled under a sustained prefill load:
+   1545 MHz of a 2100 MHz maximum, 48.6 W against a 50 W limit, 65 °C, 98% utilisation.
+
+Published figures agree on the ratio rather than the absolute. The llama.cpp CUDA scoreboard
+has a GTX 1660, Turing without tensor cores like the 1650 Ti, at pp512 149 tok/s, and an RTX
+3050 at 1147 tok/s on the same build and model, a 7.7x prompt-processing ratio between the two
+classes. Ours is 9 to 10x on a different model and quantisation, between a laptop 1650 Ti at
+50 W and a laptop 3050. Same order, same direction.
+
+**What this leaves open.** The rebuild itself, which is provenance rather than performance: it
+stamps the build number so a manifest can prove its engine. And the same bench on the 3050,
+which needs that laptop back.
 
 **Transport.** C-5 derives `transport_residual_ms` per request. Over 759 warmed-up successful
 rows of the four anchors: mean 5.86 ms, sd 2.66, p50 5.16, and flat in load (5.37 ms quiet

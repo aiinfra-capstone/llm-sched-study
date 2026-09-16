@@ -28,10 +28,12 @@ always routing on an estimate that is already slightly wrong.
 The obvious fix is calibration. Measure each node's tokens per second, weight the routing by
 it. This study asks whether that is worth doing at all.
 
-> **Research question.** In a pool of consumer machines whose per-node throughput is
-> heterogeneous, non-stationary, and known only through stale estimates, does explicit
-> hardware calibration improve scheduling **beyond what live queue depth already reveals**,
-> and over what range of heterogeneity does that advantage hold?
+> **Research question.** Given a router that already sees live queue depth, how much does
+> hardware calibration add, and what does that depend on: how wrong the estimate is, how
+> loaded the pool is, how variable the request sizes are, and how stale the queue signal is?
+
+The wording is locked, with the reasoning and the deviations from the frozen specification,
+in [`docs/research-plan.md`](docs/research-plan.md).
 
 There is a real reason to doubt it. **Queue depth is already a proxy for speed.** Slow nodes
 accumulate queue, so a scheduler that simply joins the shortest queue is implicitly
@@ -39,13 +41,14 @@ hardware-aware. Calibration may be paying for something the queue reports for fr
 
 ## What we are testing
 
-Three hypotheses. Each falsifiable, each with a negative result worth reporting.
+Each claim is falsifiable, and each has a negative result worth reporting.
 
 | | Claim | Why it matters |
 |---|---|---|
-| **H1** | Calibration is largely **redundant** given queue-awareness, and more so as load rises. Formally the interaction term `(WJSQ − JSQ) − (StaticWeighted − RoundRobin)` is positive: both brackets are negative when calibration helps, and redundancy means the first is the shallower of the two. | If true, the honest headline contradicts the intuition that motivates hardware-aware schedulers. If false, calibration carries independent signal and we have to say where it comes from. |
-| **H2** | The advantage of hardware-aware routing is **non-monotonic** in the heterogeneity ratio *R*. It rises, peaks, and falls back toward zero. | As *R* grows the best policy converges to thresholding, which is round-robin over the strong nodes and is a one-line static rule. Hardware-awareness has a sweet spot, and outside it something trivial matches it. |
-| **H3** | Routing quality degrades as the age of a node's estimate approaches the **autocorrelation time τ** of that node's real throughput. | This turns non-stationarity from a threat to the method into the independent variable, and it gives an empirical basis for picking a heartbeat interval instead of guessing one. |
+| **H1** | Calibration's benefit to a queue-aware router is smaller than its benefit to a queue-blind one. The primary statistic is the interaction on log mean latency, `log(WJSQ/JSQ) − log(StaticWeighted/RoundRobin)`, at steady-state points; positive means calibration buys a smaller fraction once the policy sees queue depth. | If it holds, the honest headline contradicts the intuition that motivates hardware-aware schedulers. If it fails, calibration carries independent signal and we have to say where it comes from. |
+| **H2** | The advantage of hardware-aware routing is **non-monotonic** in the heterogeneity ratio *R*, converging on `Threshold(T)`. Simulator only, and gated on a simulator validated against the held-out hardware runs. | As *R* grows the best policy converges to thresholding, which a one-line static rule achieves without any calibration machinery. |
+| **Elevation** | The value of calibration moves with the workload's prompt-to-output mix, in the direction set by which phase the machines differ on. | It is what makes this a question about language-model serving rather than a queueing question with language models attached. |
+| **H3** | ~~Routing quality degrades as estimate age approaches τ.~~ **Out of this paper.** The simulator has no drift process, capability never ages, and τ is unresolved on every class we own. Section 5 of the research plan says what would bring it back. | The absence is itself reportable: on this hardware, drift is below what five service times can resolve. |
 
 The policies form a **2×2 factorial, not a ladder.** A ladder confounds hardware-knowledge
 with queue-knowledge and cannot decompose the gain:
@@ -55,14 +58,17 @@ with queue-knowledge and cannot decompose the gain:
 | **Hardware-blind** | `RoundRobin` | `JSQ` |
 | **Hardware-aware** | `StaticWeighted` | `WJSQ` |
 
-Plus `Threshold(T)`, round-robin over nodes above a calibrated cutoff, as the degenerate
-baseline H2 predicts `WJSQ` collapses into at high *R*.
+Plus four controls that turn "does calibration help" into "how much of it is worth knowing":
+`Threshold(T)`, round-robin over nodes above a calibrated cutoff; `JSQFastFirst`, which
+breaks JSQ's ties toward the fastest node and so carries the ranking without the magnitude;
+`StaticWeightedWRR`, the deterministic form of weighted routing; and `ECT`, which prices each
+request from the full cost model.
 
 ## The vocabulary that matters
 
 | Term | What it means here |
 |---|---|
-| **Prefill / decode** | The two phases of one request. Prefill reads the whole prompt at once and is compute-bound. Decode emits output tokens one at a time and is memory-bandwidth-bound. They scale differently, so we measure them separately. |
+| **Prefill / decode** | The two phases of one request. Prefill reads the whole prompt at once, decode emits output tokens one at a time. They scale differently across machines and across batch sizes, so we measure them separately rather than assuming which resource binds either one. |
 | **Heterogeneity ratio *R*** | Fastest node's throughput over slowest, within one pool. The study's primary independent variable. |
 | **`-ngl` / `--parallel`** | How many model layers sit on the GPU, and how many requests the engine serves at once. Lowering `-ngl` genuinely slows a node down, which is how we manufacture heterogeneity on hardware we already own. |
 | **Autocorrelation time τ** | How long a node's throughput stays correlated with itself. Informally, how long a speed measurement stays useful. |
@@ -86,8 +92,9 @@ We run on two vehicles, and the split between them is the core methodological co
 **Hardware** measures what the simulator must not assume: cost-model parameters, τ and the
 variance envelope, validation anchors, and the range of *R* real machines can span.
 
-**A discrete-event simulator** provides breadth: node counts to 12, *R* to 100×, controlled
-estimate staleness. Four machines reach none of that.
+**A discrete-event simulator** provides breadth: pools of one fast node and *k* slow ones,
+*R* synthesised beyond what we own, and controlled staleness on the queue signal. Two laptops
+reach none of that, and every synthesised figure is labelled as synthesised.
 
 The simulator runs the *same policy code* as the live scheduler, not a reimplementation. It
 is parameterized from measured hardware and validated against live runs on identical
@@ -187,7 +194,8 @@ same-model pair we currently own, CPU against a partially offloaded GPU, R is 1.
 service time but 1.46x on prefill and 1.83x on decode, and the gap between the two phases
 widens with concurrency. That is what makes this a question about language-model serving
 rather than a queueing question with language models attached, and chasing it is the whole
-of [elevation 1](docs/elevation-1/). The magnitude here is small because that GPU node is a
+of the phase question ([`docs/research-plan.md`](docs/research-plan.md), K1). The magnitude
+here is small because that GPU node is a
 partial offload and because both classes were calibrated at a single grid cell, so the
 prompt-to-output ratio never varied. Varying it is the experiment.
 
@@ -224,8 +232,9 @@ concurrency changing *during* a request rather than service-time noise, which th
 already models as a queueing effect. So the residual is a queueing question and not a
 service-model one.
 
-The first real heterogeneous pair (GTX 1650 Ti and RTX 3050 laptops) is measured, and its
-results, with what they do and do not support, are in [`docs/writing-brief.md`](docs/writing-brief.md).
+The first real heterogeneous pair (GTX 1650 Ti and RTX 3050 laptops) is measured, audited and
+re-derived. What those runs do and do not support, and what we withdrew, is in
+[`docs/results.md`](docs/results.md).
 
 ---
 
@@ -412,7 +421,7 @@ with the same command; finished runs are skipped.
 `fixtures/fake_scheduler/serve.py` still exists and still round-robins blindly without
 writing a decision record. It is a Week-1 unblocking device, not a vehicle for a result:
 every run it drives has `chosen_node` and `routing_error_ms` null, so it cannot produce
-MPR-2. Do not use it for anything being measured.
+the 2×2 decomposition. Do not use it for anything being measured.
 
 ### 6. Run
 
@@ -457,8 +466,9 @@ reason the results are comparable.
 `figures` draws what the set can support and skips the rest, so a hardware-only set at one
 *R* renders the load characterisation and nothing else. That characterisation is all four
 of the study's dependent variables: latency percentiles, queue wait, per-node utilization,
-and routing-error rate. The full set adds the four hypothesis figures: H1's interaction plot, H2's advantage curve against *R*, MPR-2's
-interaction range, and H3 against estimate age. `--tau-s` is the measured autocorrelation
+and the routing share. The full set adds the hypothesis figures: H1's interaction plot, H2's
+advantage curve against *R* drawn both ways, the interaction across the *R* range, and H3
+against estimate age. `--tau-s` is the measured autocorrelation
 time from the C-3 snapshot for that node class. Without it the H3 figure is skipped rather
 than drawn against a guess, because age over τ is the only axis H3 is a claim about, and
 substituting the heartbeat interval would turn a property of the process into a property
@@ -478,16 +488,18 @@ point at all:
 
 ## What it produces even if things go wrong
 
-The window has no slack, so the result ladder is fixed in advance and strictly ordered.
+The claims are fixed in advance and ordered, so that a result can be pointed at a claim and a
+claim at its evidence. The full ladder, with the evidence each one needs, is section 3 of
+[`docs/research-plan.md`](docs/research-plan.md).
 
-| | | Depends on |
+| | | Standing |
 |---|---|---|
-| **MPR-1** ✅ | A characterization of throughput non-stationarity in consumer serving nodes: τ, the variance envelope, and the implication that any single calibrated tok/s figure is a moving average over a non-stationary process. | Nothing. Hardware only. |
-| **MPR-2** | The H1 2×2 decomposition on real hardware across the synthesized *R* range, plus the load band. | A pool that spans real heterogeneity. |
-| **MPR-3** | H2 and H3, the non-monotonic advantage curve and its shift under staleness, in the validated simulator. | Weeks 5 to 6. |
+| **K1** | The heterogeneity a scheduler faces depends on the workload and on concurrency: 1.4x to 2.6x at one slot, 2.2x to 4.4x at four, on one pair of consumer GPUs under one pinned engine. | Held |
+| **K2** | The value of calibration as a curve: latency against how wrong the believed capability ratio is, with an ordinal-only control and a per-request cost-model policy on the same axis. This is the contribution. | Configured, unrun |
+| **K3 to K5** | What that curve depends on: the load the queue-blind router is under, the workload's phase mix, stale queue counts, and request sizes that are variable and unknown at dispatch. | Candidate, and two campaigns away |
+| **K6** | Throughput drift on consumer GPU nodes serving a 1B model is below what this workload can resolve, and the floor is about five service times. | Held as a bound, with its interval |
 
-MPR-1 stands alone as a measurement contribution and needs no scheduler comparison, which is
-exactly why it is the one that has landed.
+K1 and K6 need no scheduler comparison, which is why they are the two that have landed.
 
 ---
 
@@ -497,11 +509,12 @@ exactly why it is the one that has landed.
 contracts/     The interface between the two halves. Six frozen artifacts, plus the
                committed cost-model snapshot series the simulator reads.
 dataplane/     Workers, calibration campaign, harness, results pipeline.   (Python)
-controlplane/  Scheduler, the five policies, discrete-event simulator.     (Java)
+controlplane/  Scheduler, the eight policies, discrete-event simulator.    (Java)
 tools/         Machine survey, LAN bring-up, pool install; the cross-seam CI checks;
                and the analyses that are not console entry points.
 fixtures/      Fake scheduler and fake worker, so neither half blocks on the other.
-docs/          Base-scope spec and record, the elevation-1 scope, UML figure set.
+docs/          Research, analysis, experiment, design and test plans; results; the frozen
+               spec PDF and the UML figure set.
 patches/       Changes to the pinned engine, with the reasoning that justifies them.
 runs/          Measurement output. Only manifests and determinations are versioned.
 ```
@@ -552,39 +565,37 @@ uv run contracts/check.py --validate runs/exp/jsq_r1/scheduler_jsq_r1.jsonl
 
 ## Documentation
 
+The doc set was rewritten on 2026-09-16 and supersedes everything before it. The earlier
+planning, scope and results documents are in the git history and are not authoritative.
+
 | | |
 |---|---|
-| [Requirements specification](docs/base_scope/scheduling-requirements-spec.pdf) | Scope, hypotheses, F-1 to F-24, non-goals, threats to validity, the MPR ladder. The authority for everything else. |
-| [Split and interface contract](docs/base_scope/two-person-split-and-interface-contract.md) | Where the seam is, the six artifacts across it, and the failure modes to watch. |
-| [Week-1 freeze checklist](docs/base_scope/week1-freeze-checklist.md) | What had to be true before the contract froze, and the record of every week since. |
-| [Elevation 1](docs/elevation-1/) | What a scrutiny pass on the finished Week-4 system changed: the scope delta, the measurements behind it, and the workplan to October. |
-| [Checkpoint](docs/checkpoint.md) | The data we have, everything our code can still collect, and the plan to a publishable result, with why each item is needed and what it costs. |
-| [Writing brief](docs/writing-brief.md) | For the writing team: what changed since the specification, the results with their intervals, what we contrast against, and every figure with its provenance. |
+| [Doc index](docs/README.md) | What each document settles, and when it changes. |
+| [Research plan](docs/research-plan.md) | The question, the claims ladder, which hypotheses are in and out, the scope, and every deviation from the frozen specification. |
+| [Analysis plan](docs/analysis-plan.md) | How every number is computed, and what each campaign outcome licenses us to say. Frozen before the campaigns run. |
+| [Experiment plan](docs/experiment-plan.md) | What we run, in what order, what gates each block, and what we refuse to run. |
+| [System design](docs/system-design.md) | The instrument: the seam, the contracts, one run end to end, the policies, the invariants, and the known limits. |
+| [Test plan](docs/test-plan.md) | What the suite has to guarantee, and what passing means. |
+| [Results](docs/results.md) | Every measurement that stands, with provenance, and every claim withdrawn. |
+| [Requirements specification](docs/base_scope/scheduling-requirements-spec.pdf) | The frozen scope, hypotheses and F-numbers. Never edited; differences are listed in the research plan. |
 | [UML figure set](docs/uml/FIGURES.md) | Twelve figures with captions and the requirements each discharges. |
 
 ## Project status
 
-Six weeks, no slack. Feature freeze at the end of Week 3, contract freeze at the end of
-Week 1.
+The instrument is built and frozen, the first pair has been measured, and that measurement has
+been audited and re-derived. Five campaigns are configured and unrun.
 
-| Week | Focus | |
-|---|---|---|
-| 1 | Worker, heartbeat, client, harness. One query routed and measured end to end. | ✅ |
-| 2 | Calibration campaign, τ and the variance envelope, the synthesizable *R* range. **MPR-1.** | ✅ |
-| 3 | All five policies behind one config value, admissible set, load band. **Feature freeze.** | ✅ |
-| 4 | Pipeline and figures; simulator sharing policy code, validated against hardware. | ✅ F-23 4/4 |
-| 5 | Sweeps: *R* × load × staleness × policy. Hypotheses tested. | figure code ✅, no sweep data yet |
-| 6 | Analysis, threats to validity, positioning, writeup. Engine-gap measurement. | |
+| | |
+|---|---|
+| Instrument | Worker, harness, calibration, pipeline, figures, live scheduler, simulator sharing the policy code. Contract frozen, feature set frozen |
+| Measured | 132 valid runs on one pair of laptop GPUs: the anchor trace and three workload shapes, five policies, three repeats, up to three load points |
+| Re-derived | All 132 runs under the rules in [`docs/analysis-plan.md`](docs/analysis-plan.md): paired block bootstrap, a steady-state gate on every cell, log-scale interaction as the primary statistic |
+| Standing | K1 and K6. K3 is a candidate on one arrival path, K2 and K5 are unrun, and H3 is out of this paper |
+| Next | Two gates on this laptop (engine rebuild and bench, recalibration), then two nights on the pool. About 17 hours of machine time |
 
-Week 5 is marked deliberately. Every hypothesis figure is written and tested, and
-`runs/sweeps` is still empty, so the figures have never been drawn from a sweep. Saying
-"figures ✅" without that qualifier is the kind of claim a reviewer is right to check.
-
-After Week 4 we put the finished system through a hostile scrutiny pass, fixed what it found,
-and added scope on top. That work is [elevation 1](docs/elevation-1/): what we are adding,
-the measurements behind each decision, and who owns what through to October. The three open
-items are a second physical machine, the sweeps, and a live scheduler that dispatches, which
-turned out to be missing rather than merely untested.
+We audited the finished first pair as a reviewer would, and it changed the headline. What the
+audit withdrew and why is section 11 of [`docs/results.md`](docs/results.md); the three open
+control-plane items are in [`docs/experiment-plan.md`](docs/experiment-plan.md).
 
 ## Team
 

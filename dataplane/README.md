@@ -8,7 +8,8 @@ policies and the simulator that we measure *with* it.
 
 **Requirements owned:** F-9, F-9a, F-9b, F-10, F-11 (worker side), F-13, F-15 – F-20, F-23
 (the hardware half).
-**MPR owned:** MPR-1 — τ and the variance envelope, hardware only.
+**Claims owned:** K1 (phase and concurrency dependence of *R*) and K6 (what drift this
+hardware can resolve), both hardware only. See [`../docs/research-plan.md`](../docs/research-plan.md).
 **Load profile:** front-heavy, Weeks 1–3.
 
 ```bash
@@ -40,9 +41,12 @@ of the study leans on:
 
 | | |
 |---|---|
-| **MPR-1** | τ = **69.5 s** on `cpu_ngl0_p4_q4km_llama3_8b`, *r²* = 0.989. Both GPU classes show no decay at any timescale their service time can resolve. A single calibrated tok/s figure on the CPU node understates its own standard error by **1.36×**. |
-| **Synthesizable *R*** | **2.00×** configured, **1.00×** deployable — the second number is one physical host, and it is what MPR-2 waits on. |
+| **Drift (K6)** | τ is **not resolved** on any class. The CPU 8B point estimate is 69.5 s with a block-bootstrap interval of 31 to 91 s, and its own calibration record says `tau_resolved: false`. Both GPU classes are censored at the 5 s floor: a node whose τ is shorter than about five service times cannot show its own drift. |
+| **Heterogeneity (K1)** | On the first real pair, *R* on service is **1.39x to 2.59x** at one slot and **2.2x to 4.4x** at four, moving with the workload's prompt-to-output mix. |
 | **Admissible set** | 8B pool: `prompt ≤ 128, output ≤ 64`, limited by the CPU class. 1B pool: `prompt ≤ 512, output ≤ 128`. |
+
+The current numbers, with their provenance and intervals, are in
+[`../docs/results.md`](../docs/results.md); that file wins over this table.
 
 Plus four F-23 validation anchors on one trace, and a load band of **1.03–1.30 req/s**.
 
@@ -514,7 +518,8 @@ the buckets were chosen so mean predicted service time varies by 2.1% across the
 the ratio moves 27x. All three carry the same `gen_seed`, and `gen_trace` draws arrivals and
 lengths from separate streams, so the three traces have byte-identical arrival offsets and
 byte-identical priorities and only the lengths differ. Offered load therefore means the same
-thing in all three. `docs/elevation-1/evidence.md` section 7 has the construction.
+thing in all three. The construction and its caveat, that the matching holds at one slot and not at four, are in
+[`../docs/results.md`](../docs/results.md).
 
 **Anchors.** `anchors_1b.json` names the trace, its sha256, the pool and the four rate
 scales. A trace's sha256 moves with every commit because `gen_trace` stamps its git sha

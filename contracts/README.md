@@ -43,8 +43,8 @@ Two things a reader of these fields has to know:
   describes the harness as much as the hardware. The field's own schema description says so.
 
 Both are documented where they are produced: C-3 in
-[`cost_models/README.md`](cost_models/README.md), C-6 in
-[`../docs/elevation-1/evidence.md`](../docs/elevation-1/evidence.md).
+[`cost_models/README.md`](cost_models/README.md), and the measurements behind C-6's
+transport block in [`../docs/results.md`](../docs/results.md).
 
 ## Checking conformance
 

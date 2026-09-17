@@ -79,3 +79,7 @@ trash/
 # parquet it is derived from is not committed. A cited number nobody else can open is
 # not evidence.
 !runs/**/summary.json
+
+# coverage.py data from a pytest run at the repository root
+.coverage
+.coverage.*

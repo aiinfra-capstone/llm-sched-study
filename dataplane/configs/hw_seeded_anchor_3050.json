@@ -1,5 +1,5 @@
 {
-  "_comment": "C1 and C2 of the 2026-09-15 audit. The anchor campaign again, with five repeats that each generate their own arrivals (repeat_seeds) and start the scheduler with their own seed, so the intervals sample arrival paths and routing random draws rather than hardware jitter on one replay. Load is set as a fraction of the pool's four-slot capacity on this workload (tools/pool_load.py: 7.07 req/s), not as req/s: 0.2, 0.3 and 0.4 are about 1.41, 2.12 and 2.83 req/s. The heaviest keeps RoundRobin's 1650 Ti near 0.87 of its own capacity, below where the first campaign's RoundRobin cells stopped being steady, so the H1 interaction is defined at every point. Engines must run with --cache-ram 0; the driver warns if not and records each engine's command line.",
+  "_comment": "C1 and C2 of the 2026-09-15 audit. The anchor campaign again, with five repeats that each generate their own arrivals (repeat_seeds) and start the scheduler with their own seed, so the intervals sample arrival paths and routing random draws rather than hardware jitter on one replay. Load is set as a fraction of the pool's four-slot capacity on this workload (tools/pool_load.py: 7.07 req/s), not as req/s: 0.2, 0.3 and 0.4 are about 1.41, 2.12 and 2.83 req/s. The heaviest keeps RoundRobin's 1650 Ti near 0.87 of its own capacity, below where the first campaign's RoundRobin cells stopped being steady, so the H1 interaction is defined at every point. Engines must run with --cache-ram 0; the driver warns if not and records each engine's command line. static_weighted_wrr runs beside static_weighted because analysis-plan 6.2 asks whether the deterministic weighted round-robin differs from the random draw by more than its interval, and that comparison only means something on the same seeds, points and arrivals.",
   "tag": "seeded_anchor_1650ti_3050",
   "trace_config": "dataplane/configs/trace_anchor_1b.json",
   "out_root": "runs/exp/seeded_anchor_1650ti_3050",
@@ -65,6 +65,7 @@
     "round_robin",
     "jsq",
     "static_weighted",
+    "static_weighted_wrr",
     "wjsq",
     "threshold"
   ],

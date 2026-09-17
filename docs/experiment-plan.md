@@ -70,7 +70,7 @@ If E1.1 moves the 1650 Ti's prefill by more than the calibration's own interval,
 first pair's K1 numbers are then about a binary we cannot characterise, and the campaigns wait
 until the pair has been re-measured on the rebuilt engine.
 
-### Block 2: the pool, night one, about 7.5 hours
+### Block 2: the pool, night one, about 8 hours
 
 Run in this order. The ablation goes first because it decides which headline sentence the
 paper carries, and that is worth knowing before the rest of the machine time is spent.
@@ -78,8 +78,8 @@ paper carries, and that is worth knowing before the rest of the machine time is 
 | # | Campaign | Runs | Replay | Closes |
 |---|---|---:|---:|---|
 | E2.0 | Recalibrate the 3050, promote, repoint the configs | 1 | 25 min | Both nodes on one phase-attribution convention (`results.md` section 2) |
-| E2.1 | `hw_calibration_ablation_3050.json` | 48 | 1.5 h | K2 |
-| E2.2 | `hw_seeded_anchor_3050.json` | 75 | 2.6 h | K3, and the first intervals that include arrivals |
+| E2.1 | `hw_calibration_ablation_3050.json` | 51 | 1.6 h | K2 |
+| E2.2 | `hw_seeded_anchor_3050.json` | 90 | 3.0 h | K3, the first intervals that include arrivals, and 6.2's WRR against the random draw |
 | E2.3 | `hw_staleness_h1_3050.json` | 36 | 1.2 h | K5, staleness half |
 
 ### Block 3: the pool, night two, about 7 hours
@@ -148,10 +148,10 @@ Done in order, before the next campaign starts. A campaign that skips this is no
 | Block | Hours |
 |---|---:|
 | Block 1, this laptop | 3 |
-| Block 2, night one | 7 |
+| Block 2, night one | 8 |
 | Block 3, night two | 8 |
 | Block 4, optional | 11 to 15 |
-| **To the full claims ladder** | **18** |
+| **To the full claims ladder** | **19** |
 
 ## 8. Log
 

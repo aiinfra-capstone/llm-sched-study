@@ -25,11 +25,49 @@ import pandas as pd
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 CONFIGS = REPO_ROOT / "dataplane" / "configs"
-SNAPSHOTS = {
+# Two different things used to share one constant, and a recalibration broke the second.
+#
+# The snapshots the first pair ran on are history. The Java scheduler logged capability from
+# exactly these two, and the synthetic run sets below stand in for that pair, so they stay
+# pinned.
+FIRST_PAIR_SNAPSHOTS = {
     "gtx1650ti": "cm_gtx1650ti_ngl99_p4_q4km_llama32_1b_20260831T153652Z_008",
     "rtx3050": "cm_rtx3050_ngl99_p4_q4km_llama32_1b_20260914T200053Z_008",
 }
+
+# What a campaign may name today changes every time a node is recalibrated, which the plan
+# does on purpose, so it is never pinned. Tests that plan against the real cost models read
+# it from the committed campaign, and tests of the refusals use the synthetic index below,
+# which no recalibration can move.
+SYNTHETIC_SNAPSHOTS = {
+    "gtx1650ti": "cm_gtx1650ti_ngl99_p4_q4km_llama32_1b_NEW",
+    "rtx3050": "cm_rtx3050_ngl99_p4_q4km_llama32_1b_NEW",
+}
+SYNTHETIC_SUPERSEDED = "cm_gtx1650ti_ngl99_p4_q4km_llama32_1b_OLD"
 TAG = "t"
+
+
+def current_snapshots() -> dict[str, str]:
+    """The snapshot ids the committed seeded campaign names now."""
+    config = json.loads((CONFIGS / "hw_seeded_anchor_3050.json").read_text())
+    return dict(config["cost_model_snapshots"])
+
+
+def synthetic_index() -> dict[str, dict[str, Any]]:
+    """A snapshot index with only what `check_campaign` reads: id, class and age.
+
+    Each pool class has a newest snapshot, and the 1650 Ti class also has an older one, so
+    the "not the newest in its class" refusal has something to refuse.
+    """
+    rows = [
+        (SYNTHETIC_SUPERSEDED, "gtx1650ti_ngl99_p4_q4km_llama32_1b", 1_000),
+        (SYNTHETIC_SNAPSHOTS["gtx1650ti"], "gtx1650ti_ngl99_p4_q4km_llama32_1b", 2_000),
+        (SYNTHETIC_SNAPSHOTS["rtx3050"], "rtx3050_ngl99_p4_q4km_llama32_1b", 2_000),
+    ]
+    return {
+        sid: {"snapshot_id": sid, "node_class": cls, "measured_at_unix": t, "entries": []}
+        for sid, cls, t in rows
+    }
 
 
 def pool_nodes() -> list[dict[str, Any]]:
@@ -133,7 +171,7 @@ def write_manifest(
         "lambda": lam,
         "staleness_s": staleness,
         "config": config,
-        "cost_model_snapshots": dict(SNAPSHOTS),
+        "cost_model_snapshots": dict(FIRST_PAIR_SNAPSHOTS),
         "nodes": pool_nodes(),
         "validity": v,
     }

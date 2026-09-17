@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 import pool_load
 import pytest
-from support import REPO_ROOT, SNAPSHOTS, cell_rows, frame, manifests_for, run_id
+from support import FIRST_PAIR_SNAPSHOTS, REPO_ROOT, cell_rows, frame, manifests_for, run_id
 
 H1 = ("round_robin", "static_weighted", "jsq", "wjsq")
 
@@ -219,7 +219,10 @@ def test_utilisation_on_a_hand_computed_pool(tmp_path) -> None:
     data = frame(cell_rows("round_robin", _flat(700, 11), lam=0.5))
     u = _point(data, tmp_path)["utilisation"]
 
-    cap = {n: 4 / (_c4_cell(SNAPSHOTS[n])["service_ms_mean"] / 1000) for n in SNAPSHOTS}
+    cap = {
+        n: 4 / (_c4_cell(FIRST_PAIR_SNAPSHOTS[n])["service_ms_mean"] / 1000)
+        for n in FIRST_PAIR_SNAPSHOTS
+    }
     assert u["nodes"]["gtx1650ti"]["capacity_rps"] == round(cap["gtx1650ti"], 4)
     assert u["nodes"]["rtx3050"]["capacity_rps"] == round(cap["rtx3050"], 4)
     assert u["slow_node"] == "gtx1650ti" and u["fast_node"] == "rtx3050"

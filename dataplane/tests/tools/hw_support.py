@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any
 
 import hw_runs
-from support import campaign_dict
+from support import campaign_dict, current_snapshots
 
 from dataplane.harness import gen_trace
 from dataplane.harness import manifest as manifest_mod
@@ -136,7 +136,29 @@ class Pool:
         return path
 
 
+def isolate_cost_models(monkeypatch, tmp_path: Path) -> Path:
+    """A cost-model directory holding only the snapshots the committed campaign names.
+
+    `main()` refuses a campaign whose snapshot is not the newest in its class, which is right,
+    and it reads the class from the repository. A test that drives `main()` for some other
+    reason should not start failing the night a node is recalibrated, so it gets a directory
+    where the named snapshots are the only ones, and therefore the newest.
+    """
+    wanted = set(current_snapshots().values())
+    root = tmp_path / "cost_models"
+    for path in sorted(hw_runs.SNAPSHOT_ROOT.glob("*/*.json")):
+        snap = json.loads(path.read_text(encoding="utf-8"))
+        if snap.get("snapshot_id") in wanted:
+            (root / path.parent.name).mkdir(parents=True, exist_ok=True)
+            (root / path.parent.name / path.name).write_text(path.read_text(encoding="utf-8"))
+    real_index = hw_runs.snapshot_index
+    monkeypatch.setattr(hw_runs, "SNAPSHOT_ROOT", root)
+    monkeypatch.setattr(hw_runs, "snapshot_index", lambda root_=root: real_index(root_))
+    return root
+
+
 def install(monkeypatch, tmp_path: Path) -> Pool:
+    isolate_cost_models(monkeypatch, tmp_path)
     pool = Pool(tmp=tmp_path, real_run=subprocess.run)
     monkeypatch.setattr(hw_runs.subprocess, "run", pool.run)
     monkeypatch.setattr(hw_runs, "Scheduler", pool.scheduler_class())

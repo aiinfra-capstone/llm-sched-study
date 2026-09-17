@@ -15,7 +15,16 @@ from pathlib import Path
 import hw_runs
 import pool_load
 import pytest
-from support import CONFIGS, REPO_ROOT, SNAPSHOTS, campaign_dict, pool_nodes
+from support import (
+    CONFIGS,
+    REPO_ROOT,
+    SYNTHETIC_SNAPSHOTS,
+    SYNTHETIC_SUPERSEDED,
+    campaign_dict,
+    current_snapshots,
+    pool_nodes,
+    synthetic_index,
+)
 
 from dataplane.harness import gen_trace
 
@@ -41,7 +50,20 @@ def _multi(tmp_path, names=("generation", "summarisation"), **over) -> hw_runs.C
     return hw_runs.Campaign.from_dict(d)
 
 
-def _check(c: hw_runs.Campaign) -> None:
+def _check(c: hw_runs.Campaign, **kw) -> None:
+    """`check_campaign` against the synthetic snapshot index.
+
+    The refusal tests are about the rule, not about which snapshot is newest in the
+    repository today, so a campaign still naming the committed ids is moved onto the
+    synthetic ones first. A test that sets its own ids keeps them.
+    """
+    if c.cost_model_snapshots == current_snapshots():
+        c.cost_model_snapshots = dict(SYNTHETIC_SNAPSHOTS)
+    hw_runs.check_campaign(c, synthetic_index(), allow_colocation=False, **kw)
+
+
+def _check_committed(c: hw_runs.Campaign) -> None:
+    """`check_campaign` against the real cost models, for a committed config as it stands."""
     hw_runs.check_campaign(c, hw_runs.snapshot_index(), allow_colocation=False)
 
 
@@ -176,7 +198,7 @@ def test_the_pre_run_manifest_carries_the_seed_the_java_scheduler_reads(
     )
     assert cfg["threshold_t"] == c.threshold_t
     assert man["trace_path"] == str(trace.path.relative_to(tmp_path / "repo"))
-    assert man["cost_model_snapshots"] == SNAPSHOTS
+    assert man["cost_model_snapshots"] == c.cost_model_snapshots
     assert man["config_hash"] == hw_runs.manifest_mod.config_hash(cfg)
 
 
@@ -198,7 +220,7 @@ def test_a_single_trace_pre_run_manifest_has_no_seed_workload_or_target(tmp_path
 
 
 def test_the_committed_seeded_campaign_passes_every_check(tmp_path) -> None:
-    _check(_campaign(tmp_path))
+    _check_committed(_campaign(tmp_path))
 
 
 def _refused(c: hw_runs.Campaign, match: str) -> None:
@@ -256,21 +278,18 @@ def test_other_config_mistakes_are_refused(tmp_path) -> None:
     no_logs = {n: {"endpoint": w["endpoint"]} for n, w in workers.items()}
     _refused(_campaign(tmp_path, workers=no_logs), "no worker log location")
     _refused(
-        _campaign(tmp_path, cost_model_snapshots={"rtx3050": SNAPSHOTS["rtx3050"]}),
+        _campaign(tmp_path, cost_model_snapshots={"rtx3050": SYNTHETIC_SNAPSHOTS["rtx3050"]}),
         "no C-3 snapshot",
     )
     _refused(
-        _campaign(tmp_path, cost_model_snapshots={**SNAPSHOTS, "rtx3050": "cm_nope"}),
+        _campaign(tmp_path, cost_model_snapshots={**SYNTHETIC_SNAPSHOTS, "rtx3050": "cm_nope"}),
         "is not under",
     )
     nodes = pool_nodes()
     nodes[1]["engine_config"]["ngl"] = 40
     _refused(_campaign(tmp_path, nodes=nodes), "runs ngl 40")
-    older = "cm_gtx1650ti_ngl99_p4_q4km_llama32_1b_20260830T134342Z_008"
-    _refused(
-        _campaign(tmp_path, cost_model_snapshots={**SNAPSHOTS, "gtx1650ti": older}),
-        "name that one",
-    )
+    superseded = {**SYNTHETIC_SNAPSHOTS, "gtx1650ti": SYNTHETIC_SUPERSEDED}
+    _refused(_campaign(tmp_path, cost_model_snapshots=superseded), "name that one")
 
 
 @pytest.mark.parametrize(
@@ -456,7 +475,7 @@ def test_the_committed_ablation_campaign_passes_every_check(tmp_path) -> None:
     d["trace_config"] = str(CONFIGS / "trace_anchor_1b.json")
     d["out_root"] = str(tmp_path / "out")
     c = hw_runs.Campaign.from_dict(d)
-    _check(c)
+    _check_committed(c)
     assert len(c.arms) > 1
     runs = hw_runs.plan(c)
     assert len({r.run_id for r in runs}) == len(runs)
@@ -495,6 +514,35 @@ def test_what_the_policies_are_told_reaches_the_manifest(tmp_path, monkeypatch) 
     assert run.run_id.endswith("_wjsq_cap250_s0_u20_r1")
 
 
+def test_an_arms_threshold_reaches_threshold_and_only_threshold(tmp_path, monkeypatch) -> None:
+    """`threshold_t` is one of the keys an arm may set, and it used to be overwritten by the
+    campaign's cutoff for every Threshold run, so the arm's value never reached the
+    scheduler. The arm is applied last now, and a cutoff is written for Threshold alone."""
+    monkeypatch.setattr(hw_runs, "REPO_ROOT", tmp_path / "repo")
+    c = _arms(
+        tmp_path,
+        [
+            {"name": "decode", "threshold_t": 161.0, "policies": ["threshold", "wjsq"]},
+            {"name": "service", "policies": ["threshold"]},
+        ],
+        threshold_t=130.0,
+        policies=["threshold", "wjsq"],
+        repeats=1,
+        repeat_seeds=[5],
+    )
+    runs = {(r.arm.name, r.policy): r for r in hw_runs.plan(c)}
+    assert set(runs) == {("decode", "threshold"), ("decode", "wjsq"), ("service", "threshold")}
+
+    def config(key):
+        run = runs[key]
+        trace = hw_runs.trace_for(run.workload, run.gen_seed)
+        return hw_runs.pre_run_manifest(c, run, trace.header, trace)["config"]
+
+    assert config(("decode", "threshold"))["threshold_t"] == 161.0
+    assert config(("service", "threshold"))["threshold_t"] == 130.0
+    assert "threshold_t" not in config(("decode", "wjsq"))
+
+
 def test_a_campaign_that_tells_the_policies_nothing_extra_records_nothing_extra(
     tmp_path, monkeypatch
 ) -> None:
@@ -518,7 +566,7 @@ def test_a_campaign_that_tells_the_policies_nothing_extra_records_nothing_extra(
 
 
 def _placeholder(tmp_path) -> hw_runs.Campaign:
-    snaps = {**SNAPSHOTS, "rtx3050": f"{hw_runs.PLACEHOLDER_SNAPSHOT}rtx4070-SNAPSHOT"}
+    snaps = {**SYNTHETIC_SNAPSHOTS, "rtx3050": f"{hw_runs.PLACEHOLDER_SNAPSHOT}rtx4070-SNAPSHOT"}
     return _campaign(tmp_path, cost_model_snapshots=snaps)
 
 
@@ -526,11 +574,9 @@ def test_a_placeholder_snapshot_is_refused_when_the_campaign_would_run(tmp_path)
     """A campaign for a node class nobody has calibrated is worth planning and costing, and
     is not worth running: the scheduler admits no node without a C-3 snapshot."""
     with pytest.raises(ValueError, match="still names the placeholder snapshot"):
-        hw_runs.check_campaign(_placeholder(tmp_path), hw_runs.snapshot_index(), False)
+        _check(_placeholder(tmp_path))
 
 
 def test_a_placeholder_snapshot_is_allowed_while_printing_the_plan(tmp_path, capsys) -> None:
-    hw_runs.check_campaign(
-        _placeholder(tmp_path), hw_runs.snapshot_index(), False, allow_placeholder=True
-    )
+    _check(_placeholder(tmp_path), allow_placeholder=True)
     assert "rtx3050: names a placeholder snapshot" in capsys.readouterr().out

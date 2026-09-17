@@ -14,7 +14,7 @@ import math
 
 import pool_load
 import pytest
-from support import CONFIGS, SNAPSHOTS, pool_nodes
+from support import CONFIGS, FIRST_PAIR_SNAPSHOTS, current_snapshots, pool_nodes
 
 
 @pytest.fixture
@@ -33,9 +33,10 @@ def _entry(p, o, c, service, **extra):
 
 
 def test_capability_matches_what_the_java_scheduler_logged(snapshot_index) -> None:
-    """The scheduler logged 103.9472... and 163.6070...; the first four decimals must agree."""
-    fast = pool_load.capability(snapshot_index[SNAPSHOTS["rtx3050"]])
-    slow = pool_load.capability(snapshot_index[SNAPSHOTS["gtx1650ti"]])
+    """On the first pair the scheduler logged 103.9472... and 163.6070...; the first four
+    decimals must agree. Pinned to that pair's snapshots, which is the history being checked."""
+    fast = pool_load.capability(snapshot_index[FIRST_PAIR_SNAPSHOTS["rtx3050"]])
+    slow = pool_load.capability(snapshot_index[FIRST_PAIR_SNAPSHOTS["gtx1650ti"]])
     assert math.floor(slow * 1e4) == 1039472
     assert math.floor(fast * 1e4) == 1636070
 
@@ -184,6 +185,6 @@ def test_snapshot_index_skips_json_that_is_not_a_snapshot(tmp_path) -> None:
 def test_the_committed_pool_has_a_capacity_on_every_committed_shape(snapshot_index) -> None:
     for name in ("trace_anchor_1b.json", "trace_heavytail_1b.json"):
         dist = json.loads((CONFIGS / name).read_text())["length_dist"]
-        cap = pool_load.pool_capacity(pool_nodes(), SNAPSHOTS, dist, snapshot_index)
+        cap = pool_load.pool_capacity(pool_nodes(), current_snapshots(), dist, snapshot_index)
         assert set(cap) == {"gtx1650ti", "rtx3050"}
         assert all(c["capacity_rps"] > 0 for c in cap.values())

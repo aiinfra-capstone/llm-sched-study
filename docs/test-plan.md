@@ -118,9 +118,11 @@ These carry the published numbers, so each rule in `analysis-plan.md` has a test
 | Per-repeat seeds | Missing `repeat_seeds` with a seeded workload refuses; duplicate seeds refuse; each repeat's manifest carries its own seed |
 | Load targets | A utilisation target resolves to a rate through `pool_load`, and the manifest records both |
 | Capability arms | Unknown key, unknown policy, duplicate arm name and an unnamed arm in a multi-arm campaign all refuse; the arm reaches the manifest and the run id |
+| Arm precedence | An arm's setting overrides the campaign's for every key an arm may set, `threshold_t` included, and a cutoff is written for Threshold only |
 | Engine identity | Same, changed, died and unknown are distinguished; a failed read retries; an unreadable engine before a run stops the campaign before it writes anything |
 | Restartability | A run directory holding a manifest and a client log is skipped |
 | Refusals | A snapshot that is not the newest in its class, a pool node with no endpoint or log location, a co-located pool, and a placeholder snapshot outside `--dry-run` |
+| Tests survive recalibration | Refusal tests run against a synthetic snapshot index, and only the tests that read committed configs on purpose name a real snapshot id. The first pair's snapshots stay pinned where the history is what is checked |
 
 ### 3.8 Policies and both vehicles
 
@@ -129,12 +131,14 @@ Owned by the control plane, and the cross-seam CI is where the two meet.
 | Requirement | Acceptance |
 |---|---|
 | Each policy's rule | The score it computes, on a constructed node view |
-| Tie-breaking | Uniform over tied nodes, driven by the recorded draw; `jsq_fastfirst` resolves to the highest capability |
-| Capability | Service rate from the reference cell, with the documented fallback when a snapshot has no phase split |
+| Tie-breaking | Uniform over tied nodes, driven by the recorded draw; `jsq_fastfirst` resolves to the highest capability whatever order the state store lists the nodes in |
+| Capability | Service rate from the reference cell, with the documented fallback when a snapshot has no phase split. Pinned to the first pair's two snapshots at 103.9472 and 163.6070 tok/s, the numbers `tools/pool_load.py` is also pinned to, so the Java and Python copies cannot drift apart |
 | Capability overrides | An override reaches the policy and is recorded on the decision |
-| `ECT` | Prices from the matching cell, both modes, with the prior recorded; falls back to the scalar score when a cell is missing |
+| `ECT` | On two nodes where scalar capability and the cost model disagree, ECT picks the lower predicted completion. Known and unknown mode give different scores for the same request, and a changed output length changes a known-mode score. The fallback is compared against a millisecond score, not only checked for being finite. A one-node pool asserts nothing about pricing |
 | Admission | A request outside a node's bounds is refused there, and a node with no snapshot is not admissible |
 | Staleness veil | The view served is the one at `now - staleness`; concurrent writes do not corrupt it |
+| Concurrent dispatch | N simultaneous dispatches at `SchedulerGrpcService` in fixture mode: decision k sees exactly k earlier admissions. The veil's concurrent-write test covers the map, not read, decide and admit as one step |
+| Determinism inside `mvn test` | Two simulator runs of one manifest produce an identical dispatch sequence, asserted in the Java suite; `determinism_test.sh` alone is not part of that gate |
 | Determinism | Two simulator runs of one manifest produce an identical dispatch sequence |
 | Live and simulated parity | The same trace and manifest produce the same decisions where the state is the same |
 | A missing cost-model cell | Refuses rather than fabricating a service time |

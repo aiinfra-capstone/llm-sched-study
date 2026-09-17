@@ -41,6 +41,12 @@ figures/
 # survive without them.
 !runs/bench/*.json
 
+# The two cost-model derivations results.md quotes: phase R by workload, and the same with
+# intervals. Small, and both are regenerated whenever a class is recalibrated, so tracking
+# them is how a stale figure gets noticed.
+!runs/exp/cell_intervals_*.json
+!runs/exp/phase_ratio_*.json
+
 # Week 3's two determinations are small JSON and they ARE the deliverable — an admissible
 # set that lives only on my disk has not been reported alongside results (F-13), and a load
 # band nobody else can read is not a characterization.

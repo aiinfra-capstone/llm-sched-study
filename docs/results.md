@@ -31,12 +31,12 @@ RTX 3050 over GTX 1650 Ti. Cost-model columns from `tools/cell_intervals.py`
 (`runs/exp/cell_intervals_3050_over_1650ti.json`, intervals resample calibration batches).
 Operating columns are the ratios the steady cells of the live runs recorded at 2.4 req/s.
 
-| Workload | Prompt:output | R service, 1 slot | R service, 4 slots | R prefill, 1 slot | R decode, 1 slot | R decode, 4 slots | Operating R service | Operating R decode |
-|---|---:|---|---|---:|---|---|---:|---:|
-| generation | 0.50 | 1.39 [1.39, 1.40] | 2.17 [1.82, 2.57] | 8.64 | 1.19 | 1.69 [1.44, 1.98] | 1.51 | 1.44 |
-| balanced | 2.00 | 1.58 [1.57, 1.58] | 2.57 [2.14, 3.07] | 9.79 | 1.20 | 1.70 [1.44, 1.99] | 1.80 | 1.52 |
-| anchor | 3.00 | 1.79 [1.79, 1.80] | 3.02 [2.67, 3.39] | 9.91 | 1.19 | 1.70 [1.54, 1.87] | 2.24 | 1.79 |
-| summarisation | 13.76 | 2.59 [2.57, 2.60] | 4.41 [3.56, 5.41] | 11.12 | 1.20 | 1.71 [1.45, 2.01] | 4.57 | 2.98 |
+| Workload | Prompt:output | R service, 1 slot | R service, 4 slots | R prefill, 1 slot | R prefill, 4 slots | R decode, 1 slot | R decode, 4 slots | Operating R service | Operating R decode |
+|---|---:|---|---|---:|---|---|---|---:|---:|
+| generation | 0.50 | 1.38 [1.38, 1.38] | 2.16 [1.81, 2.57] | 8.72 | 7.01 [5.59, 8.81] | 1.19 | 1.77 [1.47, 2.12] | 1.51 | 1.44 |
+| balanced | 2.00 | 1.56 [1.56, 1.56] | 2.57 [2.13, 3.06] | 9.84 | 7.19 [5.61, 9.27] | 1.19 | 1.86 [1.52, 2.25] | 1.80 | 1.52 |
+| anchor | 3.00 | 1.78 [1.77, 1.78] | 3.10 [2.81, 3.42] | 9.97 | 7.16 [6.20, 8.34] | 1.19 | 2.07 [1.87, 2.29] | 2.24 | 1.79 |
+| summarisation | 13.76 | 2.56 [2.55, 2.58] | 4.51 [3.75, 5.40] | 11.15 | 7.29 [5.69, 9.43] | 1.19 | 2.54 [2.06, 3.08] | 4.57 | 2.98 |
 
 Supported: the same two machines look 1.39x or 2.59x apart at one slot depending only on the
 workload, and 2.2x to 4.4x at four slots.
@@ -49,11 +49,26 @@ efficiency. The memory-bandwidth explanation is dropped.
 The one-slot intervals are narrow because the engine is close to deterministic at fixed load.
 They carry no day-to-day variation, since each class was calibrated once.
 
-Every number in this section comes from the snapshots the first pair ran on, which predate
-the context pin, the campaign driver and the 1650 Ti rebuild. G2 replaces the 1650 Ti's
-snapshot, and when it does, this table, the capability figures below it and the utilisation
-targets in every campaign config are re-derived from the new one. Whether the ratios move is
-itself the answer to the open question above.
+**Re-derived on the recalibrated 1650 Ti** (`cm_..._20260917T043611Z_008`, measured on the
+rebuilt engine under `-c 55296 --cache-ram 0` and driver 580.178.04, G2). The service ratios
+and the one-slot phase ratios did not move: capability went from 1.574 to 1.560, R on service
+from 1.39 to 1.38 at one slot and from 4.41 to 4.51 at four on summarisation, all inside or
+beside their intervals.
+
+**What did move is the four-slot phase split, and it is an attribution rather than a speed.**
+Cell by cell against the 2026-08-31 snapshot, service time at four slots is within a few
+percent everywhere, while the prefill share at concurrency 2 and above is 33 to 48% lower. The
+engine attributes prompt evaluation differently once the context is pinned, and the total it
+is dividing did not change. So R on prefill at four slots reads 7.0 to 7.3 where the old
+snapshot read 10.6 to 11.2, and R on decode absorbs the difference.
+
+Two consequences. The first pair's campaigns ran under `-c 55296` but were priced by a
+snapshot measured without it, so the new snapshot is the better description of the engine
+those runs actually had; nothing about their service times or their latencies changes, and
+their manifests keep the snapshot that served them. The second is a caveat on the four-slot
+phase rows above: the 3050's snapshot still carries the older attribution, so those columns
+mix two conventions. The one-slot rows and every service row are clean. Recalibrating the 3050
+when it returns closes that, and it is the first thing to do with the pool back.
 
 **The 1650 Ti's prefill is the card, not the build.** Measured on 2026-09-16 and written up in
 section 10. What remains is the rebuild for provenance and the same bench on the 3050.

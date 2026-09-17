@@ -1,0 +1,131 @@
+{
+  "fast": {
+    "node_class": "rtx3050_ngl99_p4_q4km_llama32_1b",
+    "snapshot_id": "cm_rtx3050_ngl99_p4_q4km_llama32_1b_20260914T200053Z_008"
+  },
+  "slow": {
+    "node_class": "gtx1650ti_ngl99_p4_q4km_llama32_1b",
+    "snapshot_id": "cm_gtx1650ti_ngl99_p4_q4km_llama32_1b_20260917T043611Z_008"
+  },
+  "concurrency": 1,
+  "cells": [
+    {
+      "prompt_bucket": [
+        1,
+        128
+      ],
+      "output_bucket": [
+        1,
+        64
+      ],
+      "R_service": 1.5604474005201259,
+      "R_prefill": 8.62088100967441,
+      "R_decode": 1.1807131545896357,
+      "decode_over_prefill": 0.13695968582151077
+    },
+    {
+      "prompt_bucket": [
+        1,
+        128
+      ],
+      "output_bucket": [
+        65,
+        128
+      ],
+      "R_service": 1.3792544719110544,
+      "R_prefill": 8.71660258306221,
+      "R_decode": 1.186065766238984,
+      "decode_over_prefill": 0.13606973071638076
+    },
+    {
+      "prompt_bucket": [
+        129,
+        256
+      ],
+      "output_bucket": [
+        1,
+        64
+      ],
+      "R_service": 1.8952630878813899,
+      "R_prefill": 9.848292753205591,
+      "R_decode": 1.1804602178848247,
+      "decode_over_prefill": 0.11986445239461309
+    },
+    {
+      "prompt_bucket": [
+        129,
+        256
+      ],
+      "output_bucket": [
+        65,
+        128
+      ],
+      "R_service": 1.5589949375530496,
+      "R_prefill": 9.838336585925841,
+      "R_decode": 1.1861428197862132,
+      "decode_over_prefill": 0.12056335026014875
+    },
+    {
+      "prompt_bucket": [
+        257,
+        512
+      ],
+      "output_bucket": [
+        1,
+        64
+      ],
+      "R_service": 2.562165452020163,
+      "R_prefill": 11.147248079962957,
+      "R_decode": 1.1918859299420614,
+      "decode_over_prefill": 0.10692198840397765
+    },
+    {
+      "prompt_bucket": [
+        257,
+        512
+      ],
+      "output_bucket": [
+        65,
+        128
+      ],
+      "R_service": 1.9365265106916787,
+      "R_prefill": 11.153063178047223,
+      "R_decode": 1.1951835681499805,
+      "decode_over_prefill": 0.10716191140228472
+    }
+  ],
+  "profiles": [
+    {
+      "profile": "trace_generation_1b",
+      "mean_rho": 0.5,
+      "R_service": 1.3792544719110544,
+      "R_prefill": 8.71660258306221,
+      "R_decode": 1.186065766238984,
+      "unpriced_buckets": []
+    },
+    {
+      "profile": "trace_balanced_1b",
+      "mean_rho": 2.0,
+      "R_service": 1.5589949375530496,
+      "R_prefill": 9.838336585925841,
+      "R_decode": 1.1861428197862132,
+      "unpriced_buckets": []
+    },
+    {
+      "profile": "trace_anchor_1b",
+      "mean_rho": 3.0,
+      "R_service": 1.7361079287628156,
+      "R_prefill": 9.495540966408326,
+      "R_decode": 1.1835313562902612,
+      "unpriced_buckets": []
+    },
+    {
+      "profile": "trace_summarisation_1b",
+      "mean_rho": 13.76,
+      "R_service": 2.562165452020163,
+      "R_prefill": 11.147248079962957,
+      "R_decode": 1.1918859299420614,
+      "unpriced_buckets": []
+    }
+  ]
+}

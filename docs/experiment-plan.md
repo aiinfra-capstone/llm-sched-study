@@ -70,13 +70,14 @@ If E1.1 moves the 1650 Ti's prefill by more than the calibration's own interval,
 first pair's K1 numbers are then about a binary we cannot characterise, and the campaigns wait
 until the pair has been re-measured on the rebuilt engine.
 
-### Block 2: the pool, night one, about 7 hours
+### Block 2: the pool, night one, about 7.5 hours
 
 Run in this order. The ablation goes first because it decides which headline sentence the
 paper carries, and that is worth knowing before the rest of the machine time is spent.
 
 | # | Campaign | Runs | Replay | Closes |
 |---|---|---:|---:|---|
+| E2.0 | Recalibrate the 3050, promote, repoint the configs | 1 | 25 min | Both nodes on one phase-attribution convention (`results.md` section 2) |
 | E2.1 | `hw_calibration_ablation_3050.json` | 48 | 1.5 h | K2 |
 | E2.2 | `hw_seeded_anchor_3050.json` | 75 | 2.6 h | K3, and the first intervals that include arrivals |
 | E2.3 | `hw_staleness_h1_3050.json` | 36 | 1.2 h | K5, staleness half |
@@ -174,3 +175,9 @@ Append one line per campaign, newest last. Numbers go in `results.md`, not here.
 - **2026-09-17** E1.1b done, G1 closed. The 1650 Ti rebuilt with `pool-install.sh`, now
   reporting build 10569, and benching 760.9 pp512 against 754.6 before: nothing moved. E1.2
   run on the rebuilt engine.
+- **2026-09-17, 10:01** E1.2 done, G2 closed. The 1650 Ti recalibrated on the rebuilt engine
+  under the campaign settings, snapshots promoted, and every campaign config repointed at the
+  new one. Service ratios and capability did not move; the four-slot prefill share did, by a
+  third to a half, which is an attribution change from the context pin rather than a speed
+  change. First job with the pool back: recalibrate the 3050, so both nodes share one
+  attribution convention.

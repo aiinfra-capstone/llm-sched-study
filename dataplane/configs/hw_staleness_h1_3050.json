@@ -52,7 +52,7 @@
     }
   },
   "cost_model_snapshots": {
-    "gtx1650ti": "cm_gtx1650ti_ngl99_p4_q4km_llama32_1b_20260831T153652Z_008",
+    "gtx1650ti": "cm_gtx1650ti_ngl99_p4_q4km_llama32_1b_20260917T043611Z_008",
     "rtx3050": "cm_rtx3050_ngl99_p4_q4km_llama32_1b_20260914T200053Z_008"
   },
   "threshold_t": 130.0,

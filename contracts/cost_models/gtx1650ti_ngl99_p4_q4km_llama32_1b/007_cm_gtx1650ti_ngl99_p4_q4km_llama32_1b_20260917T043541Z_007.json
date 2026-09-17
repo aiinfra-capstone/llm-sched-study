@@ -1,0 +1,468 @@
+{
+  "cost_model_schema": 1,
+  "snapshot_id": "cm_gtx1650ti_ngl99_p4_q4km_llama32_1b_20260917T043541Z_007",
+  "node_class": "gtx1650ti_ngl99_p4_q4km_llama32_1b",
+  "measured_at_unix": 1789619741,
+  "calibration_run_ids": [
+    "cal_gtx1650ti_ngl99_p4_q4km_llama32_1b_1789619501"
+  ],
+  "form": "lookup_table",
+  "entries": [
+    {
+      "prompt_bucket": [
+        1,
+        128
+      ],
+      "output_bucket": [
+        1,
+        64
+      ],
+      "concurrency": 1,
+      "service_ms_mean": 610.227,
+      "service_ms_p50": 610.321,
+      "service_ms_p95": 611.889,
+      "tokens_per_s": 147.9856,
+      "n_samples": 8,
+      "prefill_ms_mean": 175.547,
+      "decode_ms_mean": 432.448
+    },
+    {
+      "prompt_bucket": [
+        1,
+        128
+      ],
+      "output_bucket": [
+        1,
+        64
+      ],
+      "concurrency": 2,
+      "service_ms_mean": 920.365,
+      "service_ms_p50": 920.347,
+      "service_ms_p95": 921.245,
+      "tokens_per_s": 100.2123,
+      "n_samples": 8,
+      "prefill_ms_mean": 177.878,
+      "decode_ms_mean": 649.45
+    },
+    {
+      "prompt_bucket": [
+        1,
+        128
+      ],
+      "output_bucket": [
+        1,
+        64
+      ],
+      "concurrency": 3,
+      "service_ms_mean": 1332.116,
+      "service_ms_p50": 1410.842,
+      "service_ms_p95": 1559.003,
+      "tokens_per_s": 62.6506,
+      "n_samples": 8,
+      "prefill_ms_mean": 286.192,
+      "decode_ms_mean": 927.635
+    },
+    {
+      "prompt_bucket": [
+        1,
+        128
+      ],
+      "output_bucket": [
+        1,
+        64
+      ],
+      "concurrency": 4,
+      "service_ms_mean": 1609.693,
+      "service_ms_p50": 1609.51,
+      "service_ms_p95": 1612.833,
+      "tokens_per_s": 70.4097,
+      "n_samples": 148,
+      "prefill_ms_mean": 435.196,
+      "decode_ms_mean": 1033.842
+    },
+    {
+      "prompt_bucket": [
+        1,
+        128
+      ],
+      "output_bucket": [
+        65,
+        128
+      ],
+      "concurrency": 1,
+      "service_ms_mean": 1052.967,
+      "service_ms_p50": 1053.381,
+      "service_ms_p95": 1054.954,
+      "tokens_per_s": 146.5032,
+      "n_samples": 8,
+      "prefill_ms_mean": 176.825,
+      "decode_ms_mean": 873.847
+    },
+    {
+      "prompt_bucket": [
+        1,
+        128
+      ],
+      "output_bucket": [
+        65,
+        128
+      ],
+      "concurrency": 2,
+      "service_ms_mean": 1497.619,
+      "service_ms_p50": 1497.619,
+      "service_ms_p95": 1500.206,
+      "tokens_per_s": 104.8186,
+      "n_samples": 8,
+      "prefill_ms_mean": 177.981,
+      "decode_ms_mean": 1226.431
+    },
+    {
+      "prompt_bucket": [
+        1,
+        128
+      ],
+      "output_bucket": [
+        65,
+        128
+      ],
+      "concurrency": 3,
+      "service_ms_mean": 2193.218,
+      "service_ms_p50": 2309.833,
+      "service_ms_p95": 2602.058,
+      "tokens_per_s": 65.9969,
+      "n_samples": 8,
+      "prefill_ms_mean": 287.529,
+      "decode_ms_mean": 1787.404
+    },
+    {
+      "prompt_bucket": [
+        1,
+        128
+      ],
+      "output_bucket": [
+        65,
+        128
+      ],
+      "concurrency": 4,
+      "service_ms_mean": 2267.0,
+      "service_ms_p50": 2517.686,
+      "service_ms_p95": 2519.093,
+      "tokens_per_s": 70.5074,
+      "n_samples": 8,
+      "prefill_ms_mean": 393.024,
+      "decode_ms_mean": 1733.829
+    },
+    {
+      "prompt_bucket": [
+        129,
+        256
+      ],
+      "output_bucket": [
+        1,
+        64
+      ],
+      "concurrency": 1,
+      "service_ms_mean": 783.606,
+      "service_ms_p50": 783.454,
+      "service_ms_p95": 784.531,
+      "tokens_per_s": 145.662,
+      "n_samples": 8,
+      "prefill_ms_mean": 341.785,
+      "decode_ms_mean": 439.385
+    },
+    {
+      "prompt_bucket": [
+        129,
+        256
+      ],
+      "output_bucket": [
+        1,
+        64
+      ],
+      "concurrency": 2,
+      "service_ms_mean": 1276.109,
+      "service_ms_p50": 1277.323,
+      "service_ms_p95": 1278.615,
+      "tokens_per_s": 89.8792,
+      "n_samples": 8,
+      "prefill_ms_mean": 347.695,
+      "decode_ms_mean": 750.72
+    },
+    {
+      "prompt_bucket": [
+        129,
+        256
+      ],
+      "output_bucket": [
+        1,
+        64
+      ],
+      "concurrency": 3,
+      "service_ms_mean": 1882.908,
+      "service_ms_p50": 2072.739,
+      "service_ms_p95": 2082.911,
+      "tokens_per_s": 61.3011,
+      "n_samples": 8,
+      "prefill_ms_mean": 557.875,
+      "decode_ms_mean": 1101.071
+    },
+    {
+      "prompt_bucket": [
+        129,
+        256
+      ],
+      "output_bucket": [
+        1,
+        64
+      ],
+      "concurrency": 4,
+      "service_ms_mean": 2123.661,
+      "service_ms_p50": 2294.753,
+      "service_ms_p95": 2299.833,
+      "tokens_per_s": 68.9838,
+      "n_samples": 8,
+      "prefill_ms_mean": 766.728,
+      "decode_ms_mean": 1090.112
+    },
+    {
+      "prompt_bucket": [
+        129,
+        256
+      ],
+      "output_bucket": [
+        65,
+        128
+      ],
+      "concurrency": 1,
+      "service_ms_mean": 1234.275,
+      "service_ms_p50": 1234.295,
+      "service_ms_p95": 1237.295,
+      "tokens_per_s": 143.903,
+      "n_samples": 8,
+      "prefill_ms_mean": 342.807,
+      "decode_ms_mean": 889.052
+    },
+    {
+      "prompt_bucket": [
+        129,
+        256
+      ],
+      "output_bucket": [
+        65,
+        128
+      ],
+      "concurrency": 2,
+      "service_ms_mean": 1872.326,
+      "service_ms_p50": 1872.993,
+      "service_ms_p95": 1874.222,
+      "tokens_per_s": 96.6095,
+      "n_samples": 8,
+      "prefill_ms_mean": 348.427,
+      "decode_ms_mean": 1346.14
+    },
+    {
+      "prompt_bucket": [
+        129,
+        256
+      ],
+      "output_bucket": [
+        65,
+        128
+      ],
+      "concurrency": 3,
+      "service_ms_mean": 2688.826,
+      "service_ms_p50": 2848.038,
+      "service_ms_p95": 3152.777,
+      "tokens_per_s": 60.7275,
+      "n_samples": 8,
+      "prefill_ms_mean": 558.209,
+      "decode_ms_mean": 1906.411
+    },
+    {
+      "prompt_bucket": [
+        129,
+        256
+      ],
+      "output_bucket": [
+        65,
+        128
+      ],
+      "concurrency": 4,
+      "service_ms_mean": 2898.516,
+      "service_ms_p50": 3237.992,
+      "service_ms_p95": 3238.401,
+      "tokens_per_s": 68.654,
+      "n_samples": 8,
+      "prefill_ms_mean": 769.419,
+      "decode_ms_mean": 1861.818
+    },
+    {
+      "prompt_bucket": [
+        257,
+        512
+      ],
+      "output_bucket": [
+        1,
+        64
+      ],
+      "concurrency": 1,
+      "service_ms_mean": 1149.267,
+      "service_ms_p50": 1149.343,
+      "service_ms_p95": 1151.232,
+      "tokens_per_s": 142.6725,
+      "n_samples": 8,
+      "prefill_ms_mean": 698.141,
+      "decode_ms_mean": 448.459
+    },
+    {
+      "prompt_bucket": [
+        257,
+        512
+      ],
+      "output_bucket": [
+        1,
+        64
+      ],
+      "concurrency": 2,
+      "service_ms_mean": 2000.796,
+      "service_ms_p50": 2001.008,
+      "service_ms_p95": 2003.417,
+      "tokens_per_s": 78.8965,
+      "n_samples": 8,
+      "prefill_ms_mean": 704.645,
+      "decode_ms_mean": 939.69
+    },
+    {
+      "prompt_bucket": [
+        257,
+        512
+      ],
+      "output_bucket": [
+        1,
+        64
+      ],
+      "concurrency": 3,
+      "service_ms_mean": 2807.828,
+      "service_ms_p50": 3011.403,
+      "service_ms_p95": 3170.757,
+      "tokens_per_s": 60.2136,
+      "n_samples": 8,
+      "prefill_ms_mean": 1135.021,
+      "decode_ms_mean": 1225.124
+    },
+    {
+      "prompt_bucket": [
+        257,
+        512
+      ],
+      "output_bucket": [
+        1,
+        64
+      ],
+      "concurrency": 4,
+      "service_ms_mean": 3372.158,
+      "service_ms_p50": 3716.536,
+      "service_ms_p95": 3724.028,
+      "tokens_per_s": 67.7971,
+      "n_samples": 8,
+      "prefill_ms_mean": 1555.826,
+      "decode_ms_mean": 1281.048
+    },
+    {
+      "prompt_bucket": [
+        257,
+        512
+      ],
+      "output_bucket": [
+        65,
+        128
+      ],
+      "concurrency": 1,
+      "service_ms_mean": 1608.568,
+      "service_ms_p50": 1607.542,
+      "service_ms_p95": 1614.001,
+      "tokens_per_s": 141.3064,
+      "n_samples": 8,
+      "prefill_ms_mean": 699.074,
+      "decode_ms_mean": 906.928
+    },
+    {
+      "prompt_bucket": [
+        257,
+        512
+      ],
+      "output_bucket": [
+        65,
+        128
+      ],
+      "concurrency": 2,
+      "service_ms_mean": 2607.991,
+      "service_ms_p50": 2607.646,
+      "service_ms_p95": 2611.152,
+      "tokens_per_s": 87.2215,
+      "n_samples": 8,
+      "prefill_ms_mean": 705.209,
+      "decode_ms_mean": 1545.942
+    },
+    {
+      "prompt_bucket": [
+        257,
+        512
+      ],
+      "output_bucket": [
+        65,
+        128
+      ],
+      "concurrency": 3,
+      "service_ms_mean": 3844.11,
+      "service_ms_p50": 4229.97,
+      "service_ms_p95": 4258.426,
+      "tokens_per_s": 59.5224,
+      "n_samples": 8,
+      "prefill_ms_mean": 1131.934,
+      "decode_ms_mean": 2264.795
+    },
+    {
+      "prompt_bucket": [
+        257,
+        512
+      ],
+      "output_bucket": [
+        65,
+        128
+      ],
+      "concurrency": 4,
+      "service_ms_mean": 4161.318,
+      "service_ms_p50": 4675.736,
+      "service_ms_p95": 4681.388,
+      "tokens_per_s": 67.4534,
+      "n_samples": 8,
+      "prefill_ms_mean": 1557.869,
+      "decode_ms_mean": 2067.749
+    }
+  ],
+  "stochastic": {
+    "model": "lognormal_multiplier",
+    "sigma": 0.08229,
+    "autocorr_time_s": 5.1676,
+    "fit_r2": 0.7841
+  },
+  "admissibility": {
+    "max_prompt": 512,
+    "max_output": 128,
+    "timeout_ceiling_ms": 60000
+  },
+  "provenance": {
+    "engine": "llamacpp",
+    "engine_version": "b10569+p1+cuda13.2",
+    "quant": "Q4_K_M",
+    "gpu": "NVIDIA GeForce GTX 1650 Ti",
+    "driver": "580.178.04",
+    "prefix_caching": false,
+    "engine_config": {
+      "ngl": 99,
+      "threads": 6,
+      "parallel": 4
+    }
+  }
+}

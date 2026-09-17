@@ -171,3 +171,6 @@ Append one line per campaign, newest last. Numbers go in `results.md`, not here.
   (lag-1 0.093, censored in every bootstrap draw), which is K6 at its strongest. Its snapshots
   are not promoted: the config claimed an engine build that does not exist here and carried no
   driver field, both now fixed, and the class is recalibrated when a CPU pair is scheduled.
+- **2026-09-17** E1.1b done, G1 closed. The 1650 Ti rebuilt with `pool-install.sh`, now
+  reporting build 10569, and benching 760.9 pp512 against 754.6 before: nothing moved. E1.2
+  run on the rebuilt engine.

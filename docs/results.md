@@ -268,8 +268,9 @@ number missing.
 
 | Build | pp512 tok/s | tg128 tok/s |
 |---|---:|---:|
-| As installed (CUDA Release, `sm_75`, native) | 754.6 ± 1.8 | 149.8 ± 0.5 |
+| As installed, reporting build 1 | 754.6 ± 1.8 | 149.8 ± 0.5 |
 | Same commit, `GGML_CUDA_FORCE_MMQ=ON` | 748.6 ± 1.6 | 148.6 ± 0.2 |
+| Rebuilt by `pool-install.sh`, reporting build 10569 | 760.9 ± 0.5 | 152.2 ± 0.5 |
 
 Three things that together answer the open question in section 2.
 
@@ -290,9 +291,13 @@ has a GTX 1660, Turing without tensor cores like the 1650 Ti, at pp512 149 tok/s
 classes. Ours is 9 to 10x on a different model and quantisation, between a laptop 1650 Ti at
 50 W and a laptop 3050. Same order, same direction.
 
-**What this leaves open.** The rebuild itself, which is provenance rather than performance: it
-stamps the build number so a manifest can prove its engine. And the same bench on the 3050,
-which needs that laptop back.
+**The rebuild changed nothing measurable** (G1 closed, 2026-09-17). `pool-install.sh` rebuilt
+the engine from the same commit with the build number stamped, and it benches 0.8% faster on
+prefill and 1.6% on decode, both inside the spread of the runs it replaced. So the engine
+under every campaign on the first pair was the engine we thought it was, and the pinned build
+number is now something a manifest can prove rather than something we assert.
+
+**What this leaves open.** The same bench on the 3050, which needs that laptop back.
 
 **Transport.** C-5 derives `transport_residual_ms` per request. Over 759 warmed-up successful
 rows of the four anchors: mean 5.86 ms, sd 2.66, p50 5.16, and flat in load (5.37 ms quiet

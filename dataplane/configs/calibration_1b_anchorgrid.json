@@ -49,7 +49,7 @@
     "engine_version": "b10569+p1+cuda13.2",
     "quant": "Q4_K_M",
     "gpu": "NVIDIA GeForce GTX 1650 Ti",
-    "driver": "580.173.02",
+    "driver": "580.178.04",
     "prefix_caching": false,
     "engine_config": {
       "ngl": 99,

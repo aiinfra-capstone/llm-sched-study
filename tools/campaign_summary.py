@@ -88,7 +88,17 @@ BLOCK_CAP_FRACTION = 5
 SOKAL_C = 5.0
 CHUNK = 250
 
-_REPEAT_RE = re.compile(r"_r(\d+)$")
+# A simulated replay of a hardware run keeps its run id with "_sim" on the end.
+_REPEAT_RE = re.compile(r"_r(\d+)(?:_sim)?$")
+
+
+def where(workload: str, stale: float, lam: float) -> tuple:
+    """The labels that name a point in every random stream drawn at it.
+
+    A campaign with one workload names its points by staleness and rate, as every campaign
+    did before workloads existed, so its streams and therefore its intervals are unchanged.
+    """
+    return (workload, stale, lam) if workload else (stale, lam)
 
 
 def stream(seed: int, *labels: object) -> np.random.Generator:
@@ -485,6 +495,7 @@ def comparisons(
     seed: int,
     stale: float,
     lam: float,
+    workload: str = "",
 ) -> dict:
     """Every cell at a point as a ratio to one reference cell, paired by arrival.
 
@@ -508,7 +519,7 @@ def comparisons(
                 restricted,
                 n_boot,
                 block,
-                stream(seed, "arm", ref, policy, stale, lam),
+                stream(seed, "arm", ref, policy, *where(workload, stale, lam)),
                 restricted[ref].e2e.shape[1],
             )
             vr, va = point_values(restricted[ref]), point_values(restricted[policy])
@@ -648,9 +659,16 @@ def operating_r(rows: pd.DataFrame, fast: str, slow: str) -> dict:
 # ------------------------------------------------------------------------- summarise
 
 
-def summarise(frame: pd.DataFrame, n_boot: int, seed: int, runset_path: Path | None = None) -> dict:
-    mans = manifests(runset_path) if runset_path is not None else {}
-    snaps = snapshot_index()
+def prepare(
+    frame: pd.DataFrame, mans: dict[str, dict], snaps: dict[str, dict]
+) -> tuple[pd.DataFrame, dict[str, str], dict[str, tuple], dict[str, dict]]:
+    """A run set made ready for per-point work, the same way for every tool that reads one.
+
+    Labels each policy with its capability arm, attaches the SLO reference times, names the
+    runs the harness rejected with its reasons, counts failures over whole runs, and drops
+    the rejected runs' rows. `tools/compare_sets.py` calls this so a cross-set contrast is
+    computed on exactly the cells a summary reports.
+    """
     frame = frame.copy()
     frame["repeat"] = frame["run_id"].map(repeat_of)
     # A capability arm changes what the calibrated policies are told about the nodes, so two
@@ -706,6 +724,86 @@ def summarise(frame: pd.DataFrame, n_boot: int, seed: int, runset_path: Path | N
     # every cell it belonged to, and its rows stop here (analysis plan, section 2).
     frame = frame[~frame["run_id"].isin(set(invalid_runs))]
 
+    return frame, arms, invalid_runs, failures
+
+
+def point_setup(window: pd.DataFrame) -> tuple[dict[str, Cell], int, dict[str, float], int]:
+    """Cells, arrival positions, autocorrelation times and block length for one point."""
+    positions = pd.Index(sorted(window["req_id"].unique()))
+    n = len(positions)
+    cells = {
+        p: Cell(p, {rep: r for rep, r in g.groupby("repeat")}, positions)
+        for p, g in window.groupby("policy")
+    }
+    taus = {
+        p: max(integrated_tau(c.e2e[i]) for i in range(len(c.repeats))) for p, c in cells.items()
+    }
+    # The block length comes from the cells that are not visibly climbing. A queue that
+    # grows for the whole run is correlated over the whole run, and letting it set the
+    # block would widen every stable cell's interval to match the one that is not.
+    level = {p: third_ratio(c) < CLIMB_RATIO for p, c in cells.items()}
+    tau_block = max((taus[p] for p in cells if level[p]), default=max(taus.values()))
+    block = max(math.ceil(n ** (1 / 3)), math.ceil(2 * tau_block))
+    block = min(block, max(1, n // BLOCK_CAP_FRACTION))
+    return cells, n, taus, block
+
+
+def invalid_at(
+    invalid_runs: dict[str, tuple], cells: dict[str, Cell], stale: float, lam: float
+) -> dict[str, dict[str, list[str]]]:
+    """Rejected runs belonging to each cell at one point.
+
+    Read from the manifests rather than from the rows, because a run the harness marked
+    invalid is usually not in the run set at all: `runset` leaves it out. Its cell would
+    otherwise look complete while missing the repeat most likely to be the policy's worst,
+    which is the one that made the run invalid.
+    """
+    return {
+        p: {
+            rid: reasons
+            for rid, (pol, st, lm, reasons) in invalid_runs.items()
+            if pol == p and st == float(stale) and lm == round(float(lam), 6)
+        }
+        for p in {*cells, *(v[0] for v in invalid_runs.values())}
+    }
+
+
+def load_trend(qa: list[dict]) -> dict | None:
+    """How the queue-aware gain moves with load, lightest to heaviest steady point."""
+    if len(qa) < 2:
+        return None
+    lo_pt, hi_pt = qa[0], qa[-1]
+    ms = hi_pt["_queue_aware"]["ms"] - lo_pt["_queue_aware"]["ms"]
+    ratio = hi_pt["_queue_aware"]["ratio"] / lo_pt["_queue_aware"]["ratio"]
+    return {
+        "from_lambda": lo_pt["lambda_rps"],
+        "to_lambda": hi_pt["lambda_rps"],
+        "queue_aware_gain_ms": [r1(pt["_queue_aware"]["ms_value"]) for pt in qa],
+        "wjsq_over_jsq": [r4(pt["_queue_aware"]["ratio_value"]) for pt in qa],
+        "lambdas": [pt["lambda_rps"] for pt in qa],
+        "change_ms": r1(hi_pt["_queue_aware"]["ms_value"] - lo_pt["_queue_aware"]["ms_value"]),
+        "change_ms_ci95": [r1(x) for x in interval(ms)],
+        "change_in_ratio": r4(
+            hi_pt["_queue_aware"]["ratio_value"] / lo_pt["_queue_aware"]["ratio_value"]
+        ),
+        "change_in_ratio_ci95": [r4(x) for x in interval(ratio)],
+        "reading": (
+            "H1's load clause predicts the queue-aware gain shrinks with load: change_ms "
+            "below zero, change_in_ratio above one"
+        ),
+    }
+
+
+def summarise(frame: pd.DataFrame, n_boot: int, seed: int, runset_path: Path | None = None) -> dict:
+    mans = manifests(runset_path) if runset_path is not None else {}
+    snaps = snapshot_index()
+    frame, arms, invalid_runs, failures = prepare(frame, mans, snaps)
+    # A campaign with several workloads (Poisson and MMPP at one utilisation, or three
+    # shapes at one slow-node load) can put two of them at the same rate. They are different
+    # conditions, so the workload is part of what a point is.
+    workloads = {rid: m["config"].get("workload") or "" for rid, m in mans.items()}
+    frame["workload"] = frame["run_id"].map(lambda r: workloads.get(r, ""))
+
     ok_rows = measured(frame)
     fast = ok_rows.groupby("chosen_node")["service_ms"].mean().idxmin()
     gen_seeds = {m["config"].get("gen_seed") for m in mans.values()}
@@ -714,45 +812,21 @@ def summarise(frame: pd.DataFrame, n_boot: int, seed: int, runset_path: Path | N
 
     points = []
     blocks = {}
-    for (stale, lam), at_point in sorted(frame.groupby(["staleness_s", "lambda"])):
+    for (wl, stale, lam), at_point in sorted(frame.groupby(["workload", "staleness_s", "lambda"])):
+        at = where(wl, stale, lam)
         window = at_point[~at_point["is_warmup"]]
-        positions = pd.Index(sorted(window["req_id"].unique()))
-        n = len(positions)
-        cells = {
-            p: Cell(p, {rep: r for rep, r in g.groupby("repeat")}, positions)
-            for p, g in window.groupby("policy")
-        }
-        taus = {
-            p: max(integrated_tau(c.e2e[i]) for i in range(len(c.repeats)))
-            for p, c in cells.items()
-        }
-        # The block length comes from the cells that are not visibly climbing. A queue that
-        # grows for the whole run is correlated over the whole run, and letting it set the
-        # block would widen every stable cell's interval to match the one that is not.
-        level = {p: third_ratio(c) < CLIMB_RATIO for p, c in cells.items()}
-        tau_block = max((taus[p] for p in cells if level[p]), default=max(taus.values()))
-        block = max(math.ceil(n ** (1 / 3)), math.ceil(2 * tau_block))
-        block = min(block, max(1, n // BLOCK_CAP_FRACTION))
-        blocks[f"s{float(stale):g}_l{round(float(lam), 3)}"] = block
+        cells, n, taus, block = point_setup(window)
+        blocks[f"{wl + '_' if wl else ''}s{float(stale):g}_l{round(float(lam), 3)}"] = block
         # One cell at a time for the per-policy intervals: a cell's own interval needs no
         # pairing, and cells here can hold different repeats. Every contrast below draws
         # its own cells together, on the repeats they share.
         draws = {
-            p: cell_draws({p: c}, n_boot, block, stream(seed, "cell", p, stale, lam), n)[p]
+            p: cell_draws({p: c}, n_boot, block, stream(seed, "cell", p, *at), n)[p]
             for p, c in cells.items()
         }
-        # Read from the manifests rather than from the rows, because a run the harness
-        # marked invalid is usually not in the run set at all: `runset` leaves it out. Its
-        # cell would otherwise look complete while missing the repeat most likely to be the
-        # policy's worst, which is the one that made the run invalid.
-        invalid = {
-            p: {
-                rid: reasons
-                for rid, (pol, st, lm, reasons) in invalid_runs.items()
-                if pol == p and st == float(stale) and lm == round(float(lam), 6)
-            }
-            for p in {*cells, *(v[0] for v in invalid_runs.values())}
-        }
+        invalid = invalid_at(
+            {r: v for r, v in invalid_runs.items() if workloads.get(r, "") == wl}, cells, stale, lam
+        )
 
         policies = {}
         steady = {}
@@ -760,7 +834,7 @@ def summarise(frame: pd.DataFrame, n_boot: int, seed: int, runset_path: Path | N
         for p, c in sorted(cells.items()):
             v = point_values(c)
             g = window[window["policy"] == p]
-            gate = climb(c, block, n_boot, stream(seed, "climb", p, stale, lam))
+            gate = climb(c, block, n_boot, stream(seed, "climb", p, *at))
             steady[p] = not gate["transient"]
             policies[p] = {
                 "runs": len(c.repeats),
@@ -798,7 +872,7 @@ def summarise(frame: pd.DataFrame, n_boot: int, seed: int, runset_path: Path | N
         h1_status = h1_head["status"]
         if restricted is not None:
             vals = {p: point_values(restricted[p]) for p in H1_POLICIES}
-            d = cell_draws(restricted, n_boot, block, stream(seed, "h1", stale, lam), n)
+            d = cell_draws(restricted, n_boot, block, stream(seed, "h1", *at), n)
             for s in LATENCY_STATS:
                 v = {p: vals[p][s] for p in H1_POLICIES}
                 boot = (d["wjsq"][s] - d["jsq"][s]) - (
@@ -845,9 +919,7 @@ def summarise(frame: pd.DataFrame, n_boot: int, seed: int, runset_path: Path | N
         queue_aware = None
         aware_cells, _ = paired(cells, steady, invalid, ("jsq", "wjsq"))
         if aware_cells is not None:
-            aware_draws = cell_draws(
-                aware_cells, n_boot, block, stream(seed, "trend", stale, lam), n
-            )
+            aware_draws = cell_draws(aware_cells, n_boot, block, stream(seed, "trend", *at), n)
             queue_aware = {
                 "ms": aware_draws["jsq"]["mean"] - aware_draws["wjsq"]["mean"],
                 "ratio": aware_draws["wjsq"]["mean"] / aware_draws["jsq"]["mean"],
@@ -858,7 +930,7 @@ def summarise(frame: pd.DataFrame, n_boot: int, seed: int, runset_path: Path | N
             }
 
         against_reference = comparisons(
-            cells, steady, invalid, n_boot, block, seed, float(stale), float(lam)
+            cells, steady, invalid, n_boot, block, seed, float(stale), float(lam), wl
         )
         man = next((mans[r] for r in at_point["run_id"].unique() if r in mans), None)
         util = (
@@ -869,6 +941,7 @@ def summarise(frame: pd.DataFrame, n_boot: int, seed: int, runset_path: Path | N
 
         points.append(
             {
+                **({"workload": wl} if wl else {}),
                 "lambda_rps": round(float(lam), 3),
                 "staleness_s": float(stale),
                 "block_length_requests": block,
@@ -887,7 +960,7 @@ def summarise(frame: pd.DataFrame, n_boot: int, seed: int, runset_path: Path | N
                         "static_weighted",
                         n_boot,
                         block,
-                        stream(seed, "queue_blind", stale, lam),
+                        stream(seed, "queue_blind", *at),
                     ),
                     "queue_aware": contrast(
                         cells,
@@ -897,7 +970,7 @@ def summarise(frame: pd.DataFrame, n_boot: int, seed: int, runset_path: Path | N
                         "wjsq",
                         n_boot,
                         block,
-                        stream(seed, "queue_aware", stale, lam),
+                        stream(seed, "queue_aware", *at),
                     ),
                 },
                 "against_reference": against_reference,
@@ -908,34 +981,22 @@ def summarise(frame: pd.DataFrame, n_boot: int, seed: int, runset_path: Path | N
         )
 
     # How the queue-aware gain moves with load, lightest to heaviest steady point.
-    trend = None
     fresh = min(pt["staleness_s"] for pt in points)
-    qa = [pt for pt in points if pt["_queue_aware"] is not None and pt["staleness_s"] == fresh]
-    if len(qa) >= 2:
-        lo_pt, hi_pt = qa[0], qa[-1]
-        ms = hi_pt["_queue_aware"]["ms"] - lo_pt["_queue_aware"]["ms"]
-        ratio = hi_pt["_queue_aware"]["ratio"] / lo_pt["_queue_aware"]["ratio"]
-        trend = {
-            "from_lambda": lo_pt["lambda_rps"],
-            "to_lambda": hi_pt["lambda_rps"],
-            "queue_aware_gain_ms": [r1(pt["_queue_aware"]["ms_value"]) for pt in qa],
-            "wjsq_over_jsq": [r4(pt["_queue_aware"]["ratio_value"]) for pt in qa],
-            "lambdas": [pt["lambda_rps"] for pt in qa],
-            "change_ms": r1(hi_pt["_queue_aware"]["ms_value"] - lo_pt["_queue_aware"]["ms_value"]),
-            "change_ms_ci95": [r1(x) for x in interval(ms)],
-            "change_in_ratio": r4(
-                hi_pt["_queue_aware"]["ratio_value"] / lo_pt["_queue_aware"]["ratio_value"]
-            ),
-            "change_in_ratio_ci95": [r4(x) for x in interval(ratio)],
-            "reading": (
-                "H1's load clause predicts the queue-aware gain shrinks with load: change_ms "
-                "below zero, change_in_ratio above one"
-            ),
-        }
+    trends = {}
+    for wl in sorted({pt.get("workload", "") for pt in points}):
+        qa = [
+            pt
+            for pt in points
+            if pt["_queue_aware"] is not None
+            and pt["staleness_s"] == fresh
+            and pt.get("workload", "") == wl
+        ]
+        trends[wl] = load_trend(qa)
     for pt in points:
         pt.pop("_queue_aware")
 
     first = frame.iloc[0]
+    several = len(trends) > 1
     return {
         "run_ids": sorted(frame["run_id"].unique().tolist()),
         "vehicle": sorted(frame["vehicle"].unique().tolist()),
@@ -965,7 +1026,10 @@ def summarise(frame: pd.DataFrame, n_boot: int, seed: int, runset_path: Path | N
         "slo_reference": "fastest pool node's concurrency-1 cost-model cell for the request's bucket",
         "failures": failures,
         "invalid_runs": {rid: v[3] for rid, v in invalid_runs.items()},
-        "load_trend_queue_aware": trend,
+        "load_trend_queue_aware": None if several else next(iter(trends.values())),
+        # One trend per workload when a campaign holds several, since a rate that rises from
+        # one workload's point to another's is not load.
+        **({"load_trend_queue_aware_by_workload": trends} if several else {}),
         "points": points,
     }
 
@@ -980,6 +1044,17 @@ def _cell(r: dict, s: str, pct: bool = False) -> str:
     if pct:
         return f"{v:.0%} [{lo:.0%}, {hi:.0%}]"
     return f"{v:.0f} [{lo:.0f}, {hi:.0f}]"
+
+
+def _r2(v: float | None) -> str:
+    # The phase ratios are undefined on a simulated replay, which records no phase timings.
+    return "n/a" if v is None else f"{v:.2f}"
+
+
+def _tpot(r: dict) -> str:
+    # A simulated replay records no per-token timings, so its TPOT is undefined.
+    v = r["tpot_mean"]["value"]
+    return "n/a" if v is None else f"{v:.1f}"
 
 
 def markdown(summary: dict) -> str:
@@ -1011,7 +1086,7 @@ def markdown(summary: dict) -> str:
         out.append("")
     for pt in summary["points"]:
         out += [
-            f"### {pt['lambda_rps']} req/s"
+            f"### {pt['workload'] + ', ' if pt.get('workload') else ''}{pt['lambda_rps']} req/s"
             + (f", staleness {pt['staleness_s']:g} s" if pt["staleness_s"] else ""),
             "",
             f"Block length {pt['block_length_requests']} requests over {pt['measured_arrivals']} measured arrivals.",
@@ -1033,7 +1108,7 @@ def markdown(summary: dict) -> str:
         ]
         for p, r in pt["policies"].items():
             out.append(
-                f"| {p} | {_cell(r, 'ttft_mean')} | {_cell(r, 'ttft_p95')} | {r['tpot_mean']['value']:.1f} | "
+                f"| {p} | {_cell(r, 'ttft_mean')} | {_cell(r, 'ttft_p95')} | {_tpot(r)} | "
                 f"{_cell(r, 'slo_e2e_2x', True)} | {_cell(r, 'slo_e2e_5x', True)} | "
                 f"{_cell(r, 'slo_ttft_2x', True)} | {_cell(r, 'slo_ttft_5x', True)} |"
             )
@@ -1119,15 +1194,19 @@ def markdown(summary: dict) -> str:
             out += [
                 "",
                 (
-                    f"Operating R in steady cells, slow over fast (request-weighted): service {q['R_service']:.2f}, "
-                    f"prefill {q['R_prefill']:.2f}, decode {q['R_decode']:.2f}."
+                    f"Operating R in steady cells, slow over fast (request-weighted): service {_r2(q['R_service'])}, "
+                    f"prefill {_r2(q['R_prefill'])}, decode {_r2(q['R_decode'])}."
                 ),
             ]
         out.append("")
-    t = summary["load_trend_queue_aware"]
-    if t:
+    by_workload = summary.get("load_trend_queue_aware_by_workload") or {
+        "": summary["load_trend_queue_aware"]
+    }
+    for wl, t in by_workload.items():
+        if not t:
+            continue
         out += [
-            "### Queue-aware calibration gain against load",
+            f"### Queue-aware calibration gain against load{', ' + wl if wl else ''}",
             "",
             f"JSQ - WJSQ on the mean at {t['lambdas']}: {t['queue_aware_gain_ms']} ms; WJSQ/JSQ {t['wjsq_over_jsq']}.",
             (

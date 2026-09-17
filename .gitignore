@@ -46,6 +46,9 @@ figures/
 # them is how a stale figure gets noticed.
 !runs/exp/cell_intervals_*.json
 !runs/exp/phase_ratio_*.json
+# The G4 evidence: what the simulator got right and wrong on the held-out shape runs.
+!runs/exp/*/contrast_check.json
+!runs/exp/*/contrast_check.md
 
 # Week 3's two determinations are small JSON and they ARE the deliverable — an admissible
 # set that lives only on my disk has not been reported alongside results (F-13), and a load

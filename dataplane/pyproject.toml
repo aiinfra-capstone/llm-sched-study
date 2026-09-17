@@ -101,6 +101,9 @@ omit = [
     "*/generate_manifest.py",
     "*/tools/measure_transport_overhead.py",
     "*/tools/phase_ratio.py",
+    "*/tools/promote_calibration.py",
+    "*/tools/compare_sets.py",
+    "*/tools/contrast_check.py",
     # Aditya's workstream (W4 and F-23). Gating them here would fail my job on code he
     # edits, so they stay out until we agree who owns them.
     "*/tools/sweep.py",

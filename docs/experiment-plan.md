@@ -53,6 +53,9 @@ Blocks run top to bottom. Inside a block, order is fixed.
 | E0.3 | Simulator sweep for the value-of-calibration curve, so the hardware arm lands on a curve we already understand | A | K2, first half |
 | E0.4 | P4 on contrasts against the three held-out shape run sets | A | G4 |
 
+E0.4 is done (2026-09-17) and it fails: see `results.md` section 8. The repair is the control
+plane's, and the criterion is rerun the same way once it lands.
+
 E0.1 and E0.2 are done (2026-09-16). The tree and this doc set are committed, `p4_validate.py`
 is in the coverage omit list, and `hw_runs.py` and `campaign_summary.py` are back at 100%, so
 G0 and G3 hold. One item found while closing E0.2 moved to `test-plan.md` section 2.
@@ -77,7 +80,7 @@ paper carries, and that is worth knowing before the rest of the machine time is 
 
 | # | Campaign | Runs | Replay | Closes |
 |---|---|---:|---:|---|
-| E2.0 | Recalibrate the 3050, promote, repoint the configs | 1 | 25 min | Both nodes on one phase-attribution convention (`results.md` section 2) |
+| E2.0 | Recalibrate the 3050, then `tools/promote_calibration.py <run_dir>`, which backfills the phase split, checks C-3, prints what moved, promotes, repoints every config and dry-runs every campaign | 1 | 25 min | Both nodes on one phase-attribution convention (`results.md` section 2) |
 | E2.1 | `hw_calibration_ablation_3050.json` | 51 | 1.6 h | K2 |
 | E2.2 | `hw_seeded_anchor_3050.json` | 90 | 3.0 h | K3, the first intervals that include arrivals, and 6.2's WRR against the random draw |
 | E2.3 | `hw_staleness_h1_3050.json` | 36 | 1.2 h | K5, staleness half |
@@ -181,3 +184,9 @@ Append one line per campaign, newest last. Numbers go in `results.md`, not here.
   third to a half, which is an attribution change from the context pin rather than a speed
   change. First job with the pool back: recalibrate the 3050, so both nodes share one
   attribution convention.
+- **2026-09-17, evening** E0.4 done, G4 open and failing. The 90 held-out shape runs replayed
+  and checked on contrasts: the simulator's `wjsq/jsq` sits above the hardware's at all six
+  points and five of the six miss, so H2 is off the ladder until the simulator is repaired
+  (`results.md` section 8). The tooling for the nights is in: `tools/promote_calibration.py`
+  for E2.0, `tools/compare_sets.py` for 6.4 and 6.5, `tools/contrast_check.py` for 6.6, and
+  `tools/p4_validate.py --contrasts` to drive the last of them.

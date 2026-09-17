@@ -1,0 +1,114 @@
+{
+  "criterion": "analysis-plan 6.6: ranking, WJSQ/JSQ and the H1 interaction at every point",
+  "passes": false,
+  "points": [
+    {
+      "lambda_rps": 2.385,
+      "staleness_s": 0.0,
+      "misses": [
+        "the simulator cannot define the H1 interaction (undefined: transient cell(s) round_robin)"
+      ],
+      "ranking": {
+        "hardware": [
+          "wjsq",
+          "threshold",
+          "jsq",
+          "static_weighted",
+          "round_robin"
+        ],
+        "simulator": [
+          "wjsq",
+          "threshold",
+          "jsq",
+          "static_weighted",
+          "round_robin"
+        ]
+      },
+      "wjsq_over_jsq": {
+        "hardware": 0.8661,
+        "hardware_ci95": [
+          0.8338,
+          0.8961
+        ],
+        "simulator": 0.881
+      },
+      "h1_interaction_log": {
+        "hardware": 0.2213,
+        "hardware_ci95": [
+          0.0891,
+          0.3458
+        ],
+        "simulator": null
+      },
+      "absolute_error_percent": {
+        "jsq": {
+          "p50": 18.8,
+          "p95": 21.7
+        },
+        "round_robin": {
+          "p50": 21.6,
+          "p95": 129.1
+        },
+        "static_weighted": {
+          "p50": 14.8,
+          "p95": 28.5
+        },
+        "threshold": {
+          "p50": 22.9,
+          "p95": 46.3
+        },
+        "wjsq": {
+          "p50": 23.9,
+          "p95": 22.6
+        }
+      }
+    },
+    {
+      "lambda_rps": 3.195,
+      "staleness_s": 0.0,
+      "misses": [
+        "WJSQ over JSQ outside the hardware interval"
+      ],
+      "ranking": {
+        "hardware": [
+          "wjsq",
+          "jsq"
+        ],
+        "simulator": [
+          "wjsq",
+          "jsq"
+        ]
+      },
+      "wjsq_over_jsq": {
+        "hardware": 0.8444,
+        "hardware_ci95": [
+          0.82,
+          0.8704
+        ],
+        "simulator": 0.8869
+      },
+      "absolute_error_percent": {
+        "jsq": {
+          "p50": 16.5,
+          "p95": 40.2
+        },
+        "round_robin": {
+          "p50": 20.8,
+          "p95": 95.4
+        },
+        "static_weighted": {
+          "p50": 20.0,
+          "p95": 80.4
+        },
+        "threshold": {
+          "p50": 342.7,
+          "p95": 177.6
+        },
+        "wjsq": {
+          "p50": 23.4,
+          "p95": 32.4
+        }
+      }
+    }
+  ]
+}

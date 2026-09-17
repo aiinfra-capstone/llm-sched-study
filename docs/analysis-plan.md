@@ -141,7 +141,12 @@ Three utilisation points, five repeats with independent arrivals and scheduler s
 
 ### 6.4 Heavy-tailed and bursty, `hw_heavytail_3050.json` (K5)
 
-Compared against the seeded anchor at the same pool utilisation.
+Compared against the seeded anchor at the same pool utilisation, with `tools/compare_sets.py`.
+A campaign that runs several workloads into one run set names them `runset.parquet#workload`,
+and the workload is part of what a point is, so Poisson and MMPP at one utilisation stay
+apart even though they share a mean rate. Sets are different runs, so a difference between
+two sets' ratios is taken on independent draws and is separated when its interval excludes
+zero.
 
 | Outcome | Conclusion licensed |
 |---|---|
@@ -151,6 +156,10 @@ Compared against the seeded anchor at the same pool utilisation.
 
 ### 6.5 Shapes at matched load, `hw_shapes_matched_3050.json` (K4)
 
+`tools/compare_sets.py --ordered`, over the three workloads of the one run set. Monotone means
+the three ratios fall in the order named; the extremes are separated when the difference
+between the first and the last excludes zero.
+
 | Outcome | Conclusion licensed |
 |---|---|
 | Ordering generation, balanced, summarisation holds with the extremes separated, at matched slow-node utilisation | K4 stands as a shape result, and the elevation is a measured finding |
@@ -159,8 +168,13 @@ Compared against the seeded anchor at the same pool utilisation.
 
 ### 6.6 Simulator validation on contrasts (gates H2)
 
-Run through `tools/p4_validate.py` against the three held-out shape run sets, per policy and
-point, on steady cells only.
+Run through `tools/p4_validate.py --contrasts` against the three held-out shape run sets, per
+policy and point, on steady cells only. It replays each hardware run, summarises the replays
+with `campaign_summary.py` exactly as the hardware was summarised, and applies the three tests
+below in `tools/contrast_check.py`, which exits non-zero when any of them misses. A ranking
+miss between two policies whose hardware intervals overlap is still a miss, and is listed
+separately so a reader can see whether the simulator disagreed with the hardware or with its
+noise.
 
 Passes when all three hold:
 

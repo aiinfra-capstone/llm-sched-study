@@ -1,0 +1,102 @@
+{
+  "criterion": "analysis-plan 6.6: ranking, WJSQ/JSQ and the H1 interaction at every point",
+  "passes": false,
+  "points": [
+    {
+      "lambda_rps": 2.385,
+      "staleness_s": 0.0,
+      "misses": [
+        "WJSQ over JSQ outside the hardware interval"
+      ],
+      "ranking": {
+        "hardware": [
+          "threshold",
+          "wjsq",
+          "jsq",
+          "static_weighted"
+        ],
+        "simulator": [
+          "threshold",
+          "wjsq",
+          "jsq",
+          "static_weighted"
+        ]
+      },
+      "wjsq_over_jsq": {
+        "hardware": 0.7687,
+        "hardware_ci95": [
+          0.7301,
+          0.8103
+        ],
+        "simulator": 0.8168
+      },
+      "absolute_error_percent": {
+        "jsq": {
+          "p50": 36.8,
+          "p95": 10.7
+        },
+        "round_robin": {
+          "p50": 36.2,
+          "p95": 17.5
+        },
+        "static_weighted": {
+          "p50": 40.8,
+          "p95": 3.0
+        },
+        "threshold": {
+          "p50": 57.3,
+          "p95": 38.6
+        },
+        "wjsq": {
+          "p50": 60.1,
+          "p95": 22.6
+        }
+      }
+    },
+    {
+      "lambda_rps": 3.195,
+      "staleness_s": 0.0,
+      "misses": [
+        "WJSQ over JSQ outside the hardware interval"
+      ],
+      "ranking": {
+        "hardware": [
+          "threshold",
+          "wjsq",
+          "jsq"
+        ],
+        "simulator": [
+          "threshold",
+          "wjsq",
+          "jsq"
+        ]
+      },
+      "wjsq_over_jsq": {
+        "hardware": 0.7375,
+        "hardware_ci95": [
+          0.6915,
+          0.7879
+        ],
+        "simulator": 0.7911
+      },
+      "absolute_error_percent": {
+        "jsq": {
+          "p50": 44.3,
+          "p95": 13.3
+        },
+        "static_weighted": {
+          "p50": 38.9,
+          "p95": 14.4
+        },
+        "threshold": {
+          "p50": 50.0,
+          "p95": 58.8
+        },
+        "wjsq": {
+          "p50": 54.5,
+          "p95": 18.8
+        }
+      }
+    }
+  ]
+}

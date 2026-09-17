@@ -220,8 +220,33 @@ lengths, so this is in sample.
 **Simulator.** F-23 on the single-node 1650 Ti pool: p50 error -16.5% to -19.4% at the three
 steady anchors and -7.8% at 1.98 req/s, which is transient and whose percentiles are not
 quoted. The fixes that brought it inside ±25% were chosen while watching this error, so it is
-in sample. Two-node validation on contrasts, on the held-out shape runs, is pending and is the
-gate on every simulator claim.
+in sample.
+
+**The simulator fails the contrast criterion (G4 open).** E0.4, run on 2026-09-17: all 90
+held-out shape runs replayed through `tools/p4_validate.py --contrasts`, summarised the same
+way as the hardware, and checked against analysis plan 6.6 by `tools/contrast_check.py`. Five
+of six points miss, and they miss in one direction:
+
+| Shape | Point | Hardware `wjsq/jsq` | Simulator | Ranking | Absolute p50 error |
+|---|---|---|---|---|---|
+| generation | 2.385 | 0.889 [0.850, 0.926] | 0.915 | Differs, both swapped pairs overlap on hardware | 27 of 30 runs within ±25% |
+| generation | 3.195 | 0.900 [0.870, 0.933] | 0.919 | Matches | |
+| balanced | 2.385 | 0.866 [0.834, 0.896] | 0.881 | Matches | 5 of 30 runs within ±25% |
+| balanced | 3.195 | 0.844 [0.820, 0.870] | 0.887 | Matches | |
+| summarisation | 2.385 | 0.769 [0.730, 0.810] | 0.817 | Matches | 1 of 30 runs within ±25% |
+| summarisation | 3.195 | 0.738 [0.692, 0.788] | 0.791 | Matches | |
+
+The simulator's ratio is above the hardware's at every one of the six points, by 0.015 to
+0.053. It reproduces which policy wins and by what order, and it understates how much queue
+awareness buys, most on the shape where the gain is largest. The one H1 interaction it can
+compare against is outside the hardware interval on generation (0.07 against -0.008 [-0.093,
+0.066]), and on balanced it cannot be computed at all because RoundRobin is transient in the
+replay where it is steady on hardware.
+
+Until this is closed, every simulator figure is illustrative and H2 is off the ladder, which
+is what G4 was written to enforce. The single-run absolute error is reported beside it and
+decides nothing: generation passes ±25% on 27 of 30 runs and still misses the criterion,
+summarisation passes on 1 of 30 and gets five of six rankings right.
 
 How the error moved, for the record:
 
@@ -388,7 +413,7 @@ Listed so that nothing re-enters from an old figure or an old summary.
 | 1650 Ti build flags unknown; its cost model predates the context pin and the driver | K1 | Engine bench and rebuild, then recalibration |
 | The harness shares a 6-core host with the slow node | K1 and every latency on that node | A third host, one anchor rerun |
 | Two nodes | H1's generality, Threshold's meaning | Simulator with 1 fast plus k slow |
-| Simulator validated single-node, in sample, on absolute latency | Every simulator claim, including H2 | The contrast criterion on the held-out shape runs |
+| The simulator understates `wjsq/jsq` at all six held-out shape points, by 0.015 to 0.053, and fails the contrast criterion | Every simulator claim, including H2, is illustrative until it is repaired | Section 8, E0.4. Open on the control-plane side |
 | Anchor trace is development data | Anchor results | Reported as development results; shapes and heavy-tailed traces are held out |
 | Shape is also campaign order and time of night | K4 | Interleaved shapes in the matched-load campaign |
 | The spec PDF disagrees on H1's sign and H2's observable | A reviewer given the spec | Recorded as deviations in `research-plan.md` section 7 |

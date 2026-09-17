@@ -11,15 +11,21 @@ archive of runs/exp/ + runs/worker_logs/ (e.g. the drive copy) — it is read
 only, never committed. Sim outputs go under --out (default: temp dir outside
 the repo unless given).
 
-Done when each of the 5 policies at each of the 3 anchor load points
-(mpr2_1650ti_3050, 45 runs) is within ±25% on p50 and p95, or the misses are
-explained.
+Two criteria. The absolute one, each run within ±25% on p50 and p95, is reported
+and decides nothing on its own. With --contrasts, the simulated runs are joined
+into a run set, summarised by tools/campaign_summary.py exactly as the hardware
+was, and compared on the contrasts analysis-plan 6.6 requires (ranking, WJSQ over
+JSQ, the H1 interaction) by tools/contrast_check.py. That verdict is the one that
+decides whether any simulator figure is citable. Run it against the three shape
+run sets, which played no part in building the simulator.
+
+Each run replays the trace its own manifest names, so the shape campaigns and the
+seeded campaigns, whose repeats each have their own trace, need no --trace.
 
 Usage:
   uv run --project dataplane python tools/p4_validate.py \
-    --hardware-root "C:/path with spaces/exp/mpr2_1650ti_3050" \
-    --trace runs/traces/anchor_1b.trace.jsonl \
-    --out /tmp/p4_sims --tolerance 25
+    --hardware-root runs/exp/phase_balanced_1650ti_3050 \
+    --out /tmp/p4_balanced --contrasts
 """
 
 from __future__ import annotations
@@ -35,7 +41,6 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SNAPSHOT_ROOT = REPO_ROOT / "contracts" / "cost_models"
-TRACE_DEFAULT = REPO_ROOT / "runs" / "traces" / "anchor_1b.trace.jsonl"
 
 
 def find_mvn() -> str:
@@ -114,6 +119,50 @@ def compare_one(
     return r.returncode, out
 
 
+def contrasts(hw_root: Path, out_root: Path) -> int:
+    """Join the simulated runs, summarise them like the hardware, and apply 6.6."""
+    hw_summary = hw_root / "summary.json"
+    if not hw_summary.is_file():
+        print(f"no {hw_summary}; run tools/campaign_summary.py on the hardware run set first")
+        return 1
+    steps = [
+        ["uv", "run", "--project", "dataplane", "runset", str(out_root)],
+        [
+            "uv",
+            "run",
+            "--project",
+            "dataplane",
+            "python",
+            str(REPO_ROOT / "tools" / "campaign_summary.py"),
+            str(out_root / "runset.parquet"),
+            "--out",
+            str(out_root / "summary"),
+        ],
+    ]
+    for cmd in steps:
+        r = subprocess.run(cmd, capture_output=True, text=True, check=False, cwd=REPO_ROOT)
+        if r.returncode != 0:
+            print(f"P4 contrasts FAILED at {' '.join(cmd[4:6])}:\n{(r.stdout + r.stderr)[-1500:]}")
+            return 1
+    r = subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "tools" / "contrast_check.py"),
+            "--hardware",
+            str(hw_summary),
+            "--simulator",
+            str(out_root / "summary.json"),
+            "--out",
+            str(out_root / "contrast_check"),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    print(r.stdout)
+    return r.returncode
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         description="P4: replay hardware manifests through SimApp and compare"
@@ -127,8 +176,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--trace",
         type=Path,
-        default=TRACE_DEFAULT,
-        help="trace with the same request stream the hardware saw",
+        default=None,
+        help="replay this trace for every run; default is the trace each manifest names",
+    )
+    ap.add_argument(
+        "--contrasts",
+        action="store_true",
+        help="after the replays, check analysis-plan 6.6 against <hardware-root>/summary.json",
     )
     ap.add_argument("--cost-models", type=Path, default=SNAPSHOT_ROOT)
     ap.add_argument(
@@ -145,7 +199,9 @@ def main(argv: list[str] | None = None) -> int:
     # SimApp runs with cwd=controlplane, and -Dexec.args splits on spaces, so every
     # path SimApp sees must be absolute and space-free. The hardware root itself may
     # contain spaces (it is only read via Python), but trace / cost-models / out must not.
-    trace: Path = args.trace if args.trace.is_absolute() else (REPO_ROOT / args.trace)
+    fixed_trace: Path | None = None
+    if args.trace is not None:
+        fixed_trace = args.trace if args.trace.is_absolute() else (REPO_ROOT / args.trace)
     cost_models: Path = (
         args.cost_models if args.cost_models.is_absolute() else (REPO_ROOT / args.cost_models)
     )
@@ -164,7 +220,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"no runs with manifest.json under {hw_root}")
         return 1
     print(f"P4: {len(run_dirs)} hardware runs under {hw_root}")
-    print(f"  trace: {trace}")
+    print(f"  trace: {fixed_trace if fixed_trace else 'the one each manifest names'}")
     print(f"  cost models: {cost_models}")
 
     if args.dry_run:
@@ -173,10 +229,6 @@ def main(argv: list[str] | None = None) -> int:
         if len(run_dirs) > 5:
             print(f"  ... and {len(run_dirs) - 5} more")
         return 0
-
-    if not trace.exists():
-        print(f"trace not found: {trace}")
-        return 1
 
     out_root = args.out or Path(tempfile.mkdtemp(prefix="p4_sims_"))
     if not out_root.is_absolute():
@@ -197,6 +249,13 @@ def main(argv: list[str] | None = None) -> int:
                 break
             continue
         run_id = man.get("run_id", run_dir.name)
+        trace = fixed_trace or (REPO_ROOT / man["trace_path"])
+        if not trace.exists():
+            print(f"\n=== {run_id} ===\n  FAIL: trace not found: {trace}")
+            failures.append(f"{run_id}: trace not found")
+            if not args.keep_going:
+                break
+            continue
         policy = man.get("policy", "?")
         point = man.get("config", {}).get("operating_point", "?")
         sim_dir = out_root / f"{run_id}_sim"
@@ -276,6 +335,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     if failures and not args.keep_going:
         print(f"Stopped early ({len(failures)} failures). Rerun with --keep-going to see the rest.")
+    if args.contrasts and not nerr:
+        return contrasts(hw_root, out_root)
     if nerr:
         print("P4 FAILED: comparison errors (see above) — not citable until they are fixed.")
         return 1

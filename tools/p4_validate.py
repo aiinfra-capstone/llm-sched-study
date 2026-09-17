@@ -45,7 +45,9 @@ def find_mvn() -> str:
     return found
 
 
-def run_one_sim(trace: Path, hw_manifest: Path, out_dir: Path, cost_models: Path) -> tuple[bool, str]:
+def run_one_sim(
+    trace: Path, hw_manifest: Path, out_dir: Path, cost_models: Path
+) -> tuple[bool, str]:
     """Run SimApp for one hardware manifest. Returns (ok, log tail).
 
     `mvn exec:java -Dexec.args=...` splits on spaces, so a manifest under a path
@@ -69,10 +71,20 @@ def run_one_sim(trace: Path, hw_manifest: Path, out_dir: Path, cost_models: Path
         "-Dexec.mainClass=com.sched.sim.SimApp",
         f"-Dexec.args={trace} {manifest_arg} {out_dir} --deterministic --cost-models {cost_models}",
     ]
-    r = subprocess.run(cmd, cwd=str(REPO_ROOT / "controlplane"),
-                       capture_output=True, text=True, shell=False, check=False)
+    r = subprocess.run(
+        cmd,
+        cwd=str(REPO_ROOT / "controlplane"),
+        capture_output=True,
+        text=True,
+        shell=False,
+        check=False,
+    )
     tail = (r.stdout[-1500:] + "\n" + r.stderr[-1500:]).strip()
-    if r.returncode != 0 or "Error during simulation" in r.stdout or "Error during simulation" in r.stderr:
+    if (
+        r.returncode != 0
+        or "Error during simulation" in r.stdout
+        or "Error during simulation" in r.stderr
+    ):
         return False, tail
     if not list(out_dir.glob("scheduler_*.jsonl")):
         return False, f"no scheduler log in {out_dir}\n{tail[-800:]}"
@@ -81,30 +93,51 @@ def run_one_sim(trace: Path, hw_manifest: Path, out_dir: Path, cost_models: Path
     return True, tail
 
 
-def compare_one(hw_manifest: Path, hw_dir: Path, sim_dir: Path, tolerance: float) -> tuple[int, str]:
+def compare_one(
+    hw_manifest: Path, hw_dir: Path, sim_dir: Path, tolerance: float
+) -> tuple[int, str]:
     """Run f23_compare in P4 mode. Returns (exit code, output)."""
-    cmd = [sys.executable, str(REPO_ROOT / "tools" / "f23_compare.py"),
-           "--manifest", str(hw_manifest),
-           "--sim-dir", str(sim_dir),
-           "--hardware-run-dir", str(hw_dir),
-           "--tolerance", str(tolerance)]
+    cmd = [
+        sys.executable,
+        str(REPO_ROOT / "tools" / "f23_compare.py"),
+        "--manifest",
+        str(hw_manifest),
+        "--sim-dir",
+        str(sim_dir),
+        "--hardware-run-dir",
+        str(hw_dir),
+        "--tolerance",
+        str(tolerance),
+    ]
     r = subprocess.run(cmd, capture_output=True, text=True, check=False)
     out = (r.stdout + r.stderr).strip()
     return r.returncode, out
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="P4: replay hardware manifests through SimApp and compare")
-    ap.add_argument("--hardware-root", type=Path, required=True,
-                    help="directory containing hardware run dirs (each with manifest.json)")
-    ap.add_argument("--trace", type=Path, default=TRACE_DEFAULT,
-                    help="trace with the same request stream the hardware saw")
+    ap = argparse.ArgumentParser(
+        description="P4: replay hardware manifests through SimApp and compare"
+    )
+    ap.add_argument(
+        "--hardware-root",
+        type=Path,
+        required=True,
+        help="directory containing hardware run dirs (each with manifest.json)",
+    )
+    ap.add_argument(
+        "--trace",
+        type=Path,
+        default=TRACE_DEFAULT,
+        help="trace with the same request stream the hardware saw",
+    )
     ap.add_argument("--cost-models", type=Path, default=SNAPSHOT_ROOT)
-    ap.add_argument("--out", type=Path, default=None,
-                    help="where SimApp outputs go (default: temp dir)")
+    ap.add_argument(
+        "--out", type=Path, default=None, help="where SimApp outputs go (default: temp dir)"
+    )
     ap.add_argument("--tolerance", type=float, default=25.0)
-    ap.add_argument("--keep-going", action="store_true",
-                    help="compare remaining runs after a SimApp failure")
+    ap.add_argument(
+        "--keep-going", action="store_true", help="compare remaining runs after a SimApp failure"
+    )
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args(argv)
 
@@ -113,7 +146,9 @@ def main(argv: list[str] | None = None) -> int:
     # path SimApp sees must be absolute and space-free. The hardware root itself may
     # contain spaces (it is only read via Python), but trace / cost-models / out must not.
     trace: Path = args.trace if args.trace.is_absolute() else (REPO_ROOT / args.trace)
-    cost_models: Path = args.cost_models if args.cost_models.is_absolute() else (REPO_ROOT / args.cost_models)
+    cost_models: Path = (
+        args.cost_models if args.cost_models.is_absolute() else (REPO_ROOT / args.cost_models)
+    )
     if not hw_root.exists():
         print(f"hardware root not found: {hw_root}")
         return 1
@@ -122,8 +157,9 @@ def main(argv: list[str] | None = None) -> int:
     if (hw_root / "manifest.json").exists():
         run_dirs = [hw_root]
     else:
-        run_dirs = sorted(p for p in hw_root.iterdir()
-                          if p.is_dir() and (p / "manifest.json").exists())
+        run_dirs = sorted(
+            p for p in hw_root.iterdir() if p.is_dir() and (p / "manifest.json").exists()
+        )
     if not run_dirs:
         print(f"no runs with manifest.json under {hw_root}")
         return 1
@@ -135,7 +171,7 @@ def main(argv: list[str] | None = None) -> int:
         for d in run_dirs[:5]:
             print(f"  would replay {d.name}")
         if len(run_dirs) > 5:
-            print(f"  ... and {len(run_dirs)-5} more")
+            print(f"  ... and {len(run_dirs) - 5} more")
         return 0
 
     if not trace.exists():
@@ -173,8 +209,16 @@ def main(argv: list[str] | None = None) -> int:
             if not ok:
                 print(f"  FAIL: SimApp failed:\n  {tail[-1200:]}")
                 failures.append(f"{run_id}: SimApp failed")
-                results.append({"run_id": run_id, "policy": policy, "point": point,
-                                "rc": 1, "err_p50": None, "err_p95": None})
+                results.append(
+                    {
+                        "run_id": run_id,
+                        "policy": policy,
+                        "point": point,
+                        "rc": 1,
+                        "err_p50": None,
+                        "err_p95": None,
+                    }
+                )
                 if not args.keep_going:
                     break
                 continue
@@ -195,8 +239,16 @@ def main(argv: list[str] | None = None) -> int:
                     err_p95 = float(parts[i95])
                 except (ValueError, IndexError):
                     err_p50 = err_p95 = None
-        results.append({"run_id": run_id, "policy": policy, "point": point,
-                        "rc": rc, "err_p50": err_p50, "err_p95": err_p95})
+        results.append(
+            {
+                "run_id": run_id,
+                "policy": policy,
+                "point": point,
+                "rc": rc,
+                "err_p50": err_p50,
+                "err_p95": err_p95,
+            }
+        )
         if rc == 1:
             failures.append(f"{run_id}: comparison failed")
             if not args.keep_going:
@@ -219,7 +271,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  {pol:15s} {pt!s:8s}  pass {passed}/{len(rows)}  outside {outside}  error {err}")
         for rid, e50, e95 in errs:
             print(f"      MISS {rid}: p50={e50:+.1f}% p95={e95:+.1f}%")
-    print(f"\n{len(results)}/{len(run_dirs)} runs compared: {npass} pass, {nfail} outside tolerance, {nerr} errors")
+    print(
+        f"\n{len(results)}/{len(run_dirs)} runs compared: {npass} pass, {nfail} outside tolerance, {nerr} errors"
+    )
     if failures and not args.keep_going:
         print(f"Stopped early ({len(failures)} failures). Rerun with --keep-going to see the rest.")
     if nerr:

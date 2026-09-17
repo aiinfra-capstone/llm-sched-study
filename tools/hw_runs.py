@@ -659,9 +659,14 @@ def pre_run_manifest(
         config["ect_prior_output_len"] = c.ect_prior_output_len
     if run.arm.name:
         config["capability_arm"] = run.arm.name
-    config.update(run.arm.config)
     if run.policy == "threshold":
         config["threshold_t"] = c.threshold_t
+    # The arm last, so its setting wins over the campaign's. Writing the campaign's cutoff
+    # after it, as this once did, meant an arm's threshold_t never reached the scheduler.
+    # A cutoff is only meaningful to Threshold, so other policies in the arm do not carry it.
+    config.update(
+        {k: v for k, v in run.arm.config.items() if k != "threshold_t" or run.policy == "threshold"}
+    )
     if run.point.target is not None:
         config["load_target"] = run.point.target
     config["mean_lambda"] = round(pool_load.mean_rate(header["arrival"]) * run.point.rate_scale, 6)

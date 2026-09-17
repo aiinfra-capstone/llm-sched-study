@@ -99,7 +99,9 @@ def synthesize_snapshot(
     two identical nodes, not one node.
     """
     if phase_skew <= 0:
-        raise ValueError(f"phase_skew is a ratio of two slowdowns and must be > 0, got {phase_skew}")
+        raise ValueError(
+            f"phase_skew is a ratio of two slowdowns and must be > 0, got {phase_skew}"
+        )
     suffix = "" if phase_skew == 1.0 else f"_skew{phase_skew:g}"
     new_id = f"synth_{base['snapshot_id']}__x{factor:g}{suffix}"
     # Deep copy via json round-trip to avoid mutating the base
@@ -552,7 +554,9 @@ def main(argv: list[str] | None = None) -> int:
             if base_manifest["nodes"]:
                 slow_node = dict(base_manifest["nodes"][0])
                 slow_node["node_id"] = slow_node_id
-                slow_node["host"] = f"slow-{R:g}x{skew_tag}-{i}" if k_slow > 1 else f"slow-{R:g}x{skew_tag}"
+                slow_node["host"] = (
+                    f"slow-{R:g}x{skew_tag}-{i}" if k_slow > 1 else f"slow-{R:g}x{skew_tag}"
+                )
                 slow_node["gpu"] = "synthesised"
                 nodes.append(slow_node)
         manifest = build_sweep_manifest(

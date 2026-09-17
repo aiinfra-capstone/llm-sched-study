@@ -78,18 +78,34 @@ def sim_latencies_ms(sim_dir: Path, warmup_s: float) -> list[float]:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="F-23 comparison for one operating point")
-    ap.add_argument("--manifest", type=Path, required=True,
-                    help="hardware manifest for this run (warmup, policy, lambda, operating point)")
+    ap.add_argument(
+        "--manifest",
+        type=Path,
+        required=True,
+        help="hardware manifest for this run (warmup, policy, lambda, operating point)",
+    )
     ap.add_argument("--sim-dir", type=Path, required=True)
-    ap.add_argument("--load-band", type=Path, required=False, default=None,
-                    help="single-node baseline (runs/anchors/load_band.json)")
-    ap.add_argument("--hardware-run-dir", type=Path, required=False, default=None,
-                    help="two-node baseline (P4): directory with this run's own client_*.jsonl")
+    ap.add_argument(
+        "--load-band",
+        type=Path,
+        required=False,
+        default=None,
+        help="single-node baseline (runs/anchors/load_band.json)",
+    )
+    ap.add_argument(
+        "--hardware-run-dir",
+        type=Path,
+        required=False,
+        default=None,
+        help="two-node baseline (P4): directory with this run's own client_*.jsonl",
+    )
     ap.add_argument("--tolerance", type=float, default=25.0)
     args = ap.parse_args()
 
     if (args.load_band is None) == (args.hardware_run_dir is None):
-        print("FAIL: pass exactly one of --load-band (single-node) or --hardware-run-dir (two-node P4)")
+        print(
+            "FAIL: pass exactly one of --load-band (single-node) or --hardware-run-dir (two-node P4)"
+        )
         return 1
 
     manifest = json.loads(args.manifest.read_text())

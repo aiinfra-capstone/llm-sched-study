@@ -226,11 +226,32 @@ Determinism: 200 of 200 decisions identical across two simulator runs of one man
   interval of 31 to 91 s, and no decay beyond one window in 66% of draws. Removing a linear
   trend, throughput fell 2.3% across the segment, gives 61.8 s. Report it as an estimate of
   the order of a minute, with its interval, on a class that is in no pool.
+- **The CPU 1B class, measured for 80 minutes on purpose, shows no drift at all.**
+  `cal_cpu_ngl0_p4_q4km_llama32_1b_1789585417`, 2026-09-16: 4,800 s of sustained load at four
+  slots, 4,268 completions, 160 windows of 30 s, 6.7 slot turnovers per window, so neither
+  short nor cadence-limited. The autocorrelation shows no decay to fit: lag-1 correlation
+  0.093 [-0.035, 0.180], censored in 100% of block-bootstrap draws, and unchanged by
+  detrending (0.085; the segment's linear trend is +1.0% over 80 minutes). τ is therefore
+  below one 30 s window, and `tau_resolved` is false for the honest reason. Throughput held at
+  56.9 tok/s with a coefficient of variation of 0.033 and a p95/p05 band of 1.12x, and a
+  single calibrated mean understates its own standard error by 1.23x.
+  This is the strongest version of K6 we can measure: the class most likely to drift, given
+  the longest segment we have run, on a machine doing nothing else, still has no
+  autocorrelation time this workload can see.
 - **Both GPU classes are censored at the 5 s floor.** The resolution rule is that a node whose
   τ is shorter than about five service times cannot show its own drift, which is the reusable
   half of this result.
 - The RTX 3050 held sustained throughput with a coefficient of variation of 0.009 across 60
   windows.
+- **The 8B CPU number is now the outlier, not the headline.** It is the only class where a
+  decay was fitted at all, its own record calls it unresolved, and the 1B class on the same
+  host and the same engine shows none over a segment two and a half times longer. Quote K6 as
+  the bound and the 8B figure as the one class that hinted otherwise.
+- **Provenance note.** That calibration ran on the CUDA build with `-ngl 0`, which is what a
+  CPU node in this pool would be. Its config claimed `b10569+p1+cpu` and carried no driver
+  field, so its snapshots do not satisfy C-3 and are not promoted to `contracts/cost_models`.
+  The config is fixed; the class is recalibrated when a CPU pair is actually scheduled, on the
+  rebuilt engine. Nothing in the drift result depends on those two fields.
 - **Restart and memory pressure.** On the 3050, engine start times recovered from its logs
   place 118 of 132 runs, and service time moved +0.05% per hour since restart [-0.19, +0.32]
   over 0 to 4.5 h (`runs/exp/restart_effect_rtx3050.json`). The 1650 Ti's engine logs were not

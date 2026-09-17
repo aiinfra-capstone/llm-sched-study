@@ -842,6 +842,119 @@
           }
         }
       },
+      "against_reference": {
+        "reference": "jsq",
+        "policies": {
+          "round_robin": {
+            "status": "defined",
+            "repeats_used": [
+              1,
+              2,
+              3
+            ],
+            "repeats_dropped": {},
+            "single_repeat": false,
+            "mean_ratio": 1.5794,
+            "mean_ratio_ci95": [
+              1.3568,
+              1.8342
+            ],
+            "mean_separated": true,
+            "p95_ratio": 2.2571,
+            "p95_ratio_ci95": [
+              1.6175,
+              2.8483
+            ],
+            "p95_separated": true,
+            "slo_e2e_2x_delta": -0.2018,
+            "slo_e2e_2x_delta_ci95": [
+              -0.2339,
+              -0.1678
+            ]
+          },
+          "static_weighted": {
+            "status": "defined",
+            "repeats_used": [
+              1,
+              2,
+              3
+            ],
+            "repeats_dropped": {},
+            "single_repeat": false,
+            "mean_ratio": 1.0964,
+            "mean_ratio_ci95": [
+              0.9981,
+              1.2171
+            ],
+            "mean_separated": false,
+            "p95_ratio": 1.2728,
+            "p95_ratio_ci95": [
+              1.0563,
+              1.7363
+            ],
+            "p95_separated": true,
+            "slo_e2e_2x_delta": -0.0064,
+            "slo_e2e_2x_delta_ci95": [
+              -0.0684,
+              0.0468
+            ]
+          },
+          "threshold": {
+            "status": "defined",
+            "repeats_used": [
+              1,
+              2,
+              3
+            ],
+            "repeats_dropped": {},
+            "single_repeat": false,
+            "mean_ratio": 0.882,
+            "mean_ratio_ci95": [
+              0.8459,
+              0.9216
+            ],
+            "mean_separated": true,
+            "p95_ratio": 0.6897,
+            "p95_ratio_ci95": [
+              0.6148,
+              0.7882
+            ],
+            "p95_separated": true,
+            "slo_e2e_2x_delta": 0.1608,
+            "slo_e2e_2x_delta_ci95": [
+              0.1193,
+              0.2
+            ]
+          },
+          "wjsq": {
+            "status": "defined",
+            "repeats_used": [
+              1,
+              2,
+              3
+            ],
+            "repeats_dropped": {},
+            "single_repeat": false,
+            "mean_ratio": 0.8661,
+            "mean_ratio_ci95": [
+              0.8374,
+              0.8969
+            ],
+            "mean_separated": true,
+            "p95_ratio": 0.8148,
+            "p95_ratio_ci95": [
+              0.7168,
+              0.8609
+            ],
+            "p95_separated": true,
+            "slo_e2e_2x_delta": 0.1333,
+            "slo_e2e_2x_delta_ci95": [
+              0.1094,
+              0.1579
+            ]
+          }
+        }
+      },
       "utilisation": {
         "nodes": {
           "gtx1650ti": {
@@ -860,6 +973,14 @@
           }
         },
         "fast_node": "rtx3050",
+        "achieved_rps_by_policy": {
+          "jsq": 2.5728,
+          "round_robin": 2.5728,
+          "static_weighted": 2.5729,
+          "threshold": 2.5728,
+          "wjsq": 2.5729
+        },
+        "achieved_pool_utilisation": 0.5233,
         "slow_node": "gtx1650ti",
         "pool_capacity_rps": 4.9165,
         "pool_utilisation": 0.4851,
@@ -1548,6 +1669,47 @@
           }
         }
       },
+      "against_reference": {
+        "reference": "jsq",
+        "policies": {
+          "round_robin": {
+            "status": "undefined: transient cell(s) round_robin"
+          },
+          "static_weighted": {
+            "status": "undefined: transient cell(s) static_weighted"
+          },
+          "threshold": {
+            "status": "undefined: transient cell(s) threshold"
+          },
+          "wjsq": {
+            "status": "defined",
+            "repeats_used": [
+              1,
+              2,
+              3
+            ],
+            "repeats_dropped": {},
+            "single_repeat": false,
+            "mean_ratio": 0.8444,
+            "mean_ratio_ci95": [
+              0.8172,
+              0.8699
+            ],
+            "mean_separated": true,
+            "p95_ratio": 0.7748,
+            "p95_ratio_ci95": [
+              0.7234,
+              0.822
+            ],
+            "p95_separated": true,
+            "slo_e2e_2x_delta": 0.1386,
+            "slo_e2e_2x_delta_ci95": [
+              0.1074,
+              0.1699
+            ]
+          }
+        }
+      },
       "utilisation": {
         "nodes": {
           "gtx1650ti": {
@@ -1566,6 +1728,14 @@
           }
         },
         "fast_node": "rtx3050",
+        "achieved_rps_by_policy": {
+          "jsq": 3.4857,
+          "round_robin": 3.4857,
+          "static_weighted": 3.4857,
+          "threshold": 3.4857,
+          "wjsq": 3.4856
+        },
+        "achieved_pool_utilisation": 0.709,
         "slow_node": "gtx1650ti",
         "pool_capacity_rps": 4.9165,
         "pool_utilisation": 0.6499,

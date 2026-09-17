@@ -166,5 +166,8 @@ Append one line per campaign, newest last. Numbers go in `results.md`, not here.
   tree and are ordinary; only the build number was missing. The card runs at its 50 W limit
   while prefilling. Published figures put a tensor-core-less Turing card about 7.7x below an
   RTX 3050 on prompt processing, against our 9 to 10x, so the prefill ratio is the hardware.
-  G1's rebuild is now provenance rather than a risk to K1. E1.3 started: the CPU 1B
-  calibration with the 80-minute sustained segment.
+  G1's rebuild is now provenance rather than a risk to K1.
+- **2026-09-17, 00:33** E1.3 done. The CPU 1B class shows no resolvable drift over 80 minutes
+  (lag-1 0.093, censored in every bootstrap draw), which is K6 at its strongest. Its snapshots
+  are not promoted: the config claimed an engine build that does not exist here and carried no
+  driver field, both now fixed, and the class is recalibrated when a CPU pair is scheduled.

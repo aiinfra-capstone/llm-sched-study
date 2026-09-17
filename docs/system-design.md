@@ -123,6 +123,7 @@ produces confident nonsense, so each has a check beside it.
 | The engine does not move | One tag, one commit, one patch, one quantisation, pinned context, recorded per node; the driver checks engine identity before and after every run and counts an unreadable engine as fatal |
 | Output length is an independent variable | `n_predict` plus `ignore_eos`, so service time never measures the model's stopping behaviour |
 | Service time does not depend on trace order | `cache_prompt: false` on every request, `--cache-ram 0` on the engine |
+| A dispatch sees every admission before it | The live scheduler reads queue state, decides and records the admission under one lock, and forwards to the worker only after; a forward that fails is rolled back. Completions and heartbeats take the same lock. Checked by firing 400 concurrent dispatches at a fixture-mode scheduler, where every decision must see exactly the admissions before it |
 | Capability is the calibrated number, not a live signal | The heartbeat refreshes queue depth and inflight only; taking the live throughput EWMA would weight the calibrated policies by a queue signal |
 | One scheduler process per run | The run id, policy, staleness and log file come from the manifest at startup |
 | A missing cost-model cell refuses | The simulator throws rather than substituting a fabricated service time |

@@ -380,6 +380,7 @@ Listed so that nothing re-enters from an old figure or an old summary.
 
 | Threat | Where it bites | Closed by |
 |---|---|---|
+| The live scheduler's dispatches raced on the first pair: a request arriving while an earlier one was still being forwarded read the queue without it | JSQ and WJSQ on all four campaigns. 367 of 11,144 consecutive same-node decisions (3.3%) did not see the admission before them, 184 under JSQ and 183 under WJSQ, so the WJSQ-JSQ contrast is not biased by it but both queue-aware policies routed slightly worse than intended | Fixed on 2026-09-17: decide and admit are atomic. Every campaign from the seeded anchor on runs on the fixed scheduler, and the first pair's numbers are quoted with this beside them |
 | One arrival path and one routing stream | Every interval on the first pair | Seeded anchor campaign |
 | Load moves with R across the shapes | K4 | Matched-load campaign |
 | Capability is a one-slot scalar, about half the operating ratio | The calibrated policies look weaker than they could | Ablation campaign, and `ect` |

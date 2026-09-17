@@ -42,9 +42,15 @@ public class JSQFastFirst implements Policy {
         if (tied.size() == 1) {
             return new Choice(Optional.of(tied.get(0).nodeId()), scores, null);
         }
+        // Fastest first, and among equal capabilities the smallest node id, so the choice
+        // never depends on the order the state store happens to list its nodes in.
         NodeView fast = tied.get(0);
         for (NodeView n : tied) {
-            if (n.capabilityTokS() > fast.capabilityTokS()) fast = n;
+            if (n.capabilityTokS() > fast.capabilityTokS()
+                    || (n.capabilityTokS() == fast.capabilityTokS()
+                        && n.nodeId().compareTo(fast.nodeId()) < 0)) {
+                fast = n;
+            }
         }
         return new Choice(Optional.of(fast.nodeId()), scores, null);
     }

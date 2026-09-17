@@ -40,6 +40,25 @@ public class SchedulerGrpcService extends SchedulerGrpc.SchedulerImplBase {
     private final java.util.Map<String, Integer> workerCapacity;
     private final java.util.Map<String, AtomicLong> inflight;
 
+    /**
+     * Guards every read and write of queue state: a dispatch's read, decision and admission,
+     * a completion, and a heartbeat's refresh.
+     *
+     * <p>gRPC serves Dispatch on several threads at once. Without this, a dispatch read the
+     * veil, chose, and then made a blocking Execute RPC to the worker before recording its
+     * admission, so a second request arriving inside that window saw the node as it was
+     * before the first. On the first hardware pair that happened on 3.3% of consecutive
+     * same-node JSQ and WJSQ decisions, and a burst of concurrent dispatches in fixture mode
+     * left 399 of 400 decisions behind the admissions that preceded them. The store's own
+     * admit and complete also publish their view in two steps, so a completion crossing an
+     * admission could leave the older count as the final one.
+     *
+     * <p>Only in-memory work runs under the lock. The Execute RPC to the worker runs outside
+     * it, after the admission has been recorded, and a forward that fails is rolled back.
+     * That is also the order the simulator uses: SimNodeServer admits at dispatch.
+     */
+    private final Object stateLock = new Object();
+
     public SchedulerGrpcService(InMemoryStateStore store, StalenessVeil veil,
             AdmissionFilter filter, Policy policy,
             DecisionLogger logger, String runId,
@@ -91,23 +110,28 @@ public class SchedulerGrpcService extends SchedulerGrpc.SchedulerImplBase {
                 // throughput EWMA here would weight static_weighted and wjsq by a live
                 // queue signal instead of the calibrated capability H1 compares on,
                 // while the DES keeps the C-3 value for the whole run.
-                double capability = 0.0;
-                NodeView known = store.getNode(beat.getNodeId());
-                if (known != null) capability = known.capabilityTokS();
-                if (capability <= 0.0) capability = beat.getRecentTokensPerS();
-                // For a node this scheduler dispatches to, its own admit and completion
-                // counts are the queue state, the same as SimNodeServer's in the DES. A
-                // heartbeat sent before a dispatch reached the worker reports the queue
-                // without it, and taking those numbers would roll the count back and let
-                // JSQ send the next request of a burst to the node it just loaded.
-                boolean tracked = known != null && workerChannels.containsKey(beat.getNodeId());
-                int queueDepth = tracked ? known.queueDepth() : beat.getQueueDepth();
-                int inflightCount = tracked ? known.inflight() : beat.getInflightCount();
-                NodeView nv = new NodeView(
-                        beat.getNodeId(), queueDepth, inflightCount,
-                        capability, 0L, true);
-                store.updateNode(nv);
-                veil.updateNode(nv);
+                // Read and write under the dispatch lock. The view written back for a tracked
+                // node is built from the store's own counts, so an admission landing between
+                // the read and the write would otherwise be rolled back by this heartbeat.
+                synchronized (stateLock) {
+                    double capability = 0.0;
+                    NodeView known = store.getNode(beat.getNodeId());
+                    if (known != null) capability = known.capabilityTokS();
+                    if (capability <= 0.0) capability = beat.getRecentTokensPerS();
+                    // For a node this scheduler dispatches to, its own admit and completion
+                    // counts are the queue state, the same as SimNodeServer's in the DES. A
+                    // heartbeat sent before a dispatch reached the worker reports the queue
+                    // without it, and taking those numbers would roll the count back and let
+                    // JSQ send the next request of a burst to the node it just loaded.
+                    boolean tracked = known != null && workerChannels.containsKey(beat.getNodeId());
+                    int queueDepth = tracked ? known.queueDepth() : beat.getQueueDepth();
+                    int inflightCount = tracked ? known.inflight() : beat.getInflightCount();
+                    NodeView nv = new NodeView(
+                            beat.getNodeId(), queueDepth, inflightCount,
+                            capability, 0L, true);
+                    store.updateNode(nv);
+                    veil.updateNode(nv);
+                }
             }
 
             @Override
@@ -124,30 +148,46 @@ public class SchedulerGrpcService extends SchedulerGrpc.SchedulerImplBase {
 
     @Override
     public void dispatch(DispatchRequest req, StreamObserver<DispatchAck> responseObserver) {
-        long startNs = System.nanoTime();
+        String chosenNode;
+        long seq;
+        boolean haveChannel;
+        boolean admitted = false;
+        synchronized (stateLock) {
+            long startNs = System.nanoTime();
 
-        List<NodeView> allNodes = veil.getAllNodes();
-        List<NodeView> admissibleNodes = filter.filterAdmissible(allNodes, req);
-        Set<String> admIds = admissibleNodes.stream().map(NodeView::nodeId).collect(Collectors.toSet());
+            List<NodeView> allNodes = veil.getAllNodes();
+            List<NodeView> admissibleNodes = filter.filterAdmissible(allNodes, req);
+            Set<String> admIds = admissibleNodes.stream().map(NodeView::nodeId).collect(Collectors.toSet());
 
-        Policy.Choice choice = policy.choose(req, admissibleNodes, System.nanoTime(), rng);
-        long durationNs = System.nanoTime() - startNs;
+            Policy.Choice choice = policy.choose(req, admissibleNodes, System.nanoTime(), rng);
+            long durationNs = System.nanoTime() - startNs;
 
-        String chosenNode = choice.chosen().orElse(null);
-        long seq = decisionSeq.getAndIncrement();
+            chosenNode = choice.chosen().orElse(null);
+            seq = decisionSeq.getAndIncrement();
 
-        if (logger != null) {
-            List<Candidate> candidates = allNodes.stream().map(nv -> {
-                boolean isAdm = admIds.contains(nv.nodeId());
-                Double score = choice.scores().get(nv.nodeId());
-                return new Candidate(nv.nodeId(), nv.queueDepth(), nv.inflight(),
-                        nv.capabilityTokS(), nv.estimateAgeMs(), isAdm, score);
-            }).collect(Collectors.toList());
+            if (logger != null) {
+                List<Candidate> candidates = allNodes.stream().map(nv -> {
+                    boolean isAdm = admIds.contains(nv.nodeId());
+                    Double score = choice.scores().get(nv.nodeId());
+                    return new Candidate(nv.nodeId(), nv.queueDepth(), nv.inflight(),
+                            nv.capabilityTokS(), nv.estimateAgeMs(), isAdm, score);
+                }).collect(Collectors.toList());
 
-            DecisionRecord rec = new DecisionRecord(
-                    "decision", runId, req.getReqId(), seq,
-                    policyName, stalenessParamS, durationNs, chosenNode, choice.tieBreakDraw(), candidates);
-            logger.logRecord(rec);
+                DecisionRecord rec = new DecisionRecord(
+                        "decision", runId, req.getReqId(), seq,
+                        policyName, stalenessParamS, durationNs, chosenNode, choice.tieBreakDraw(), candidates);
+                logger.logRecord(rec);
+            }
+
+            // Admit before forwarding, inside the lock, so the next dispatch sees this one.
+            // Without worker channels (fixture mode) the decision is the whole smoke path
+            // and the admission stands; with channels, only a node we can reach is admitted.
+            haveChannel = chosenNode != null && workerChannels.containsKey(chosenNode);
+            boolean fixture = chosenNode != null && workerChannels.isEmpty();
+            if (haveChannel || fixture) {
+                admitLocked(chosenNode);
+                admitted = true;
+            }
         }
 
         // Forward to chosen worker via Worker.Execute. The worker delivers direct
@@ -155,7 +195,7 @@ public class SchedulerGrpcService extends SchedulerGrpc.SchedulerImplBase {
         // scheduler is in the request path but not the response path.
         boolean forwarded = false;
         String forwardError = null;
-        if (chosenNode != null && workerChannels.containsKey(chosenNode)) {
+        if (haveChannel) {
             io.grpc.ManagedChannel ch = workerChannels.get(chosenNode);
             try {
                 com.sched.v1.WorkerGrpc.WorkerBlockingStub stub = com.sched.v1.WorkerGrpc.newBlockingStub(ch)
@@ -185,19 +225,13 @@ public class SchedulerGrpcService extends SchedulerGrpc.SchedulerImplBase {
             forwarded = true;
         }
 
-        // Bump state at dispatch time regardless of whether the worker answered.
-        // Without this, JSQ and WJSQ cannot see a burst landing on a node
-        // until the next heartbeat, and the live and simulated vehicles diverge
-        // as the arrival rate goes up. The DES does this in SimNodeServer.admit;
-        // this is the live side of the same invariant.
-        if (chosenNode != null && forwarded) {
-            int cap = workerCapacity.getOrDefault(chosenNode, 0);
-            // The policy reads the veil, not the store, so the admission has to reach the
-            // veil too. Updating only the store left JSQ and WJSQ reading queue depth from
-            // the last heartbeat, up to a second old at staleness 0, while the DES pushes
-            // every admission to both (SimNodeServer.updateStore).
-            veil.updateNode(store.admit(chosenNode, cap));
-            if (inflight.containsKey(chosenNode)) inflight.get(chosenNode).incrementAndGet();
+        // The admission was recorded before the forward so that concurrent dispatches see
+        // it. A forward that did not reach the worker takes it back, since that request
+        // will never report a completion.
+        if (admitted && !forwarded) {
+            synchronized (stateLock) {
+                completeLocked(chosenNode);
+            }
         }
 
         DispatchAck.Builder ackBuilder = DispatchAck.newBuilder().setReqId(req.getReqId());
@@ -215,6 +249,27 @@ public class SchedulerGrpcService extends SchedulerGrpc.SchedulerImplBase {
 
         responseObserver.onNext(ackBuilder.build());
         responseObserver.onCompleted();
+    }
+
+    /** Record an admission in the store and the veil. Caller holds {@link #stateLock}. */
+    private void admitLocked(String nodeId) {
+        int cap = workerCapacity.getOrDefault(nodeId, 0);
+        // The policy reads the veil, not the store, so the admission has to reach the veil
+        // too. Updating only the store left JSQ and WJSQ reading queue depth from the last
+        // heartbeat, up to a second old at staleness 0, while the DES pushes every admission
+        // to both (SimNodeServer.updateStore).
+        veil.updateNode(store.admit(nodeId, cap));
+        if (inflight.containsKey(nodeId)) inflight.get(nodeId).incrementAndGet();
+    }
+
+    /** Record a completion, or undo an admission. Caller holds {@link #stateLock}. */
+    private void completeLocked(String nodeId) {
+        int cap = workerCapacity.getOrDefault(nodeId, 0);
+        NodeView done = store.complete(nodeId, cap);
+        if (done != null) veil.updateNode(done);
+        if (inflight.containsKey(nodeId)) {
+            inflight.get(nodeId).updateAndGet(v -> Math.max(0, v - 1));
+        }
     }
 
     @Override
@@ -236,11 +291,8 @@ public class SchedulerGrpcService extends SchedulerGrpc.SchedulerImplBase {
             responseObserver.onCompleted();
             return;
         }
-        int cap = workerCapacity.getOrDefault(nodeId, 0);
-        NodeView done = store.complete(nodeId, cap);
-        if (done != null) veil.updateNode(done);
-        if (inflight.containsKey(nodeId)) {
-            inflight.get(nodeId).updateAndGet(v -> Math.max(0, v - 1));
+        synchronized (stateLock) {
+            completeLocked(nodeId);
         }
         if (logger != null) {
             logger.logRecord(new CompletionObservedRecord(

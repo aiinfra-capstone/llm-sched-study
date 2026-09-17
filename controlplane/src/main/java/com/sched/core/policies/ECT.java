@@ -33,8 +33,9 @@ import com.sched.v1.DispatchRequest;
  * {@code service + (queueDepth+1)*service/capacity}. Capacity defaults to 4 (every
  * measured run uses {@code --parallel 4}) when the launcher did not provide it.
  *
- * <p>Missing cell falls back to WJSQ's {@code (pending+1)/capability} so an incomplete
- * grid degrades to the scalar policy rather than refusing the node.
+ * <p>Missing cell falls back to {@code (pending+1) * output_len / capability}, in
+ * milliseconds, so an incomplete grid degrades to the scalar estimate rather than refusing
+ * the node, and a priced node and an unpriced one are still compared in the same unit.
  */
 public class ECT implements Policy {
     public static final String MODE_KNOWN = "known";
@@ -78,9 +79,14 @@ public class ECT implements Policy {
         int cap = Math.max(1, capacities.getOrDefault(n.nodeId(), 4));
         double service = meanMs(snap, promptLen, outputLen, n.inflight() + 1);
         if (service < 0) {
+            // A predicted completion in milliseconds, like every other score this policy
+            // returns: the request waits out everything on the node and then decodes its own
+            // tokens at the node's capability. WJSQ's bare (pending+1)/capability has no
+            // output length in it, so it is not a time, and comparing it against a priced
+            // node's milliseconds would decide by units rather than by speed.
             double pending = n.queueDepth() + n.inflight();
             double capability = Math.max(n.capabilityTokS(), 0.001);
-            return (pending + 1.0) / capability * 1000.0;
+            return (pending + 1.0) * Math.max(outputLen, 1) / capability * 1000.0;
         }
         if (n.inflight() < cap) {
             return service;

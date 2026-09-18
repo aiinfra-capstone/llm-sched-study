@@ -16,9 +16,12 @@ from support import REPO_ROOT
 SCRIPTS = [
     "campaign_summary.py",
     "cell_intervals.py",
+    "compare_sets.py",
+    "contrast_check.py",
     "hw_runs.py",
     "make_length_mix.py",
     "paper_figures.py",
+    "promote_calibration.py",
     "restart_effect.py",
     "tau_interval.py",
 ]

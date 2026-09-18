@@ -36,16 +36,18 @@ commit that adds its tests.
 |---|---|---|
 | An arm key no policy reads is dropped while parsing | D | `Campaign.from_dict` filters an arm's config to `ARM_KEYS`, so a misspelled key never reaches the refusal in `check_campaign` and that arm runs as the baseline under its own name. The refusal is tested on a `Campaign` built in code; the parse has to stop dropping the key before a config file can be refused |
 | Policies and both vehicles, `test-plan.md` 3.8 | A | The control-plane suite is the gate for it, and the cross-seam workflow is where the two halves meet |
-| `tools/promote_calibration.py` has no tests | D | In the omit list. Needs: it refuses a snapshot older than the one in the contracts, refuses one that fails C-3, backfills the phase split when the newest snapshot lacks it and refuses if the backfill does not produce one, repoints only the configs that name the previous newest id and leaves a list-shaped config alone, and reports rather than writes under `--dry-run` |
-| `tools/compare_sets.py` has no tests | D | In the omit list. Needs: a point holding two rates is refused rather than averaged, `path#workload` selects one workload's runs, the ratio it prints for a set equals that set's `summary.json` ratio, a set with no defined ratio leaves the pair undefined instead of dropping it, `--ordered` calls monotone and extremes-separated correctly on a hand-built case, and the tie rate counts a shared best score once per decision |
-| `tools/contrast_check.py` has no tests | D | In the omit list. Needs: a ranking swap is a miss and is listed as overlapping when the hardware intervals overlap, a simulator ratio on the interval boundary is inside it, a simulator that cannot define H1 where the hardware can is a miss, a point the simulator did not run is a miss, transient hardware cells are excluded from the ranking, and the exit code is 2 on any miss |
-| The workload is part of a point, and nothing exercises a run set with two of them | D | `campaign_summary.where` puts the workload in every random stream at a point, and the points, block-length keys and load trend split by it. A run set with one workload is byte-identical to before, which is checked by hand against the committed summaries but not by a test. Coverage does not catch this: the workload branches are conditional expressions, which branch coverage does not measure. Needs a two-workload fixture at one rate |
 
 Closed on 2026-09-16: `tools/p4_validate.py` is in the omit list beside `sweep.py` and
 `f23_compare.py` until ownership is agreed, and `hw_runs.py` and `campaign_summary.py` are
 back at 100% (the four capability-arm refusals, the placeholder-snapshot refusal, the
 campaign-level capability keys in the manifest, the Sokal sum running to exhaustion, and a
 repeat with no rows at the point's positions).
+
+Closed on 2026-09-18: `promote_calibration.py`, `compare_sets.py` and `contrast_check.py` have
+tests and have left the omit list, and a two-workload fixture covers the workload as part of a
+point. That last one is the case the gate could not have caught: the workload enters through
+conditional expressions, and branch coverage does not measure the two sides of one, so the file
+read as fully covered while no test had ever put two workloads in a frame.
 
 ## 3. What must be covered, by area
 
@@ -114,6 +116,7 @@ These carry the published numbers, so each rule in `analysis-plan.md` has a test
 | τ interval | Block bootstrap covers a known τ on synthetic series at the stated rate, and blocks shorter than the correlation being measured are rejected |
 | Failures count as SLO misses, and a short run's missing positions do not | Both asserted |
 | `arrivals_independent` reflects the seeds actually used | False for the first pair's campaigns, true for a seeded one |
+| The workload is part of a point | Two workloads at one rate are two points, each with its own block length, its own load trend and its own random stream. A campaign with one workload is unchanged, and its committed summary stays reproducible |
 
 ### 3.7 Campaign driver
 
@@ -147,7 +150,26 @@ Owned by the control plane, and the cross-seam CI is where the two meet.
 | Live and simulated parity | The same trace and manifest produce the same decisions where the state is the same |
 | A missing cost-model cell | Refuses rather than fabricating a service time |
 
-### 3.9 Figures
+### 3.9 Comparing run sets, and promoting a calibration
+
+The numbers three of the frozen decision rules turn on are computed across run sets rather than
+inside one, and a recalibration has to reach the contracts and every config before a campaign
+can run.
+
+| Requirement | Acceptance |
+|---|---|
+| A cross-set ratio is the set's own | The ratio `compare_sets.py` prints for a set equals that set's `summary.json` ratio, on the same cells and the same steady-state gate |
+| One point is one rate | A point holding two rates is refused rather than averaged, and a set that cannot be measured leaves its pair undefined rather than dropping out |
+| Workloads are sets | `path#workload` selects one workload's runs from a campaign that ran several |
+| Ordering | `--ordered` reports monotone and extremes-separated, and both are false when a set has no ratio |
+| The tie rate | A shared best score counts once per decision, a lone admissible candidate is not a choice, and a run with no scheduler log has no rate rather than a zero |
+| The simulator's verdict | Ranking, WJSQ/JSQ and the H1 interaction each miss where analysis-plan 6.6 says they do; a ranking swap is a miss even where the hardware intervals overlap, and is listed as such; the exit code is 2 on any miss |
+| Promotion order | The phase split is backfilled before C-3 is checked, and a backfill that produces no split is refused |
+| Promotion refusals | A snapshot older than the one in the contracts, one that fails C-3, and a file name already there with different content |
+| Repointing | Only the configs that name the previous newest id are rewritten, by parsing rather than grep, and a list-shaped config is left alone |
+| `--dry-run` | Reports and writes nothing, and runs no campaign checks |
+
+### 3.10 Figures
 
 | Requirement | Acceptance |
 |---|---|

@@ -75,8 +75,16 @@ def pool_nodes() -> list[dict[str, Any]]:
     return json.loads((CONFIGS / "hw_seeded_anchor_3050.json").read_text())["nodes"]
 
 
-def run_id(policy: str, point: str = "p1", repeat: int = 1, staleness: float = 0.0) -> str:
-    return f"{TAG}_{policy}_s{staleness:g}_{point}_r{repeat}"
+def run_id(
+    policy: str,
+    point: str = "p1",
+    repeat: int = 1,
+    staleness: float = 0.0,
+    workload: str = "",
+) -> str:
+    """A run id in the driver's shape, which names the workload when a campaign has several."""
+    prefix = f"{TAG}_{workload}" if workload else TAG
+    return f"{prefix}_{policy}_s{staleness:g}_{point}_r{repeat}"
 
 
 def cell_rows(
@@ -87,6 +95,7 @@ def cell_rows(
     lam: float = 2.0,
     staleness: float = 0.0,
     point: str = "p1",
+    workload: str = "",
     status: dict[int, str] | None = None,
     warmup: Sequence[int] = (),
     drop: Sequence[int] = (),
@@ -98,7 +107,7 @@ def cell_rows(
     and `drop` lists positions whose row is missing from the log. Any other keyword is a
     column: a scalar applies to every row, a sequence gives one value per position.
     """
-    rid = run_id(policy, point, repeat, staleness)
+    rid = run_id(policy, point, repeat, staleness, workload)
     status = status or {}
     out = []
     for i, value in enumerate(e2e, start=1):
@@ -123,6 +132,8 @@ def cell_rows(
             "service_ms": 651.0,
             "transport_residual_ms": 5.0,
             "is_warmup": i in warmup,
+            "workload": workload,
+            "point": point,
             "vehicle": "hardware",
             "trace_sha256": f"{repeat:064x}",
         }
@@ -147,6 +158,9 @@ def write_manifest(
     seed: int | None = None,
     validity: dict[str, Any] | None = None,
     buckets: Sequence[str] = ("p128_o64",),
+    workload: str = "",
+    point: str = "p1",
+    load_target: dict[str, float] | None = None,
 ) -> Path:
     """A post-run manifest beside a run set, with only the fields the summary reads."""
     v = {
@@ -160,11 +174,17 @@ def write_manifest(
     } | (validity or {})
     config: dict[str, Any] = {
         "length_dist": {"buckets": list(buckets), "weights": [1.0] * len(buckets)},
+        "operating_point": point,
+        "staleness_s": staleness,
     }
+    if load_target is not None:
+        config["load_target"] = load_target
     if gen_seed is not None:
         config["gen_seed"] = gen_seed
     if seed is not None:
         config["seed"] = seed
+    if workload:
+        config["workload"] = workload
     man = {
         "run_id": rid,
         "policy": policy,
@@ -184,12 +204,16 @@ def write_manifest(
 def manifests_for(root: Path, data: pd.DataFrame, **kw: Any) -> Path:
     """One manifest per run in `data`, and the runset path `summarise` expects beside them."""
     for rid, g in data.groupby("run_id"):
+        named = {"workload": g["workload"].iloc[0]} if "workload" in g else {}
+        if "point" in g:
+            named["point"] = g["point"].iloc[0]
         write_manifest(
             root,
             rid,
             policy=g["policy"].iloc[0],
             lam=float(g["lambda"].iloc[0]),
             staleness=float(g["staleness_s"].iloc[0]),
+            **named,
             **kw,
         )
     return root / "runset.parquet"

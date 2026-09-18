@@ -6,7 +6,9 @@ import static com.sched.Fixtures.splitCell;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import com.sched.core.models.CostModelParser;
 import com.sched.core.models.CostModelSnapshot;
+import java.io.File;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
@@ -129,5 +131,34 @@ class CapabilityTest {
     @DisplayName("usesServiceRate no split")
     void usesServiceRateNoSplit() {
         assertEquals(false, Capability.usesServiceRate(NO_SPLIT_SNAP));
+    }
+
+    /**
+     * Cross-language drift guard: the same two numbers test_pool_load.py pins to on the
+     * Python side. A change here without a matching change there means the two copies
+     * disagree, and three of the five policies route on a number one of them is wrong about.
+     */
+    @Test
+    @DisplayName("capability pinned to the first pair's _008 snapshots (103.9472 / 163.6070)")
+    void capabilityPinnedToFirstPairSnapshots() throws Exception {
+        // user.dir is controlplane/; contracts are at the repo root (one level up)
+        File repoRoot = new File(System.getProperty("user.dir")).getParentFile();
+        File slowFile = new File(repoRoot,
+                "contracts/cost_models/gtx1650ti_ngl99_p4_q4km_llama32_1b/"
+                + "008_cm_gtx1650ti_ngl99_p4_q4km_llama32_1b_20260831T153652Z_008.json");
+        File fastFile = new File(repoRoot,
+                "contracts/cost_models/rtx3050_ngl99_p4_q4km_llama32_1b/"
+                + "008_cm_rtx3050_ngl99_p4_q4km_llama32_1b_20260914T200053Z_008.json");
+
+        CostModelSnapshot slowSnap = CostModelParser.parse(slowFile);
+        CostModelSnapshot fastSnap = CostModelParser.parse(fastFile);
+
+        double slow = Capability.referenceTokS(slowSnap);
+        double fast = Capability.referenceTokS(fastSnap);
+
+        assertEquals(1039472L, (long) Math.floor(slow * 1e4),
+                "GTX 1650 Ti capability must pin to 103.9472 tok/s (floor*1e4 = 1039472)");
+        assertEquals(1636070L, (long) Math.floor(fast * 1e4),
+                "RTX 3050 capability must pin to 163.6070 tok/s (floor*1e4 = 1636070)");
     }
 }

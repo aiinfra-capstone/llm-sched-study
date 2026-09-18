@@ -230,20 +230,34 @@ class Campaign:
             capability_concurrency=d.get("capability_concurrency"),
             ect_mode=d.get("ect_mode"),
             ect_prior_output_len=d.get("ect_prior_output_len"),
-            arms=[
-                Arm(
-                    name=a.get("name", ""),
-                    config={k: v for k, v in a.items() if k in ARM_KEYS},
-                    policies=list(a["policies"]) if "policies" in a else None,
-                )
-                for a in d.get("capability_arms", [{}])
-            ],
+            arms=[_arm(a) for a in d.get("capability_arms", [{}])],
             repeat_seeds=[int(x) for x in d["repeat_seeds"]] if "repeat_seeds" in d else None,
             scheduler_seeds=(
                 [int(x) for x in d["scheduler_seeds"]] if "scheduler_seeds" in d else None
             ),
             check_engine_restarts=bool(d.get("check_engine_restarts", True)),
         )
+
+
+def _arm(a: dict[str, Any]) -> Arm:
+    """One capability arm, refusing a key no policy will read.
+
+    The filter here used to drop anything outside `ARM_KEYS` on its way in, which meant a
+    misspelled key never reached the refusal in `check_campaign`: the arm ran as the
+    baseline, under its own name, and the ablation would have reported a ratio arm that
+    was never applied as if it had been measured.
+    """
+    unknown = sorted(set(a) - {*ARM_KEYS, "name", "policies"})
+    if unknown:
+        raise ValueError(
+            f"capability arm {a.get('name', '')!r} sets {', '.join(unknown)}, which no "
+            f"policy reads. An arm may set {', '.join(ARM_KEYS)}"
+        )
+    return Arm(
+        name=a.get("name", ""),
+        config={k: v for k, v in a.items() if k in ARM_KEYS},
+        policies=list(a["policies"]) if "policies" in a else None,
+    )
 
 
 def _point(d: dict[str, Any]) -> Point:

@@ -35,6 +35,7 @@ import hashlib
 import json
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 import traceback
@@ -43,6 +44,12 @@ from typing import Any
 
 # Reuse anchors' helpers for manifest building and trace checking
 from dataplane.harness import gen_trace
+
+# `python -m tools.sweep` puts the repository root on the path rather than this directory,
+# so the sibling tools are not importable by name without saying where they are.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import pool_load
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SNAPSHOT_ROOT = REPO_ROOT / "contracts" / "cost_models"
@@ -53,6 +60,14 @@ DEFAULT_GRID = {
     "policies": ["round_robin", "jsq", "static_weighted", "wjsq", "threshold", "ect"],
     "staleness_s": [0.0, 0.1, 0.5, 1.0],
     "rate_scale": [0.8, 1.15, 1.45],  # quiet/light/mid, heavy is saturated and excluded from H2/H3
+    # The same sweep at fixed load rather than at fixed rate. A pool holding a slower node
+    # has less capacity, so one rate_scale across the R axis walks up the utilisation curve
+    # as R grows, and a policy difference read off it is part R and part load. A utilisation
+    # point resolves its own rate per R from the synthesised pool's capacity, so every R is
+    # compared at the same distance from saturation. E4.1 runs both: fixed lambda answers
+    # "what happens to this pool as its slow node gets slower", fixed utilisation answers
+    # "what does heterogeneity cost at a load the pool can carry".
+    "pool_utilisation": [],
     "R": [1, 2, 4],  # small subset for smoke; full grid up to 100 for paper
     # R_decode / R_prefill of the synthesised node. 1.0 scales both phases alike, which is
     # every sweep before this axis existed. Above 1 the slow node loses decode faster than
@@ -452,14 +467,15 @@ def main(argv: list[str] | None = None) -> int:
 
     print(
         f"Sweep grid: policies={grid['policies']} R={grid['R']} phase_skew={grid['phase_skew']} "
-        f"staleness={grid['staleness_s']} rate_scale={grid['rate_scale']}"
+        f"staleness={grid['staleness_s']} rate_scale={grid['rate_scale']} "
+        f"pool_utilisation={grid.get('pool_utilisation') or []}"
     )
     total = (
         len(grid["policies"])
         * len(grid["R"])
         * len(grid["phase_skew"])
         * len(grid["staleness_s"])
-        * len(grid["rate_scale"])
+        * (len(grid["rate_scale"]) + len(grid.get("pool_utilisation") or []))
     )
     print(f"Total points: {total} -> {args.out}")
 
@@ -496,22 +512,38 @@ def main(argv: list[str] | None = None) -> int:
     # Flat grid sorted by rate_scale so the slowest load runs first. Anchors.py
     # does this because a cold engine pays a first request cost; the DES has no
     # engine but the same order keeps sweep output comparable with anchor output.
+    # A load point is either a rate_scale, applied as it stands, or a pool utilisation,
+    # which becomes a rate_scale once the pool for this R is known.
+    loads = [("rate_scale", float(v)) for v in sorted(grid["rate_scale"])] + [
+        ("pool_utilisation", float(v)) for v in sorted(grid.get("pool_utilisation") or [])
+    ]
     points = [
-        (R, skew, rate, staleness, policy)
+        (R, skew, load, staleness, policy)
         for R in sorted(grid["R"])
         for skew in sorted(grid["phase_skew"])
-        for rate in sorted(grid["rate_scale"])
+        for load in loads
         for staleness in sorted(grid["staleness_s"])
         for policy in grid["policies"]
     ]
+
+    # A utilisation point needs the trace's length mix, to price a request against the
+    # pool's cost models, and the trace's own arrival rate, to turn a target into a scale.
+    length_dist: dict[str, Any] = {}
+    base_rate = 1.0
+    if any(kind == "pool_utilisation" for kind, _ in loads):
+        header, _ = gen_trace.load(args.trace)
+        length_dist = header["length_dist"]
+        base_rate = pool_load.mean_rate(header["arrival"])
 
     run_dirs: list[Path] = []
     failures: list[str] = []
     # One overlay per set of synthesised snapshots, reused across every policy, staleness
     # and load at the same R, and removed together at the end.
     overlay_cache: dict[str, Path] = {}
-    max_rate = max(grid["rate_scale"])
-    for point_no, (R, skew, rate, staleness, policy) in enumerate(points):
+    last_load = loads[-1] if loads else None
+    for point_no, (R, skew, load, staleness, policy) in enumerate(points):
+        load_kind, load_value = load
+        rate = load_value if load_kind == "rate_scale" else None
         # Every point runs a two node pool. At R=1 the second node is an
         # unscaled copy with its own id; a one node R=1 pool next to two node
         # R>1 pools would confound pool size with heterogeneity.
@@ -521,8 +553,8 @@ def main(argv: list[str] | None = None) -> int:
         if base_snap is None:
             print(f"  failed: base snapshot {base_snap_id} not in {args.cost_models}")
             failures.append(
-                f"R={R} skew={skew} policy={policy} staleness={staleness} rate={rate}: "
-                "missing base snapshot"
+                f"R={R} skew={skew} policy={policy} staleness={staleness} {load_kind}="
+                f"{load_value:g}: missing base snapshot"
             )
             if not args.keep_going:
                 break
@@ -559,6 +591,16 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 slow_node["gpu"] = "synthesised"
                 nodes.append(slow_node)
+        if rate is None:
+            # Resolved against this R's pool, not the measured one: the slow node here is
+            # synthesised, and its capacity is what decides the rate this point offers.
+            capacity = pool_load.pool_capacity(nodes, cost_snaps, length_dist, index)
+            target_rps, note = pool_load.rate_for({load_kind: load_value}, capacity)
+            rate = target_rps / base_rate
+            print(
+                f"  {load_kind} {load_value:g} at R={R:g} -> {target_rps:.3f} req/s "
+                f"(rate_scale {rate:.4f}, {note})"
+            )
         manifest = build_sweep_manifest(
             base_manifest,
             policy,
@@ -570,15 +612,20 @@ def main(argv: list[str] | None = None) -> int:
             args.trace,
             phase_skew=float(skew),
         )
+        manifest["config"]["load_target"] = {load_kind: load_value}
+        manifest["config"]["operating_point"] = (
+            f"r{load_value:g}" if load_kind == "rate_scale" else f"u{load_value:g}"
+        )
         manifest["nodes"] = nodes
+        load_tag = f"r{load_value:g}" if load_kind == "rate_scale" else f"u{load_value:g}"
         manifest["run_id"] = (
-            f"sweep_R{R:g}{skew_tag}_{policy}_s{staleness}_r{rate:g}_{point_no:04d}"
+            f"sweep_R{R:g}{skew_tag}_{policy}_s{staleness}_{load_tag}_{point_no:04d}"
         )
 
         run_dir = args.out / manifest["run_id"]
         print(
             f"Running {manifest['run_id']}  R={R} skew={skew} policy={policy} "
-            f"staleness={staleness} rate_scale={rate} -> {run_dir}"
+            f"staleness={staleness} {load_kind}={load_value:g} -> {run_dir}"
         )
         try:
             run_one_des(
@@ -596,7 +643,7 @@ def main(argv: list[str] | None = None) -> int:
             if not args.keep_going:
                 break
             continue
-        if args.settle_s and rate != max_rate:
+        if args.settle_s and load != last_load:
             time.sleep(args.settle_s)
 
     for overlay in overlay_cache.values():

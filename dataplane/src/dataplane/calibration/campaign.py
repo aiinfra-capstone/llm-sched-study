@@ -212,7 +212,32 @@ async def _run_cell(
             completion = await adapter.complete(prompt, point.output_len)
             return _observe(point, completion, time.monotonic_ns())
 
-    return list(await asyncio.gather(*(one(p) for p in prompts)))
+    return _with_occupancy(list(await asyncio.gather(*(one(p) for p in prompts))))
+
+
+def _with_occupancy(obs: list[cm.Observation]) -> list[cm.Observation]:
+    """Record how many requests each sample actually shared the engine with.
+
+    The semaphore holds `concurrency` in flight until the cell runs out of prompts, and
+    then the batch drains: the last requests are served alongside fewer neighbours than
+    the cell claims and finish faster for it. Which samples that hits depends on how the
+    cell's size divides by its concurrency, so it is not a wash across the grid.
+
+    Spans are the engine's own, `[t_end_ns - service_ns, t_end_ns]`, the same interval the
+    service time is measured over, rather than the wall-clock span of the coroutine, which
+    would include the wait for a semaphore slot.
+    """
+    spans = [(o.t_end_ns - o.service_ns, o.t_end_ns) for o in obs]
+    out = []
+    for i, (o, (start, end)) in enumerate(zip(obs, spans, strict=True)):
+        # A failed request can carry no span at all. It is never fitted, so its occupancy
+        # only has to be a number rather than a division by zero.
+        span = max(end - start, 1)
+        overlap = sum(
+            max(0, min(end, e) - max(start, s)) for j, (s, e) in enumerate(spans) if j != i
+        )
+        out.append(dataclasses.replace(o, occupancy_mean=round(1.0 + overlap / span, 4)))
+    return out
 
 
 async def _run_sustained(
@@ -236,7 +261,9 @@ async def _run_sustained(
             i += point.concurrency
 
     await asyncio.gather(*(worker(k) for k in range(point.concurrency)))
-    return out
+    # The segment drains at the deadline the same way a cell does, and MPR-1 is measured
+    # on it, so its samples carry the same occupancy record.
+    return _with_occupancy(out)
 
 
 def snapshot_series(
@@ -385,6 +412,18 @@ def _failure_counts(observations: list[cm.Observation]) -> dict[str, int]:
     return counts
 
 
+def _steady_counts(observations: list[cm.Observation]) -> dict[str, str]:
+    """Per cell, how many samples were served at the concurrency the cell claims."""
+    cells: dict[tuple[int, int, int], list[cm.Observation]] = {}
+    for o in observations:
+        if o.status == "ok":
+            cells.setdefault((o.prompt_len, o.output_len, o.concurrency), []).append(o)
+    return {
+        f"p{p}_o{o}_c{c}": f"{len(cm.steady_samples(obs))}/{len(obs)}"
+        for (p, o, c), obs in sorted(cells.items())
+    }
+
+
 def _finish(result: CampaignResult, config: CampaignConfig) -> None:
     """Fit the table, then tau, then the snapshot series. Order matters.
 
@@ -434,6 +473,10 @@ def _finish(result: CampaignResult, config: CampaignConfig) -> None:
         "f18_status": result.f18,
         "n_grid_samples": len(result.observations),
         "n_sustained_samples": len(result.sustained),
+        # What the table was actually fitted from. A cell whose batch drained through most
+        # of its samples is a thin cell, and a reader should see that here rather than
+        # infer it from a mean that sits oddly against its neighbours.
+        "grid_samples_at_stated_concurrency": _steady_counts(result.observations),
         "failures": result.failures,
         "engine_config": config.provenance["engine_config"],
         "sigma": round(sigma, 5),
@@ -513,6 +556,7 @@ def write_result(out_dir: Path, result: CampaignResult) -> None:
                     "prefill_ns": o.prefill_ns,
                     "decode_ns": o.decode_ns,
                     "error": o.error,
+                    "occupancy_mean": o.occupancy_mean,
                     "segment": seg,
                 },
                 separators=(",", ":"),

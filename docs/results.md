@@ -248,6 +248,40 @@ is what G4 was written to enforce. The single-run absolute error is reported bes
 decides nothing: generation passes ±25% on 27 of 30 runs and still misses the criterion,
 summarisation passes on 1 of 30 and gets five of six rankings right.
 
+**The cause is the cost model, not the simulator's queueing.** `costcheck` asks what the
+snapshot each run was deployed under predicts for the requests that actually ran, and needs
+no simulator at all. Its error tracks the simulator's, shape for shape: 12.1% weighted on
+generation with no cell outside tolerance, 13.8% on balanced with two outside, 21.9% on
+summarisation with two outside and 25.8% on medians. A simulator cannot be closer to the
+hardware than the model it is parameterised from.
+
+Looking at the model itself shows why. Every one of the six buckets in the RTX 3050 snapshot
+of 2026-09-14 is **inverted in concurrency**: its mean service time at three concurrent
+requests is 14 to 40% *above* its mean at four. Sharing an engine with one more request
+cannot make a request faster, so this is a property of that measurement and not of the card.
+The GTX 1650 Ti snapshot taken on 2026-09-17 has no inversion in any bucket.
+
+What the inversion does and does not touch:
+
+- **The simulator, badly.** It reads a cell per request, so every request served at three in
+  flight is charged a time the hardware never took, and the fast node under a queue-aware
+  policy is where concurrency piles up.
+- **The hardware campaigns, not at all.** Capability, which is what WJSQ, ECT and
+  StaticWeighted are given, is the concurrency-1 decode rate, and the concurrency-1 row is
+  clean on both nodes. The SLO reference is also a concurrency-1 cell. No hardware decision
+  was made from an inverted cell.
+- **K1 and the R ratios, not at all.** They come from the sustained segment.
+
+Two fixes are in, and E2.0 tonight is what closes it. `tools/promote_calibration.py` now
+refuses a snapshot that is inverted in concurrency, naming the buckets, so this cannot reach
+the contracts again. And the calibration itself now fits a cell only from the samples served
+at the concurrency the cell claims: a cell fires more requests than it holds in flight, so
+its last few are served by a draining batch and are faster for it, and averaging those in
+reports a speed at four in flight that four in flight never produced. On the 1650 Ti's
+2026-09-17 grid that correction raises concurrency-3 and concurrency-4 cells by 6 to 10%;
+it does not explain the 3050's inversion, which is why that class is recalibrated before
+anything else runs. The contrast criterion is rerun after E2.0, from the same command.
+
 How the error moved, for the record:
 
 | Stage | quiet | light | mid | heavy |
@@ -413,7 +447,7 @@ Listed so that nothing re-enters from an old figure or an old summary.
 | 1650 Ti build flags unknown; its cost model predates the context pin and the driver | K1 | Engine bench and rebuild, then recalibration |
 | The harness shares a 6-core host with the slow node | K1 and every latency on that node | A third host, one anchor rerun |
 | Two nodes | H1's generality, Threshold's meaning | Simulator with 1 fast plus k slow |
-| The simulator understates `wjsq/jsq` at all six held-out shape points, by 0.015 to 0.053, and fails the contrast criterion | Every simulator claim, including H2, is illustrative until it is repaired | Section 8, E0.4. Open on the control-plane side |
+| The simulator understates `wjsq/jsq` at all six held-out shape points, by 0.015 to 0.053, and fails the contrast criterion | Every simulator claim, including H2, is illustrative until it is repaired | Section 8, E0.4. Traced to the RTX 3050 cost model being inverted in concurrency; E2.0 recalibrates it and the criterion is rerun |
 | Anchor trace is development data | Anchor results | Reported as development results; shapes and heavy-tailed traces are held out |
 | Shape is also campaign order and time of night | K4 | Interleaved shapes in the matched-load campaign |
 | The spec PDF disagrees on H1's sign and H2's observable | A reviewer given the spec | Recorded as deviations in `research-plan.md` section 7 |

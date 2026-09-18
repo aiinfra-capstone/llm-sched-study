@@ -53,8 +53,11 @@ Blocks run top to bottom. Inside a block, order is fixed.
 | E0.3 | Simulator sweep for the value-of-calibration curve, so the hardware arm lands on a curve we already understand | A | K2, first half |
 | E0.4 | P4 on contrasts against the three held-out shape run sets | A | G4 |
 
-E0.4 is done (2026-09-17) and it fails: see `results.md` section 8. The repair is the control
-plane's, and the criterion is rerun the same way once it lands.
+E0.4 is done (2026-09-17) and it fails: see `results.md` section 8. The cause is upstream of
+the simulator, in the RTX 3050 cost model, which is inverted in concurrency in all six of its
+buckets. E2.0 recalibrates that class, and the criterion is rerun from the same command
+afterwards. Promotion now refuses an inverted grid, and a cell is fitted only from the samples
+served at the concurrency it claims.
 
 E0.1 and E0.2 are done (2026-09-16). The tree and this doc set are committed, `p4_validate.py`
 is in the coverage omit list, and `hw_runs.py` and `campaign_summary.py` are back at 100%, so
@@ -96,7 +99,7 @@ paper carries, and that is worth knowing before the rest of the machine time is 
 
 | # | Work | Cost | Owner | Notes |
 |---|---|---|---|---|
-| E4.1 | Simulator sweeps for H2, at fixed utilisation and at fixed λ, with 1 fast plus k slow | hours of simulator time | A | Needs G4 and the load-normalisation change in `sweep.py` |
+| E4.1 | Simulator sweeps for H2, at fixed utilisation and at fixed λ, with 1 fast plus k slow | hours of simulator time | A | Needs G4. The load-normalisation change is in: `sweep.py` takes a `pool_utilisation` axis beside `rate_scale` and resolves each R's rate from that R's own synthesised pool |
 | E4.2 | Harness on a third host, one anchor rerun | 2.6 h | J | Removes the co-location threat from K1 |
 | E4.3 | A second real pair, CPU class on one laptop | 8 to 12 h | D, J | Only after Block 3. Running it earlier copies the design into three pairs |
 | E4.4 | The H3 instrument | days | A, D | Out of paper one by `research-plan.md` section 5 |
@@ -184,9 +187,12 @@ Append one line per campaign, newest last. Numbers go in `results.md`, not here.
   third to a half, which is an attribution change from the context pin rather than a speed
   change. First job with the pool back: recalibrate the 3050, so both nodes share one
   attribution convention.
-- **2026-09-17, evening** E0.4 done, G4 open and failing. The 90 held-out shape runs replayed
+- **2026-09-17, evening** E0.4 done, G4 open and failing, and the cause found upstream. The 90 held-out shape runs replayed
   and checked on contrasts: the simulator's `wjsq/jsq` sits above the hardware's at all six
   points and five of the six miss, so H2 is off the ladder until the simulator is repaired
-  (`results.md` section 8). The tooling for the nights is in: `tools/promote_calibration.py`
+  (`results.md` section 8). `costcheck` puts it in the cost model rather than the simulator's
+  queueing, and the RTX 3050 grid turns out to be inverted in concurrency in every bucket.
+  Promotion refuses that now, and calibration fits each cell only from the samples served at
+  the concurrency it claims. The tooling for the nights is in: `tools/promote_calibration.py`
   for E2.0, `tools/compare_sets.py` for 6.4 and 6.5, `tools/contrast_check.py` for 6.6, and
   `tools/p4_validate.py --contrasts` to drive the last of them.

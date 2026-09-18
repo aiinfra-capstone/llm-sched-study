@@ -101,6 +101,11 @@ class Observation:
     prefill_ns: int | None = None
     decode_ns: int | None = None
     error: str = ""
+    # How many requests were actually in the engine, on average, while this one was being
+    # served. `concurrency` is what the cell asked for; this is what the request got. They
+    # differ at the end of a cell, where the last requests finish with the batch already
+    # draining. `None` for samples taken before this was recorded.
+    occupancy_mean: float | None = None
 
     @property
     def service_ms(self) -> float:
@@ -159,6 +164,27 @@ def snapshot_id(node_class: str, measured_at_unix: int, seq: int | None = None) 
     return f"cm_{node_class}_{stamp}{tail}"
 
 
+OCCUPANCY_TOLERANCE = 0.05
+
+
+def steady_samples(obs: list[Observation]) -> list[Observation]:
+    """The samples of one cell that were served at the concurrency the cell claims."""
+    return [
+        o
+        for o in obs
+        if o.occupancy_mean is None or o.occupancy_mean >= o.concurrency - OCCUPANCY_TOLERANCE
+    ]
+
+
+def at_stated_concurrency(obs: list[Observation]) -> list[Observation]:
+    """`steady_samples`, falling back to the whole cell when none qualify.
+
+    A cost model with a hole in it is worse than one with a known bias, and the campaign
+    reports how many samples each cell kept, so a thin cell is visible rather than silent.
+    """
+    return steady_samples(obs) or obs
+
+
 def _cell_entry(
     obs: list[Observation], prompt_bucket: tuple[int, int], output_bucket: tuple[int, int]
 ) -> dict[str, Any]:
@@ -198,6 +224,15 @@ def build_snapshot(
     a censored observation, and averaging a 60s ceiling into a cell would report the
     timeout setting as if it were the hardware's speed. Failures are the admissible-set
     signal (F-13/F-15) and are counted by the campaign, not folded in here.
+
+    Only samples served at the concurrency their cell claims are fitted, where that is
+    known. A cell fires more requests than it holds in flight, so the last few are served
+    by a draining batch: at concurrency 4 with 10 requests, two of them run alongside one
+    other request rather than three, and they are 40% faster for it. Averaging those into
+    the cell reports a speed at concurrency 4 that concurrency 4 never produced, and the
+    share of contaminated samples changes with the cell size, so it lands unevenly across
+    the grid. Samples recorded before `occupancy_mean` existed are all kept, so an older
+    calibration re-fits exactly as it did when it was measured.
     """
     ok = [o for o in observations if o.status == "ok"]
     if not ok:
@@ -218,7 +253,7 @@ def build_snapshot(
         cells.setdefault(key, []).append(o)
 
     entries = [
-        _cell_entry(obs, p_bucket, o_bucket)
+        _cell_entry(at_stated_concurrency(obs), p_bucket, o_bucket)
         for (p_bucket, o_bucket, _), obs in sorted(cells.items())
     ]
     return {

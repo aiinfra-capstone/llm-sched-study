@@ -8,8 +8,10 @@ and doing them by hand on 2026-09-17 took an hour and one near miss:
    only; the per-request prefill and decode timings are in `observations.jsonl`, and
    `tools/backfill_phase_split.py` summarises them onto the snapshots. Without it, phase R
    and the phase-aware parts of the simulator have nothing to read.
-2. **Validate against C-3.** A snapshot that fails the schema, for instance one whose
-   provenance lacks `driver`, is refused rather than promoted.
+2. **Validate against C-3, and against the hardware it claims to describe.** A snapshot that
+   fails the schema, for instance one whose provenance lacks `driver`, is refused rather than
+   promoted. So is one that is inverted in concurrency, where a bucket's service time falls
+   as more requests share the engine.
 3. **Copy the series into `contracts/cost_models/<node_class>/`.**
 4. **Repoint the configs.** The scheduler serves the newest snapshot in a class, and
    `tools/hw_runs.py` refuses any campaign whose config names an older one. Every config in
@@ -29,6 +31,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import shutil
 import subprocess
@@ -87,6 +90,32 @@ def compare(old: dict[str, Any], new: dict[str, Any]) -> list[str]:
             f"{e['prompt_bucket']!s:>12} {e['output_bucket']!s:>10} {e['concurrency']:>2} "
             f"{o['service_ms_mean']:6.0f} -> {e['service_ms_mean']:6.0f} {ds:+6.1f}% {pre}"
         )
+    return out
+
+
+def inversions(snap: dict[str, Any], tolerance: float = 0.02) -> list[str]:
+    """Cells whose service time falls as concurrency rises, which hardware does not do.
+
+    Sharing an engine with more requests cannot make a request faster, so a bucket whose
+    mean drops from one concurrency to the next is a measurement artefact rather than a
+    property of the node. The 2026-09-14 RTX 3050 grid was inverted at concurrency 3 in
+    all six of its buckets, by 15 to 40%, and nothing refused it: it reached the contracts,
+    parameterised the simulator, and is why the simulator failed the contrast criterion on
+    every held-out shape (`results.md` section 8). The tolerance absorbs sampling noise,
+    not a step.
+    """
+    by_bucket: dict[tuple, dict[int, float]] = {}
+    for e in snap["entries"]:
+        key = (tuple(e["prompt_bucket"]), tuple(e["output_bucket"]))
+        by_bucket.setdefault(key, {})[e["concurrency"]] = e["service_ms_mean"]
+    out = []
+    for (pb, ob), row in sorted(by_bucket.items()):
+        for lo, hi in itertools.pairwise(sorted(row)):
+            if row[hi] < row[lo] * (1 - tolerance):
+                out.append(
+                    f"prompt {list(pb)} output {list(ob)}: c={lo} {row[lo]:.0f} ms is slower "
+                    f"than c={hi} {row[hi]:.0f} ms, by {100 * (row[lo] / row[hi] - 1):.0f}%"
+                )
     return out
 
 
@@ -156,6 +185,18 @@ def main(argv: list[str] | None = None) -> int:
     print(f"{len(series)} snapshot(s) satisfy C-3")
 
     new = json.loads(newest_path.read_text(encoding="utf-8"))
+
+    # 2b. Is the grid self-consistent?
+    bad = inversions(new)
+    if bad:
+        print(f"refusing: {newest_path.name} is inverted in concurrency")
+        for line in bad:
+            print(f"  {line}")
+        print(
+            "  A request cannot be served faster by sharing the engine with more requests. "
+            "Recalibrate this class rather than promoting a grid that says it can."
+        )
+        return 2
     index = pool_load.snapshot_index(SNAPSHOT_ROOT)
     old = newest_in_class(index, node_class)
     if old is not None and old["snapshot_id"] == new["snapshot_id"]:

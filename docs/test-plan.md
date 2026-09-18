@@ -34,7 +34,10 @@ commit that adds its tests.
 
 | Item | Owner | Note |
 |---|---|---|
-| An arm key no policy reads is dropped while parsing | D | `Campaign.from_dict` filters an arm's config to `ARM_KEYS`, so a misspelled key never reaches the refusal in `check_campaign` and that arm runs as the baseline under its own name. The refusal is tested on a `Campaign` built in code; the parse has to stop dropping the key before a config file can be refused |
+| An arm key no policy reads is refused while parsing | D | Fixed on 2026-09-18: `_arm` refuses a key outside `ARM_KEYS`, `name` and `policies`, where the old filter dropped it silently and ran that arm as the baseline under its own name. Needs the refusal tested on a config file, which is the path the filter hid |
+| A cell is fitted only from samples served at its stated concurrency | D | `cost_model.steady_samples` and `campaign._with_occupancy`. Needs: a cell whose last samples ran with a draining batch keeps only the steady ones, a cell with no steady sample falls back to all of them rather than leaving a hole, an observation recorded before `occupancy_mean` existed is still fitted, and the per-cell counts reach `campaign.json`. `test_failures_are_counted_but_never_fitted` asserts that every ok sample is fitted and fails on its fixture now, which is this change rather than a regression |
+| Promotion refuses a grid inverted in concurrency | D | `promote_calibration.inversions`. Needs: the 2026-09-14 RTX 3050 shape refused with its buckets named, a monotone grid promoted, and a dip inside the 2% tolerance not called an inversion |
+| `sweep.py` resolves a utilisation point per R | D | Needs: one `pool_utilisation` point at two R values offers two different rates, the resolved rate matches `pool_load.rate_for` on that R's synthesised pool, and a grid carrying both axes runs both |
 | Policies and both vehicles, `test-plan.md` 3.8 | A | The control-plane suite is the gate for it, and the cross-seam workflow is where the two halves meet |
 
 Closed on 2026-09-16: `tools/p4_validate.py` is in the omit list beside `sweep.py` and

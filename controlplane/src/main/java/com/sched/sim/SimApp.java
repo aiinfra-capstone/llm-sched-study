@@ -67,14 +67,6 @@ public class SimApp {
                 System.err.println("Cost models dir not found: " + costModelDir);
             }
 
-            // Resolve to newest snapshot per node_class (covers stale 20260830 series vs recalibrated 20260831)
-            Map<String, CostModelSnapshot> newestByClass = new HashMap<>();
-            for (CostModelSnapshot s : byId.values()) {
-                CostModelSnapshot cur = newestByClass.get(s.nodeClass());
-                if (cur == null || s.measuredAtUnix() > cur.measuredAtUnix()) {
-                    newestByClass.put(s.nodeClass(), s);
-                }
-            }
             Map<String, CostModelSnapshot> loadedSnaps = new HashMap<>();
             Map<String, CostModelSnapshot.Admissibility> admBounds = new HashMap<>();
             Map<String, String> resolvedSnapshots = new HashMap<>(manifest.costModelSnapshots());
@@ -83,14 +75,6 @@ public class SimApp {
                 if (snap == null)
                     throw new IllegalStateException("node " + e.getKey() + " names snapshot "
                         + e.getValue() + ", which is not in " + costModelDir + "/");
-                CostModelSnapshot newest = newestByClass.get(snap.nodeClass());
-                if (newest != null && newest.measuredAtUnix() > snap.measuredAtUnix()) {
-                    System.out.printf("Resolving snapshot for node %s: %s (%d) -> %s (%d) [%s]%n",
-                        e.getKey(), snap.snapshotId(), snap.measuredAtUnix(),
-                        newest.snapshotId(), newest.measuredAtUnix(), snap.nodeClass());
-                    snap = newest;
-                    resolvedSnapshots.put(e.getKey(), newest.snapshotId());
-                }
                 loadedSnaps.put(e.getKey(), snap);
                 admBounds.put(e.getKey(), snap.admissibility());
             }

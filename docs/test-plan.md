@@ -38,13 +38,24 @@ commit that adds its tests.
 | A cell is fitted only from samples served at its stated concurrency | D | `cost_model.steady_samples` and `campaign._with_occupancy`. Needs: a cell whose last samples ran with a draining batch keeps only the steady ones, a cell with no steady sample falls back to all of them rather than leaving a hole, an observation recorded before `occupancy_mean` existed is still fitted, and the per-cell counts reach `campaign.json`. `test_failures_are_counted_but_never_fitted` asserts that every ok sample is fitted and fails on its fixture now, which is this change rather than a regression |
 | Promotion refuses a grid inverted in concurrency | D | `promote_calibration.inversions`. Needs: the 2026-09-14 RTX 3050 shape refused with its buckets named, a monotone grid promoted, and a dip inside the 2% tolerance not called an inversion |
 | `sweep.py` resolves a utilisation point per R | D | Needs: one `pool_utilisation` point at two R values offers two different rates, the resolved rate matches `pool_load.rate_for` on that R's synthesised pool, and a grid carrying both axes runs both |
-| Policies and both vehicles, `test-plan.md` 3.8 | A | The control-plane suite is the gate for it, and the cross-seam workflow is where the two halves meet |
 
 Closed on 2026-09-16: `tools/p4_validate.py` is in the omit list beside `sweep.py` and
 `f23_compare.py` until ownership is agreed, and `hw_runs.py` and `campaign_summary.py` are
 back at 100% (the four capability-arm refusals, the placeholder-snapshot refusal, the
 campaign-level capability keys in the manifest, the Sokal sum running to exhaustion, and a
 repeat with no rows at the point's positions).
+
+Closed on 2026-09-18: section 3.8 is covered and issue #22 is done. The control-plane suite
+is 170 tests. What it gained: concurrent dispatch, where decision k must see the k admissions
+before it, which fails 199 times in 200 on the scheduler as it stood before 467c502; ECT
+priced on two nodes against a disagreeing scalar capability, known against unknown on one
+request, output length moving a score, and the fallback compared in milliseconds rather than
+checked for being finite; capability pinned to the first pair's two committed snapshots at
+103.9472 and 163.6071 tok/s and to their 1.5740 ratio, against the historical files rather
+than whatever is newest; `jsq_fastfirst` resolved over every ordering of a tied pool; and
+determinism inside `mvn test`, two SimApp runs of one manifest built in the test's own temp
+directory. The one requirement left open in 3.8 is live and simulated parity, which the
+cross-seam workflow covers and `mvn test` cannot.
 
 Closed on 2026-09-18: `promote_calibration.py`, `compare_sets.py` and `contrast_check.py` have
 tests and have left the omit list, and a two-workload fixture covers the workload as part of a
@@ -149,7 +160,6 @@ Owned by the control plane, and the cross-seam CI is where the two meet.
 | Staleness veil | The view served is the one at `now - staleness`; concurrent writes do not corrupt it |
 | Concurrent dispatch | N simultaneous dispatches at `SchedulerGrpcService` in fixture mode: decision k sees exactly k earlier admissions. The veil's concurrent-write test covers the map, not read, decide and admit as one step |
 | Determinism inside `mvn test` | Two simulator runs of one manifest produce an identical dispatch sequence, asserted in the Java suite; `determinism_test.sh` alone is not part of that gate |
-| Determinism | Two simulator runs of one manifest produce an identical dispatch sequence |
 | Live and simulated parity | The same trace and manifest produce the same decisions where the state is the same |
 | A missing cost-model cell | Refuses rather than fabricating a service time |
 

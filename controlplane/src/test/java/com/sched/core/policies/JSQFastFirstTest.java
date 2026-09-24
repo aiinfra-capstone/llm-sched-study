@@ -8,8 +8,10 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import com.sched.core.interfaces.Policy;
 import com.sched.core.interfaces.StateStore.NodeView;
 import com.sched.v1.DispatchRequest;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
+import java.util.stream.Collectors;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -70,5 +72,59 @@ class JSQFastFirstTest {
     void emptyAdmissibleSetYieldsNoChoice() {
         Policy.Choice choice = policy.choose(ANY, List.of(), 0L, new Random(1));
         assertFalse(choice.chosen().isPresent());
+    }
+
+    // The point of this arm is that it removes the random draw from a tie, so what is left
+    // must not depend on anything else that varies between runs. The state store hands the
+    // policy its nodes in whatever order it happens to hold them, and the tests above are
+    // all written with the fast node in a convenient position, so they would pass on an
+    // implementation that simply took the first tied node.
+
+    @Test
+    @DisplayName("the fast node wins a tie from any position in the candidate list")
+    void tieResolutionIgnoresTheOrderTheStoreListsNodesIn() {
+        NodeView fast = node("fast", 1, 1, 163.6);
+        NodeView middle = node("middle", 1, 1, 120.0);
+        NodeView slow = node("slow", 1, 1, 104.0);
+
+        for (List<NodeView> order : permutations(List.of(fast, middle, slow))) {
+            Policy.Choice choice = policy.choose(ANY, order, 0L, new Random(1));
+            assertEquals("fast", choice.chosen().orElseThrow(),
+                    "order " + ids(order) + " should not change a tie-break");
+        }
+    }
+
+    @Test
+    @DisplayName("equal capabilities fall back to the smallest node id, from any order")
+    void equalCapabilitiesResolveByNodeIdNotByPosition() {
+        NodeView a = node("alpha", 0, 2, 100.0);
+        NodeView b = node("bravo", 2, 0, 100.0);
+        NodeView c = node("charlie", 1, 1, 100.0);
+
+        for (List<NodeView> order : permutations(List.of(a, b, c))) {
+            Policy.Choice choice = policy.choose(ANY, order, 0L, new Random(1));
+            assertEquals("alpha", choice.chosen().orElseThrow(),
+                    "order " + ids(order) + " should not change which of three equals wins");
+        }
+    }
+
+    private static List<List<NodeView>> permutations(List<NodeView> nodes) {
+        if (nodes.size() <= 1) return List.of(nodes);
+        List<List<NodeView>> out = new ArrayList<>();
+        for (int i = 0; i < nodes.size(); i++) {
+            List<NodeView> rest = new ArrayList<>(nodes);
+            NodeView head = rest.remove(i);
+            for (List<NodeView> tail : permutations(rest)) {
+                List<NodeView> one = new ArrayList<>();
+                one.add(head);
+                one.addAll(tail);
+                out.add(one);
+            }
+        }
+        return out;
+    }
+
+    private static String ids(List<NodeView> nodes) {
+        return nodes.stream().map(NodeView::nodeId).collect(Collectors.joining(","));
     }
 }

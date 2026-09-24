@@ -95,13 +95,6 @@ omit = [
     "*/_generated/*",
     # A new script joins the gate with its tests, or goes on this list with a line saying
     # what it still needs; test-plan.md section 2 carries the same list as work.
-    #
-    # `parity_check.py` (2026-09-24) needs four: a pair of logs that agree on state and
-    # draw passes; one that disagrees on the chosen node fails and names the request; a
-    # pair that agrees on state but not on the draw is counted as neither; and a run set
-    # where no decision was made on the same state exits 1 rather than reporting a pass
-    # over nothing.
-    "*/tools/parity_check.py",
 ]
 
 [tool.coverage.report]

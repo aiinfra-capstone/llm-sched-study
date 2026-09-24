@@ -26,6 +26,7 @@ SCRIPTS = [
     "measure_transport_overhead.py",
     "p4_validate.py",
     "paper_figures.py",
+    "parity_check.py",
     "phase_ratio.py",
     "promote_calibration.py",
     "restart_effect.py",

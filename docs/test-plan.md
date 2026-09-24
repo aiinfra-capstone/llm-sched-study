@@ -32,9 +32,17 @@ commit that adds its tests.
 
 ## 2. Immediate backlog
 
-| Item | Owner | Note |
-|---|---|---|
-| `tools/parity_check.py` has no tests | D | Written on 2026-09-24 to close 3.8's parity requirement, and on the omit list until it is tested. Four cases: a pair of logs agreeing on state and draw passes; one that disagrees on the chosen node fails and names the request; a pair agreeing on state but not on the draw is counted and not judged; and a run set where no decision was made on the same state exits 1 rather than reporting a pass over nothing |
+Nothing is open. A new requirement goes here as a row, with its owner, before its test exists.
+
+Closed on 2026-09-24: `parity_check.py` has tests and has left the omit list, which now
+holds only generated code. The four cases are pinned as the row named them. Two logs
+agreeing on state and draw pass. A disagreement on the chosen node fails with exit 2 and names
+the request in the console, the JSON and the markdown. A pair agreeing on state but not on
+the draw is counted apart and leaves the verdict alone, whichever node each vehicle chose. A
+run set whose shared requests were all decided on different views exits 1 as unknown. Around
+them: every field the policy reads is part of the state while candidate order and capability
+rounding are not, a redispatched request keeps its first decision across two logs, and a live
+run with no replay is left unpaired rather than compared with nothing.
 
 The three bugs closed below were found and fixed on the same day, by tests written
 before the fixes.

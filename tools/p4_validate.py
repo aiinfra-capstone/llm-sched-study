@@ -298,6 +298,13 @@ def main(argv: list[str] | None = None) -> int:
                     err_p95 = float(parts[i95])
                 except (ValueError, IndexError):
                     err_p50 = err_p95 = None
+        if rc == 2 and err_p50 is None:
+            # f23_compare exits 2 when a run is outside tolerance, but Python also exits 2
+            # when it cannot open the script and argparse exits 2 on a usage error. An exit
+            # of 2 that printed no comparison is a failure to compare, which counts towards
+            # neither pass nor miss.
+            rc = 1
+            print("  FAIL: nothing was compared, so this run is an error and not a miss")
         results.append(
             {
                 "run_id": run_id,

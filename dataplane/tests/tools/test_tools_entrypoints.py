@@ -14,15 +14,22 @@ import pytest
 from support import REPO_ROOT
 
 SCRIPTS = [
+    "backfill_phase_split.py",
     "campaign_summary.py",
     "cell_intervals.py",
     "compare_sets.py",
     "contrast_check.py",
+    "ensure_trace.py",
+    "f23_compare.py",
     "hw_runs.py",
     "make_length_mix.py",
+    "measure_transport_overhead.py",
+    "p4_validate.py",
     "paper_figures.py",
+    "phase_ratio.py",
     "promote_calibration.py",
     "restart_effect.py",
+    "sweep.py",
     "tau_interval.py",
 ]
 

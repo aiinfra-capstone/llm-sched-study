@@ -345,3 +345,65 @@ def test_configs_naming_parses_rather_than_greps(repo) -> None:
     _config(repo, "c.json", [{"note": OLD}])
     (repo / "dataplane" / "configs" / "broken.json").write_text("{not json")
     assert [p.name for p in promote.configs_naming(OLD)] == ["a.json"]
+
+
+# ------------------------------------------------------------ a grid inverted in concurrency
+
+# The RTX 3050 grid of 2026-09-14, as it was committed. It reached the contracts inverted in
+# all six buckets, parameterised the simulator, and is why the simulator failed the contrast
+# criterion on every held-out shape. Pinned by id because this is that history.
+INVERTED_3050 = "cm_rtx3050_ngl99_p4_q4km_llama32_1b_20260914T200053Z_008"
+
+
+def _committed(snapshot_id: str) -> dict:
+    import pool_load
+
+    return pool_load.snapshot_index()[snapshot_id]
+
+
+def test_the_2026_09_14_rtx3050_grid_is_inverted_in_every_bucket() -> None:
+    lines = promote.inversions(_committed(INVERTED_3050))
+    assert len(lines) == 6
+    for bucket in ("[1, 128]", "[129, 256]", "[257, 512]"):
+        assert sum(f"prompt {bucket}" in line for line in lines) == 2
+    assert all("c=3" in line and "c=4" in line for line in lines)
+    assert lines[0] == (
+        "prompt [1, 128] output [1, 64]: c=3 679 ms is slower than c=4 593 ms, by 14%"
+    )
+
+
+def test_promotion_refuses_that_grid_and_names_its_buckets(repo, commands, capsys) -> None:
+    inverted = {**_committed(INVERTED_3050), "snapshot_id": NEW, "measured_at_unix": 2_000}
+    run_dir = _calibration(repo, inverted)
+    assert promote.main([str(run_dir)]) == 2
+
+    out = capsys.readouterr().out
+    assert f"refusing: 000_{NEW}.json is inverted in concurrency" in out
+    assert out.count("is slower than c=4") == 6
+    assert "Recalibrate this class" in out
+    assert not list((repo / "contracts" / "cost_models" / CLASS).iterdir())
+
+
+def _grid(services: dict[int, float]) -> dict:
+    snap = _snapshot(NEW, 2_000)
+    snap["entries"] = [_entry(c, ms, 20.0) for c, ms in sorted(services.items())]
+    return snap
+
+
+def test_a_monotone_grid_has_no_inversion_and_is_promoted(repo, commands) -> None:
+    grid = _grid({1: 400.0, 2: 440.0, 3: 520.0, 4: 610.0})
+    assert promote.inversions(grid) == []
+    assert promote.main([str(_calibration(repo, grid))]) == 0
+
+
+def test_a_dip_inside_the_tolerance_is_noise_not_an_inversion() -> None:
+    """Sampling noise can put one concurrency a hair under the one before it. Two percent is
+    noise; a step is not."""
+    assert promote.inversions(_grid({1: 400.0, 2: 500.0, 3: 491.0})) == []
+    (line,) = promote.inversions(_grid({1: 400.0, 2: 500.0, 3: 489.0}))
+    assert line.startswith("prompt [1, 128] output [1, 64]: c=2 500 ms is slower than c=3 489 ms")
+
+
+def test_an_inversion_is_found_between_any_neighbouring_concurrencies() -> None:
+    lines = promote.inversions(_grid({1: 600.0, 2: 400.0, 4: 300.0}))
+    assert [line.split(": ")[1].split(" ms")[0] for line in lines] == ["c=1 600", "c=2 400"]

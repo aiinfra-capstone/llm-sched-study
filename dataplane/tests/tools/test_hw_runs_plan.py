@@ -433,12 +433,49 @@ def test_an_arm_that_sets_something_no_policy_reads_is_refused(tmp_path) -> None
     the control plane never reads would be recorded in the manifest and change nothing about
     the run, which is a difference the run set would show and the pool would not.
 
-    Built as an `Arm` rather than from a config file: `Campaign.from_dict` drops keys outside
-    `ARM_KEYS` while parsing, so a config that misspells one reaches here looking empty.
+    Built as an `Arm` here, to reach the check in `check_campaign` itself. The tests below
+    reach the same refusal through a config file, which is the path people actually take.
     """
     c = _campaign(tmp_path)
     c.arms = [hw_runs.Arm(name="a", config={"ngl": 40, "capability_override": {"rtx3050": 1.0}})]
     _refused(c, r"capability arm 'a' sets \['ngl'\]")
+
+
+@pytest.mark.parametrize("key", ["capability_overide", "threshold", "ngl"])
+def test_a_misspelled_arm_key_in_a_config_is_refused_while_parsing(tmp_path, key) -> None:
+    """The parse used to filter an arm down to the keys it knew, so a misspelling vanished and
+    the arm ran as the baseline under its own name. The ablation would then have reported a
+    ratio arm that was never applied as though it had been measured."""
+    arms = [{"name": "cap250", "policies": ["wjsq"], key: {"rtx3050": 259.9}}]
+    with pytest.raises(
+        ValueError, match=rf"capability arm 'cap250' sets {key}, which no policy reads"
+    ):
+        hw_runs.Campaign.from_dict(campaign_dict(tmp_path, capability_arms=arms))
+
+
+def test_an_arm_setting_only_known_keys_parses_with_every_one_kept(tmp_path) -> None:
+    arm = {
+        "name": "decode",
+        "policies": ["threshold", "wjsq"],
+        **{k: 1 for k in hw_runs.ARM_KEYS},
+    }
+    (parsed,) = hw_runs.Campaign.from_dict(campaign_dict(tmp_path, capability_arms=[arm])).arms
+    assert parsed.name == "decode"
+    assert parsed.policies == ["threshold", "wjsq"]
+    assert parsed.config == {k: 1 for k in hw_runs.ARM_KEYS}
+
+
+def test_a_config_file_with_a_misspelled_arm_key_stops_before_anything_is_planned(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    monkeypatch.setattr(hw_runs, "REPO_ROOT", tmp_path / "repo")
+    d = campaign_dict(tmp_path, capability_arms=[{"name": "cap250", "capabilty_override": {}}])
+    config = tmp_path / "campaign.json"
+    config.write_text(json.dumps(d))
+    with pytest.raises(ValueError, match="capabilty_override"):
+        hw_runs.main([str(config), "--dry-run"])
+    assert not (tmp_path / "repo" / "runs" / "traces").exists()
+    assert "runs, about" not in capsys.readouterr().out
 
 
 def test_an_arms_keys_are_the_ones_the_control_plane_reads() -> None:

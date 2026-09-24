@@ -163,12 +163,28 @@ def test_failures_are_counted_but_never_fitted() -> None:
     engine = FakeEngine(fail_every=7)
     result = asyncio.run(camp.run_campaign(engine, _config()))
 
-    ok_count = sum(1 for o in result.observations + result.sustained if o.status == "ok")
+    all_obs = result.observations + result.sustained
+    ok = [o for o in all_obs if o.status == "ok"]
     assert result.failures.get("timeout", 0) > 0
     assert result.report["failures"] == result.failures
-    # Every fitted sample is an ok sample: the cells account for the successes and nothing
-    # else, so no cell mean can contain the 5s timeout ceiling.
-    assert sum(e["n_samples"] for e in result.snapshots[0]["entries"]) == ok_count
+
+    # Every fitted sample is an ok sample served at the concurrency its cell claims, so no
+    # cell mean can contain the 5s timeout ceiling, and none can contain a request the
+    # draining batch served faster than the cell says it ran.
+    p_buckets = cm.buckets_from_edges(_BASE_CONFIG["prompt_edges"])
+    o_buckets = cm.buckets_from_edges(_BASE_CONFIG["output_edges"])
+    cells: dict[tuple, list] = {}
+    for o in ok:
+        key = (
+            cm.assign_bucket(o.prompt_len, p_buckets),
+            cm.assign_bucket(o.output_len, o_buckets),
+            o.concurrency,
+        )
+        cells.setdefault(key, []).append(o)
+    fitted = sum(len(cm.at_stated_concurrency(obs)) for obs in cells.values())
+
+    assert sum(e["n_samples"] for e in result.snapshots[0]["entries"]) == fitted
+    assert fitted <= len(ok) < len(all_obs)
 
 
 def test_a_fit_that_cannot_be_made_keeps_the_samples() -> None:

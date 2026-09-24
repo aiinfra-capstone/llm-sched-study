@@ -190,6 +190,7 @@ def main(argv: list[str] | None = None) -> int:
         pairs, weights = profile_buckets(path)
         acc = {"R_service": 0.0, "R_prefill": 0.0, "R_decode": 0.0}
         rho = 0.0
+        priced = 0.0
         unpriced = []
         for (p, o), w in zip(pairs, weights):
             key = locate(p, o, args.concurrency, fast_cells)
@@ -200,6 +201,16 @@ def main(argv: list[str] | None = None) -> int:
             for k in acc:
                 acc[k] += w * r[k]
             rho += w * (p / o)
+            priced += w
+        # The weights are renormalised over the buckets that have a shared cell. Dividing
+        # by the whole profile instead would count an unpriced bucket as a ratio of zero,
+        # and report a pool as less heterogeneous than the part of the profile it prices.
+        # A profile with nothing priced has summed nothing, so the divisor only has to
+        # leave those zeros alone and name every bucket as unpriced.
+        norm = priced or 1.0
+        for k in acc:
+            acc[k] /= norm
+        rho /= norm
         entry = {"profile": path.stem, "mean_rho": rho, **acc, "unpriced_buckets": unpriced}
         report["profiles"].append(entry)
 

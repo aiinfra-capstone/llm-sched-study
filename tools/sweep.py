@@ -355,7 +355,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = ap.parse_args(argv)
 
-    # Load sweep grid
+    # Load sweep grid. The config is read once here and again per point, for k_slow, so
+    # it is bound on both paths: without one, every lookup falls back to the flag.
+    sweep_cfg: dict[str, Any] = {}
     if args.config and args.config.exists():
         sweep_cfg = json.loads(args.config.read_text())
         # Merged over the default rather than replacing it, so a config that overrides

@@ -94,8 +94,13 @@ trash/
 .coverage
 .coverage.*
 
-# My own notes and one host's survey output. `demo` is the runbook I read off while
-# driving the live demonstration, and `survey-*.json` is what tools/survey.sh printed
-# about the machine it ran on, which is a measurement of a host and not of the study.
+# Throwaway local files. `demo` is the runbook I read off while driving the live
+# demonstration, `generate_manifest.py` is the one-off that built that demonstration's
+# manifest, `setup_usb.sh` built the stick for the CPU-only box, and `survey-*.json` is
+# what tools/survey.sh printed about the machine it ran on. None of them is part of the
+# instrument, so none of them is tracked.
 /demo
+/generate_manifest.py
+/setup_usb.sh
 /survey-*.json
+/runs/demonstrate_jsq/

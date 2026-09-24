@@ -50,6 +50,13 @@ figures/
 !runs/exp/*/contrast_check.json
 !runs/exp/*/contrast_check.md
 
+# Test-plan 3.8's parity evidence: every decision the live scheduler and the simulator
+# both made on one state, and whether they chose the same node. Small JSON, and it is
+# the only record that the two vehicles share a decision rule, since the logs it reads
+# are not committed.
+!runs/exp/*/parity_check.json
+!runs/exp/*/parity_check.md
+
 # Week 3's two determinations are small JSON and they ARE the deliverable — an admissible
 # set that lives only on my disk has not been reported alongside results (F-13), and a load
 # band nobody else can read is not a characterization.
@@ -86,3 +93,9 @@ trash/
 # coverage.py data from a pytest run at the repository root
 .coverage
 .coverage.*
+
+# My own notes and one host's survey output. `demo` is the runbook I read off while
+# driving the live demonstration, and `survey-*.json` is what tools/survey.sh printed
+# about the machine it ran on, which is a measurement of a host and not of the study.
+/demo
+/survey-*.json

@@ -1,0 +1,308 @@
+{
+  "verdict": "pass",
+  "comparable": 6957,
+  "agreed": 6957,
+  "same_state_other_draw": 7,
+  "runs": [
+    {
+      "run": "phase_summarisation_1650ti_3050_jsq_s0_heavy_r1",
+      "live_decisions": 600,
+      "sim_decisions": 600,
+      "shared_requests": 600,
+      "comparable": 165,
+      "agreed": 165,
+      "same_state_other_draw": 1,
+      "disagreements": []
+    },
+    {
+      "run": "phase_summarisation_1650ti_3050_jsq_s0_heavy_r2",
+      "live_decisions": 600,
+      "sim_decisions": 600,
+      "shared_requests": 600,
+      "comparable": 148,
+      "agreed": 148,
+      "same_state_other_draw": 0,
+      "disagreements": []
+    },
+    {
+      "run": "phase_summarisation_1650ti_3050_jsq_s0_heavy_r3",
+      "live_decisions": 600,
+      "sim_decisions": 600,
+      "shared_requests": 600,
+      "comparable": 149,
+      "agreed": 149,
+      "same_state_other_draw": 1,
+      "disagreements": []
+    },
+    {
+      "run": "phase_summarisation_1650ti_3050_jsq_s0_mid_r1",
+      "live_decisions": 600,
+      "sim_decisions": 600,
+      "shared_requests": 600,
+      "comparable": 246,
+      "agreed": 246,
+      "same_state_other_draw": 0,
+      "disagreements": []
+    },
+    {
+      "run": "phase_summarisation_1650ti_3050_jsq_s0_mid_r2",
+      "live_decisions": 600,
+      "sim_decisions": 600,
+      "shared_requests": 600,
+      "comparable": 244,
+      "agreed": 244,
+      "same_state_other_draw": 0,
+      "disagreements": []
+    },
+    {
+      "run": "phase_summarisation_1650ti_3050_jsq_s0_mid_r3",
+      "live_decisions": 600,
+      "sim_decisions": 600,
+      "shared_requests": 600,
+      "comparable": 236,
+      "agreed": 236,
+      "same_state_other_draw": 2,
+      "disagreements": []
+    },
+    {
+      "run": "phase_summarisation_1650ti_3050_round_robin_s0_heavy_r1",
+      "live_decisions": 600,
+      "sim_decisions": 600,
+      "shared_requests": 600,
+      "comparable": 189,
+      "agreed": 189,
+      "same_state_other_draw": 0,
+      "disagreements": []
+    },
+    {
+      "run": "phase_summarisation_1650ti_3050_round_robin_s0_heavy_r2",
+      "live_decisions": 600,
+      "sim_decisions": 600,
+      "shared_requests": 600,
+      "comparable": 64,
+      "agreed": 64,
+      "same_state_other_draw": 0,
+      "disagreements": []
+    },
+    {
+      "run": "phase_summarisation_1650ti_3050_round_robin_s0_heavy_r3",
+      "live_decisions": 600,
+      "sim_decisions": 600,
+      "shared_requests": 600,
+      "comparable": 213,
+      "agreed": 213,
+      "same_state_other_draw": 0,
+      "disagreements": []
+    },
+    {
+      "run": "phase_summarisation_1650ti_3050_round_robin_s0_mid_r1",
+      "live_decisions": 600,
+      "sim_decisions": 600,
+      "shared_requests": 600,
+      "comparable": 264,
+      "agreed": 264,
+      "same_state_other_draw": 0,
+      "disagreements": []
+    },
+    {
+      "run": "phase_summarisation_1650ti_3050_round_robin_s0_mid_r2",
+      "live_decisions": 600,
+      "sim_decisions": 600,
+      "shared_requests": 600,
+      "comparable": 266,
+      "agreed": 266,
+      "same_state_other_draw": 0,
+      "disagreements": []
+    },
+    {
+      "run": "phase_summarisation_1650ti_3050_round_robin_s0_mid_r3",
+      "live_decisions": 600,
+      "sim_decisions": 600,
+      "shared_requests": 600,
+      "comparable": 201,
+      "agreed": 201,
+      "same_state_other_draw": 0,
+      "disagreements": []
+    },
+    {
+      "run": "phase_summarisation_1650ti_3050_static_weighted_s0_heavy_r1",
+      "live_decisions": 600,
+      "sim_decisions": 600,
+      "shared_requests": 600,
+      "comparable": 165,
+      "agreed": 165,
+      "same_state_other_draw": 1,
+      "disagreements": []
+    },
+    {
+      "run": "phase_summarisation_1650ti_3050_static_weighted_s0_heavy_r2",
+      "live_decisions": 600,
+      "sim_decisions": 600,
+      "shared_requests": 600,
+      "comparable": 179,
+      "agreed": 179,
+      "same_state_other_draw": 0,
+      "disagreements": []
+    },
+    {
+      "run": "phase_summarisation_1650ti_3050_static_weighted_s0_heavy_r3",
+      "live_decisions": 600,
+      "sim_decisions": 600,
+      "shared_requests": 600,
+      "comparable": 196,
+      "agreed": 196,
+      "same_state_other_draw": 0,
+      "disagreements": []
+    },
+    {
+      "run": "phase_summarisation_1650ti_3050_static_weighted_s0_mid_r1",
+      "live_decisions": 600,
+      "sim_decisions": 600,
+      "shared_requests": 600,
+      "comparable": 237,
+      "agreed": 237,
+      "same_state_other_draw": 0,
+      "disagreements": []
+    },
+    {
+      "run": "phase_summarisation_1650ti_3050_static_weighted_s0_mid_r2",
+      "live_decisions": 600,
+      "sim_decisions": 600,
+      "shared_requests": 600,
+      "comparable": 235,
+      "agreed": 235,
+      "same_state_other_draw": 1,
+      "disagreements": []
+    },
+    {
+      "run": "phase_summarisation_1650ti_3050_static_weighted_s0_mid_r3",
+      "live_decisions": 600,
+      "sim_decisions": 600,
+      "shared_requests": 600,
+      "comparable": 228,
+      "agreed": 228,
+      "same_state_other_draw": 0,
+      "disagreements": []
+    },
+    {
+      "run": "phase_summarisation_1650ti_3050_threshold_s0_heavy_r1",
+      "live_decisions": 600,
+      "sim_decisions": 600,
+      "shared_requests": 600,
+      "comparable": 277,
+      "agreed": 277,
+      "same_state_other_draw": 0,
+      "disagreements": []
+    },
+    {
+      "run": "phase_summarisation_1650ti_3050_threshold_s0_heavy_r2",
+      "live_decisions": 600,
+      "sim_decisions": 600,
+      "shared_requests": 600,
+      "comparable": 282,
+      "agreed": 282,
+      "same_state_other_draw": 0,
+      "disagreements": []
+    },
+    {
+      "run": "phase_summarisation_1650ti_3050_threshold_s0_heavy_r3",
+      "live_decisions": 600,
+      "sim_decisions": 600,
+      "shared_requests": 600,
+      "comparable": 274,
+      "agreed": 274,
+      "same_state_other_draw": 0,
+      "disagreements": []
+    },
+    {
+      "run": "phase_summarisation_1650ti_3050_threshold_s0_mid_r1",
+      "live_decisions": 600,
+      "sim_decisions": 600,
+      "shared_requests": 600,
+      "comparable": 356,
+      "agreed": 356,
+      "same_state_other_draw": 0,
+      "disagreements": []
+    },
+    {
+      "run": "phase_summarisation_1650ti_3050_threshold_s0_mid_r2",
+      "live_decisions": 600,
+      "sim_decisions": 600,
+      "shared_requests": 600,
+      "comparable": 341,
+      "agreed": 341,
+      "same_state_other_draw": 0,
+      "disagreements": []
+    },
+    {
+      "run": "phase_summarisation_1650ti_3050_threshold_s0_mid_r3",
+      "live_decisions": 600,
+      "sim_decisions": 600,
+      "shared_requests": 600,
+      "comparable": 358,
+      "agreed": 358,
+      "same_state_other_draw": 0,
+      "disagreements": []
+    },
+    {
+      "run": "phase_summarisation_1650ti_3050_wjsq_s0_heavy_r1",
+      "live_decisions": 600,
+      "sim_decisions": 600,
+      "shared_requests": 600,
+      "comparable": 197,
+      "agreed": 197,
+      "same_state_other_draw": 0,
+      "disagreements": []
+    },
+    {
+      "run": "phase_summarisation_1650ti_3050_wjsq_s0_heavy_r2",
+      "live_decisions": 600,
+      "sim_decisions": 600,
+      "shared_requests": 600,
+      "comparable": 193,
+      "agreed": 193,
+      "same_state_other_draw": 0,
+      "disagreements": []
+    },
+    {
+      "run": "phase_summarisation_1650ti_3050_wjsq_s0_heavy_r3",
+      "live_decisions": 600,
+      "sim_decisions": 600,
+      "shared_requests": 600,
+      "comparable": 197,
+      "agreed": 197,
+      "same_state_other_draw": 0,
+      "disagreements": []
+    },
+    {
+      "run": "phase_summarisation_1650ti_3050_wjsq_s0_mid_r1",
+      "live_decisions": 600,
+      "sim_decisions": 600,
+      "shared_requests": 600,
+      "comparable": 292,
+      "agreed": 292,
+      "same_state_other_draw": 0,
+      "disagreements": []
+    },
+    {
+      "run": "phase_summarisation_1650ti_3050_wjsq_s0_mid_r2",
+      "live_decisions": 600,
+      "sim_decisions": 600,
+      "shared_requests": 600,
+      "comparable": 270,
+      "agreed": 270,
+      "same_state_other_draw": 0,
+      "disagreements": []
+    },
+    {
+      "run": "phase_summarisation_1650ti_3050_wjsq_s0_mid_r3",
+      "live_decisions": 600,
+      "sim_decisions": 600,
+      "shared_requests": 600,
+      "comparable": 295,
+      "agreed": 295,
+      "same_state_other_draw": 1,
+      "disagreements": []
+    }
+  ]
+}

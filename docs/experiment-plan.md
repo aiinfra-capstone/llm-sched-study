@@ -53,7 +53,7 @@ Blocks run top to bottom. Inside a block, order is fixed.
 | E0.3 | Simulator sweep for the value-of-calibration curve, so the hardware arm lands on a curve we already understand | A | K2, first half |
 | E0.4 | P4 on contrasts against the three held-out shape run sets | A | G4 |
 
-E0.4 is done (2026-09-17) and it fails: see `results.md` section 8. The cause is upstream of
+E0.4 is done (2026-09-17, rerun 2026-09-24) and it fails: see `results.md` section 8. The cause is upstream of
 the simulator, in the RTX 3050 cost model, which is inverted in concurrency in all six of its
 buckets. E2.0 recalibrates that class, and the criterion is rerun from the same command
 afterwards. Promotion now refuses an inverted grid, and a cell is fitted only from the samples
@@ -196,3 +196,13 @@ Append one line per campaign, newest last. Numbers go in `results.md`, not here.
   the concurrency it claims. The tooling for the nights is in: `tools/promote_calibration.py`
   for E2.0, `tools/compare_sets.py` for 6.4 and 6.5, `tools/contrast_check.py` for 6.6, and
   `tools/p4_validate.py --contrasts` to drive the last of them.
+- **2026-09-24** Aditya's two commits merged, and E0.4 rerun on top of them. His `SimApp` fix
+  is the one that mattered to me: the simulator used to resolve each node to the newest
+  snapshot of its class rather than the one the manifest names, so every replay I had run was
+  priced off a calibration the hardware never used. Rerun, the ratios move by 0.002 to 0.013
+  and summarisation at 2.385 req/s crosses into the hardware interval, so four of six points
+  miss rather than five. G4 stays open and the cause is unchanged. Our test-plan 3.8 work
+  collided in two files and both sets are kept; the Java suite is 177. Three bugs in my tools
+  were found by the new tests and fixed the same day (`test-plan.md` section 2), and
+  `tools/parity_check.py` closes 3.8's last requirement: 19,963 decisions made on the same
+  state in both vehicles, and the same node chosen in every one.

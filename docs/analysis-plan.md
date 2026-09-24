@@ -189,6 +189,13 @@ can pass ±25% on every policy and still get a 10 to 18% contrast wrong.
 If it fails, every simulator figure is labelled illustrative, H2 leaves the claims ladder, and
 the paper states the failure and what it means.
 
+A failure on contrasts is a failure of the numbers the simulator produces, not evidence that
+it routes by a different rule. Those are separate questions, and the second one is answered
+by `tools/parity_check.py`, which pairs each hardware run with its own replay and compares
+the decisions both vehicles made on the same state and the same tie-break draw. It is
+reported beside 6.6 so that a contrast miss is read as a cost-model or queueing difference
+rather than as policy drift.
+
 ## 7. The two headline sentences
 
 Both written now, so that the outcome of 6.1 changes one sentence and nothing else about the

@@ -5,9 +5,7 @@
     {
       "lambda_rps": 2.385,
       "staleness_s": 0.0,
-      "misses": [
-        "WJSQ over JSQ outside the hardware interval"
-      ],
+      "misses": [],
       "ranking": {
         "hardware": [
           "threshold",
@@ -28,28 +26,28 @@
           0.7301,
           0.8103
         ],
-        "simulator": 0.8168
+        "simulator": 0.8076
       },
       "absolute_error_percent": {
         "jsq": {
-          "p50": 36.8,
-          "p95": 10.7
+          "p50": 37.6,
+          "p95": 12.2
         },
         "round_robin": {
-          "p50": 36.2,
-          "p95": 17.5
+          "p50": 73.6,
+          "p95": 2.9
         },
         "static_weighted": {
-          "p50": 40.8,
-          "p95": 3.0
+          "p50": 40.7,
+          "p95": -0.1
         },
         "threshold": {
           "p50": 57.3,
           "p95": 38.6
         },
         "wjsq": {
-          "p50": 60.1,
-          "p95": 22.6
+          "p50": 63.3,
+          "p95": 25.9
         }
       }
     },
@@ -77,24 +75,24 @@
           0.6915,
           0.7879
         ],
-        "simulator": 0.7911
+        "simulator": 0.8039
       },
       "absolute_error_percent": {
         "jsq": {
-          "p50": 44.3,
-          "p95": 13.3
+          "p50": 45.2,
+          "p95": 14.6
         },
         "static_weighted": {
-          "p50": 38.9,
-          "p95": 14.4
+          "p50": 39.4,
+          "p95": 4.3
         },
         "threshold": {
           "p50": 50.0,
           "p95": 58.8
         },
         "wjsq": {
-          "p50": 54.5,
-          "p95": 18.8
+          "p50": 54.9,
+          "p95": 22.7
         }
       }
     }

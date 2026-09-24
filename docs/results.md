@@ -222,24 +222,33 @@ steady anchors and -7.8% at 1.98 req/s, which is transient and whose percentiles
 quoted. The fixes that brought it inside ±25% were chosen while watching this error, so it is
 in sample.
 
-**The simulator fails the contrast criterion (G4 open).** E0.4, run on 2026-09-17: all 90
-held-out shape runs replayed through `tools/p4_validate.py --contrasts`, summarised the same
-way as the hardware, and checked against analysis plan 6.6 by `tools/contrast_check.py`. Five
-of six points miss, and they miss in one direction:
+**The simulator fails the contrast criterion (G4 open).** E0.4, first run on 2026-09-17 and
+rerun on 2026-09-24: all 90 held-out shape runs replayed through
+`tools/p4_validate.py --contrasts`, summarised the same way as the hardware, and checked
+against analysis plan 6.6 by `tools/contrast_check.py`. Four of six points miss, and the
+`wjsq/jsq` ratio misses in one direction at all six:
 
-| Shape | Point | Hardware `wjsq/jsq` | Simulator | Ranking | Absolute p50 error |
-|---|---|---|---|---|---|
-| generation | 2.385 | 0.889 [0.850, 0.926] | 0.915 | Differs, both swapped pairs overlap on hardware | 27 of 30 runs within ±25% |
-| generation | 3.195 | 0.900 [0.870, 0.933] | 0.919 | Matches | |
-| balanced | 2.385 | 0.866 [0.834, 0.896] | 0.881 | Matches | 5 of 30 runs within ±25% |
-| balanced | 3.195 | 0.844 [0.820, 0.870] | 0.887 | Matches | |
-| summarisation | 2.385 | 0.769 [0.730, 0.810] | 0.817 | Matches | 1 of 30 runs within ±25% |
-| summarisation | 3.195 | 0.738 [0.692, 0.788] | 0.791 | Matches | |
+| Shape | Point | Hardware `wjsq/jsq` | Simulator | Ranking | Misses | Absolute p50 error |
+|---|---|---|---|---|---|---|
+| generation | 2.385 | 0.8891 [0.8495, 0.9259] | 0.9189 | Differs, both swapped pairs overlap on hardware | Ranking, H1 interaction | 27 of 30 runs within ±25% |
+| generation | 3.195 | 0.9004 [0.8698, 0.933] | 0.9189 | Matches | None | |
+| balanced | 2.385 | 0.8661 [0.8338, 0.8961] | 0.8759 | Matches | H1 interaction undefined | 5 of 30 runs within ±25% |
+| balanced | 3.195 | 0.8444 [0.820, 0.8704] | 0.8818 | Matches | `wjsq/jsq` | |
+| summarisation | 2.385 | 0.7687 [0.7301, 0.8103] | 0.8076 | Matches | None | |
+| summarisation | 3.195 | 0.7375 [0.6915, 0.7879] | 0.8039 | Matches | `wjsq/jsq` | |
 
-The simulator's ratio is above the hardware's at every one of the six points, by 0.015 to
-0.053. It reproduces which policy wins and by what order, and it understates how much queue
+The rerun is on the same 90 runs and the same hardware summaries. What changed is the
+simulator: until 2026-09-19 `SimApp` resolved each node to the newest snapshot of its class
+rather than the one its manifest names, so a replay of an August run was priced off a
+September recalibration. That is now fixed upstream, and the replays above are the first
+priced off exactly what the hardware ran under. It moved the simulator's ratios by 0.002 to
+0.013, and it moved one verdict: summarisation at 2.385 req/s now lands inside the hardware
+interval where it did not before. Nothing else about the finding changed.
+
+The simulator's ratio is above the hardware's at every one of the six points, by 0.010 to
+0.066. It reproduces which policy wins and by what order, and it understates how much queue
 awareness buys, most on the shape where the gain is largest. The one H1 interaction it can
-compare against is outside the hardware interval on generation (0.07 against -0.008 [-0.093,
+compare against is outside the hardware interval on generation (0.074 against -0.008 [-0.093,
 0.066]), and on balanced it cannot be computed at all because RoundRobin is transient in the
 replay where it is steady on hardware.
 
@@ -291,6 +300,19 @@ How the error moved, for the record:
 | Prefill held invariant under batch change | -18.3% | -19.4% | -16.5% | -7.8% |
 
 Determinism: 200 of 200 decisions identical across two simulator runs of one manifest.
+
+**The two vehicles share a decision rule (test-plan 3.8 closed).** The sequences cannot be
+compared directly, because service times come from an engine on one side and a cost model on
+the other, so the pools hold different requests from the first completion onwards. What can
+be compared is the rule: `tools/parity_check.py` pairs every hardware run with its own replay
+and keeps the decisions where both vehicles saw the same queue depth, the same in-flight
+count, the same admissibility and capability per node, and drew the same tie-break. Over the
+90 shape runs, 19,963 decisions were made on the same state and the same draw, and the live
+scheduler and the simulator chose the same node on all 19,963. Fourteen more matched on state
+but not on the draw, where either choice is correct. How many decisions are comparable varies
+by run, from 1 to 442 of 600, because the two pools diverge and stay diverged; what the check
+rules out is the failure mode that would invalidate F-23 while both systems still produced
+plausible numbers.
 
 ## 9. K6: drift, and what the instrument can see
 

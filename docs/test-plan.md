@@ -34,10 +34,10 @@ commit that adds its tests.
 
 | Item | Owner | Note |
 |---|---|---|
-| An arm key no policy reads is refused while parsing | D | Fixed on 2026-09-18: `_arm` refuses a key outside `ARM_KEYS`, `name` and `policies`, where the old filter dropped it silently and ran that arm as the baseline under its own name. Needs the refusal tested on a config file, which is the path the filter hid |
-| A cell is fitted only from samples served at its stated concurrency | D | `cost_model.steady_samples` and `campaign._with_occupancy`. Needs: a cell whose last samples ran with a draining batch keeps only the steady ones, a cell with no steady sample falls back to all of them rather than leaving a hole, an observation recorded before `occupancy_mean` existed is still fitted, and the per-cell counts reach `campaign.json`. `test_failures_are_counted_but_never_fitted` asserts that every ok sample is fitted and fails on its fixture now, which is this change rather than a regression |
-| Promotion refuses a grid inverted in concurrency | D | `promote_calibration.inversions`. Needs: the 2026-09-14 RTX 3050 shape refused with its buckets named, a monotone grid promoted, and a dip inside the 2% tolerance not called an inversion |
-| `sweep.py` resolves a utilisation point per R | D | Needs: one `pool_utilisation` point at two R values offers two different rates, the resolved rate matches `pool_load.rate_for` on that R's synthesised pool, and a grid carrying both axes runs both |
+| `tools/parity_check.py` has no tests | D | Written on 2026-09-24 to close 3.8's parity requirement, and on the omit list until it is tested. Four cases: a pair of logs agreeing on state and draw passes; one that disagrees on the chosen node fails and names the request; a pair agreeing on state but not on the draw is counted and not judged; and a run set where no decision was made on the same state exits 1 rather than reporting a pass over nothing |
+
+The three bugs closed below were found and fixed on the same day, by tests written
+before the fixes.
 
 Closed on 2026-09-16: `tools/p4_validate.py` is in the omit list beside `sweep.py` and
 `f23_compare.py` until ownership is agreed, and `hw_runs.py` and `campaign_summary.py` are
@@ -54,8 +54,45 @@ checked for being finite; capability pinned to the first pair's two committed sn
 103.9472 and 163.6071 tok/s and to their 1.5740 ratio, against the historical files rather
 than whatever is newest; `jsq_fastfirst` resolved over every ordering of a tied pool; and
 determinism inside `mvn test`, two SimApp runs of one manifest built in the test's own temp
-directory. The one requirement left open in 3.8 is live and simulated parity, which the
-cross-seam workflow covers and `mvn test` cannot.
+directory. The one requirement left open in 3.8 was live and simulated parity, closed on
+2026-09-24 (below).
+
+Closed on 2026-09-24: live and simulated parity, which is 3.8's last requirement and the
+one thing `mvn test` cannot reach, because it needs a hardware run and its replay.
+`tools/parity_check.py` does the comparison the requirement asks for. The two sequences
+cannot be compared as sequences: service times come from an engine on one side and a cost
+model on the other, so from the first completion the two pools hold different requests and
+every later decision is made on a different state. So it compares the rule instead, on the
+decisions where both vehicles saw the same queue depth, in-flight count, admissibility and
+capability per node, and drew the same tie-break. On the 90 held-out shape runs that is
+19,963 decisions, and the live scheduler and the simulator chose the same node on all of
+them. The tool itself has no tests yet, so it is on the omit list and in section 2 as the
+one open row.
+
+Closed on 2026-09-24: the three bugs the new tool tests found. `sweep.py` binds
+`sweep_cfg` on both paths, so a sweep run the way its own usage line shows reaches its
+first point instead of raising `UnboundLocalError` there. `p4_validate.py` reads an exit
+of 2 that printed no comparison as a failure to compare, which counts towards neither
+pass nor miss, and that is also what stops it formatting an error it never parsed.
+`phase_ratio.py` renormalises a profile's R over the buckets that had a shared cell, so a
+profile with half its mass unpriced reports the R of the half it could price rather than
+half of it. All three are tools I wrote and none of them touches a committed number:
+the sweep has not run without a config, no P4 run has failed to compare until the test
+made one, and the committed phase-ratio report has no unpriced bucket.
+
+Closed on 2026-09-24: the omit list is empty apart from generated code. `sweep.py`,
+`p4_validate.py`, `f23_compare.py`, `phase_ratio.py`, `measure_transport_overhead.py`,
+`backfill_phase_split.py` and `ensure_trace.py` have tests and are under the gate, and the
+dead entry for `generate_manifest.py` is gone with the file. The four rows opened on
+2026-09-18 are closed: the arm-key refusal is tested through a config file and through
+`main`; the occupancy filter is tested for a draining cell, a cell with no steady sample, a
+calibration recorded before the field existed, and the per-cell counts in `campaign.json`;
+promotion refuses the 2026-09-14 RTX 3050 grid with its six buckets named, promotes a
+monotone grid, and does not call a dip inside 2% an inversion; and a `pool_utilisation`
+point resolves a different rate at each R, equal to `pool_load.rate_for` on that R's
+synthesised pool, beside a `rate_scale` point in the same grid.
+`test_failures_are_counted_but_never_fitted` now counts the samples the fitter keeps, ok and
+steady, instead of every ok sample.
 
 Closed on 2026-09-18: `promote_calibration.py`, `compare_sets.py` and `contrast_check.py` have
 tests and have left the omit list, and a two-workload fixture covers the workload as part of a
@@ -160,7 +197,7 @@ Owned by the control plane, and the cross-seam CI is where the two meet.
 | Staleness veil | The view served is the one at `now - staleness`; concurrent writes do not corrupt it |
 | Concurrent dispatch | N simultaneous dispatches at `SchedulerGrpcService` in fixture mode: decision k sees exactly k earlier admissions. The veil's concurrent-write test covers the map, not read, decide and admit as one step |
 | Determinism inside `mvn test` | Two simulator runs of one manifest produce an identical dispatch sequence, asserted in the Java suite; `determinism_test.sh` alone is not part of that gate |
-| Live and simulated parity | The same trace and manifest produce the same decisions where the state is the same |
+| Live and simulated parity | The same trace and manifest produce the same decisions where the state is the same. `tools/parity_check.py` pairs a hardware run with its own replay and compares the decisions both vehicles made on one state and one draw; a pair that matches on state but not on the draw is a tie either may break its own way and is counted, not judged |
 | A missing cost-model cell | Refuses rather than fabricating a service time |
 
 ### 3.9 Comparing run sets, and promoting a calibration

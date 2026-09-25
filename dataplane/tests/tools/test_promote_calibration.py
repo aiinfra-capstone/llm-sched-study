@@ -482,7 +482,7 @@ def _cap(tokens_per_s: float) -> float:
 
 def _ablation(slow_id: str, fast_id: str, anchor: float) -> dict:
     arms = [{"name": "cap157", "policies": ["jsq", "jsq_fastfirst", "wjsq"]}]
-    for name, ratio in (("cap100", 1.0), ("cap120", 1.2), ("cap335", 3.35), ("cap1000", 100.0)):
+    for name, ratio in (("cap100", 1.0), ("cap120", 1.2), ("cap335", 3.35), ("cap10000", 100.0)):
         arms.append(
             {
                 "name": name,
@@ -516,7 +516,7 @@ def test_rescaling_keeps_every_ratio_and_moves_the_anchor() -> None:
     rescaled, changes = promote.rescale_overrides(
         config, {"gtx1650ti": new, "rtx3050": _cap(FAST_TOK)}
     )
-    for name, ratio in (("cap100", 1.0), ("cap120", 1.2), ("cap335", 3.35), ("cap1000", 100.0)):
+    for name, ratio in (("cap100", 1.0), ("cap120", 1.2), ("cap335", 3.35), ("cap10000", 100.0)):
         values = _overrides(rescaled)[name]
         assert values["gtx1650ti"] == new
         assert values["rtx3050"] == round(ratio * new, 3)

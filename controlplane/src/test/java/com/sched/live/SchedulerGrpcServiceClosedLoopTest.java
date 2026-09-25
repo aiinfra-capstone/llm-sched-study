@@ -304,8 +304,16 @@ class SchedulerGrpcServiceClosedLoopTest {
             assertEquals(1, store.getNode("n1").inflight(), "n1 after the first admit");
             assertEquals(1L, serviceInflight(svc, "n1"), "service counter for n1 after the first admit");
 
-            dispatch(svc, "r-dup"); // to n2
-            dispatch(svc, "r-dup"); // back to n1
+            // Both duplicates are refused by name, and neither reaches a worker: a second
+            // Execute would have the worker run a request no slot accounts for.
+            DispatchAck toOther = dispatch(svc, "r-dup"); // to n2
+            DispatchAck toSame = dispatch(svc, "r-dup"); // back to n1
+            for (DispatchAck dup : List.of(toOther, toSame)) {
+                assertFalse(dup.getAccepted(), "a duplicate req_id is not accepted");
+                assertEquals("duplicate req_id", dup.getRejectReason());
+            }
+            assertEquals(List.of("r-dup"), acceptedA, "n1's worker got the first Execute only");
+            assertEquals(List.of(), acceptedB, "n2's worker got no Execute");
 
             for (String n : List.of("n1", "n2")) {
                 int expected = n.equals("n1") ? 1 : 0;

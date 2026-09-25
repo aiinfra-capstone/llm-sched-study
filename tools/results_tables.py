@@ -23,9 +23,9 @@ Two kinds to start:
 - `calibration_gain`: what calibration buys the queue-blind and the queue-aware router.
 
 A block may also say `workload=`, which a run set holding several requires, and `stat=` to
-choose the statistic: the mean, p50, p95 or p99. A table takes the freshest points a run set has, because
-one that mixed a fresh cell with a stale one in neighbouring columns would compare two
-different experiments.
+choose the statistic: the mean, p50, p95 or p99. A table takes the freshest points a run set
+has, because one that mixed a fresh cell with a stale one in neighbouring columns would
+compare two different experiments.
 """
 
 from __future__ import annotations

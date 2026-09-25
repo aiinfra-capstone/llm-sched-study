@@ -828,7 +828,10 @@ def test_a_value_that_did_not_move_is_not_substituted() -> None:
     as written, even when the other node in the same arm moved."""
     before = _one_arm({"gtx1650ti": 100.0, "rtx3050": 250.0})
     after = _one_arm({"gtx1650ti": 110.0, "rtx3050": 250.0})
-    text = '{"capability_arms": [{"name": "cap250", "capability_override": {"gtx1650ti": 100.0, "rtx3050": 250.0}}]}\n'
+    text = (
+        '{"capability_arms": [{"name": "cap250", "capability_override": '
+        '{"gtx1650ti": 100.0, "rtx3050": 250.0}}]}\n'
+    )
     out = promote.rewrite_overrides(text, before, after)
     assert out == text.replace("100.0", "110.0")
     assert json.loads(out) == after

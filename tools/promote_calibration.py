@@ -14,10 +14,11 @@ and doing them by hand on 2026-09-17 took an hour and one near miss:
    as more requests share the engine.
 3. **Copy the series into `contracts/cost_models/<node_class>/`.**
 4. **Repoint the configs.** `tools/hw_runs.py` refuses any campaign whose config names
-   an older snapshot than the newest in its class, because that config missed a promotion. Every config in
-   `dataplane/configs/` that names the class's previous newest snapshot is rewritten to name
-   the new one. The edit replaces the id string only, so a config's layout and comments stay
-   as they were. Manifests of runs already done keep the snapshot that served them.
+   an older snapshot than the newest in its class, because that config missed a promotion.
+   Every config in `dataplane/configs/` that names the class's previous newest snapshot is
+   rewritten to name the new one. The edit replaces the id string only, so a config's layout
+   and comments stay as they were. Manifests of runs already done keep the snapshot that
+   served them.
 5. **Dry-run every campaign**, so a config that still does not check is found now.
 
 It also answers the question a recalibration is for: did the node change? It prints the

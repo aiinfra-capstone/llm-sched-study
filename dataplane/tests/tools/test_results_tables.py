@@ -212,7 +212,8 @@ def test_an_unknown_statistic_is_refused_by_name(rt) -> None:
         rt.render("policy_means", _summary(), stat="p59")
     with pytest.raises(ValueError, match="p59"):
         rt.update(
-            "<!-- generated: policy_means runs/a/summary.json stat=p59 -->\nold\n<!-- /generated -->\n",
+            "<!-- generated: policy_means runs/a/summary.json stat=p59 -->\n"
+            "old\n<!-- /generated -->\n",
             lambda path: _summary(),
         )
 

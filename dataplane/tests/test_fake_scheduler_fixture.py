@@ -47,8 +47,6 @@ CONFIG = {
 @pytest.fixture(scope="module")
 def serve():
     """Import the fixture by path — it is a script, not a package."""
-    if not FIXTURE.exists():
-        pytest.skip("fixtures/fake_scheduler removed (expected after Week 3)")
     spec = importlib.util.spec_from_file_location("fake_scheduler_serve", FIXTURE)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

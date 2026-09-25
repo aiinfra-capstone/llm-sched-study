@@ -39,15 +39,10 @@ import tempfile
 from collections import defaultdict
 from pathlib import Path
 
+from sweep import find_mvn
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SNAPSHOT_ROOT = REPO_ROOT / "contracts" / "cost_models"
-
-
-def find_mvn() -> str:
-    found = shutil.which("mvn")
-    if found is None:
-        raise RuntimeError("mvn not found on PATH; install Maven to run SimApp")
-    return found
 
 
 def run_one_sim(

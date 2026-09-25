@@ -39,6 +39,7 @@ import asyncio
 import dataclasses
 import json
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -148,6 +149,8 @@ class CampaignResult:
 
     observations: list[cm.Observation] = field(default_factory=list)
     sustained: list[cm.Observation] = field(default_factory=list)
+    # Logged so occupancy can be recounted from the log, never fitted. See `_with_occupancy`.
+    warmups: list[cm.Observation] = field(default_factory=list)
     snapshots: list[dict[str, Any]] = field(default_factory=list)
     report: dict[str, Any] = field(default_factory=dict)
     failures: dict[str, int] = field(default_factory=dict)
@@ -212,10 +215,12 @@ async def _run_cell(
             completion = await adapter.complete(prompt, point.output_len)
             return _observe(point, completion, time.monotonic_ns())
 
-    return _with_occupancy(list(await asyncio.gather(*(one(p) for p in prompts))))
+    return list(await asyncio.gather(*(one(p) for p in prompts)))
 
 
-def _with_occupancy(obs: list[cm.Observation]) -> list[cm.Observation]:
+def _with_occupancy(
+    obs: list[cm.Observation], neighbours: Sequence[cm.Observation] = ()
+) -> list[cm.Observation]:
     """Record how many requests each sample actually shared the engine with.
 
     The semaphore holds `concurrency` in flight until the cell runs out of prompts, and
@@ -226,15 +231,23 @@ def _with_occupancy(obs: list[cm.Observation]) -> list[cm.Observation]:
     Spans are the engine's own, `[t_end_ns - service_ns, t_end_ns]`, the same interval the
     service time is measured over, rather than the wall-clock span of the coroutine, which
     would include the wait for a semaphore slot.
+
+    `neighbours` are requests that shared the engine with these samples and are counted in
+    their occupancy but not returned: a cell's warmups, when `obs` is the cell's samples.
+    A warmup is in flight alongside a cell's first samples, and leaving it out would record
+    those samples as served at a lower occupancy than they were. The campaign logs its
+    warmups for this reason, so that a refit can count them the same way and reproduce the
+    number.
     """
     spans = [(o.t_end_ns - o.service_ns, o.t_end_ns) for o in obs]
+    others = spans + [(o.t_end_ns - o.service_ns, o.t_end_ns) for o in neighbours]
     out = []
     for i, (o, (start, end)) in enumerate(zip(obs, spans, strict=True)):
         # A failed request can carry no span at all. It is never fitted, so its occupancy
         # only has to be a number rather than a division by zero.
         span = max(end - start, 1)
         overlap = sum(
-            max(0, min(end, e) - max(start, s)) for j, (s, e) in enumerate(spans) if j != i
+            max(0, min(end, e) - max(start, s)) for j, (s, e) in enumerate(others) if j != i
         )
         out.append(dataclasses.replace(o, occupancy_mean=round(1.0 + overlap / span, 4)))
     return out
@@ -355,10 +368,15 @@ async def run_campaign(adapter: LlamaCppAdapter, config: CampaignConfig) -> Camp
         total = config.warmup_per_cell + config.samples_per_cell
         prompts = _prompt_pool(config.seed, point, total, config.vocab_size)
         obs = await _run_cell(adapter, point, prompts)
-        # Warmup is dropped by count, not by timestamp: `asyncio.gather` preserves input
+        # Warmup is split off by count, not by timestamp: `asyncio.gather` preserves input
         # order, so the first `warmup_per_cell` results are the first `warmup_per_cell`
-        # requests regardless of the order they completed in.
-        result.observations.extend(obs[config.warmup_per_cell :])
+        # requests regardless of the order they completed in. The warmups are kept out of
+        # the fit but counted in the samples' occupancy, since they shared the engine with
+        # the cell's first samples, and they are logged so a refit counts them too. They
+        # carry their own occupancy in the log as well, so every row reads the same way.
+        warm, kept = obs[: config.warmup_per_cell], obs[config.warmup_per_cell :]
+        result.observations.extend(_with_occupancy(kept, warm))
+        result.warmups.extend(_with_occupancy(warm, kept))
         if result.f18 == "partial":
             ok = [o for o in obs if o.status == "ok"]
             if ok:
@@ -477,6 +495,11 @@ def _finish(result: CampaignResult, config: CampaignConfig) -> None:
         # of its samples is a thin cell, and a reader should see that here rather than
         # infer it from a mean that sits oddly against its neighbours.
         "grid_samples_at_stated_concurrency": _steady_counts(result.observations),
+        # Whether the grid samples' occupancy includes the overlap with their cell's
+        # warmups. False on a refit of a log written before warmups were logged: those
+        # samples are counted without them, and their first few read as less crowded than
+        # they were.
+        "occupancy_counts_warmups": bool(result.warmups),
         "failures": result.failures,
         "engine_config": config.provenance["engine_config"],
         "sigma": round(sigma, 5),
@@ -540,7 +563,11 @@ def load_config(path: Path) -> CampaignConfig:
 
 
 def write_result(out_dir: Path, result: CampaignResult) -> None:
-    """One directory per campaign: raw samples, the snapshot series, the MPR-1 report."""
+    """One directory per campaign: raw samples, the snapshot series, the MPR-1 report.
+
+    Warmups are written with `"segment": "warmup"`. Nothing fits them; they are in the log
+    so a refit can recount the occupancy of the samples they overlapped.
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "observations.jsonl").write_text(
         "".join(
@@ -562,7 +589,11 @@ def write_result(out_dir: Path, result: CampaignResult) -> None:
                 separators=(",", ":"),
             )
             + "\n"
-            for seg, group in (("grid", result.observations), ("sustained", result.sustained))
+            for seg, group in (
+                ("grid", result.observations),
+                ("warmup", result.warmups),
+                ("sustained", result.sustained),
+            )
             for o in group
         )
     )

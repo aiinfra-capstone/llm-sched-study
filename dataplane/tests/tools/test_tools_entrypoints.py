@@ -29,7 +29,9 @@ SCRIPTS = [
     "parity_check.py",
     "phase_ratio.py",
     "promote_calibration.py",
+    "refit_calibration.py",
     "restart_effect.py",
+    "results_tables.py",
     "sweep.py",
     "tau_interval.py",
 ]

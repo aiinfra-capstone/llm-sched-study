@@ -3,7 +3,7 @@
 This set was written on **2026-09-16** and supersedes every planning, scope and results
 document that came before it. The earlier documents are in the git history and are not
 authoritative for anything: the base-scope record, the elevation-1 scope and workplan, the
-checkpoint and the writing brief all folded into the five documents below.
+checkpoint and the writing brief all folded into the six documents below.
 
 Everything we do from here refers to these. They are edited in place rather than replaced by
 new documents beside them.

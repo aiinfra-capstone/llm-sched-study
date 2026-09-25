@@ -9,7 +9,7 @@ import com.sched.core.InMemoryStateStore;
 import com.sched.core.StalenessVeil;
 import com.sched.core.models.TraceRequest;
 import com.sched.core.models.CostModelSnapshot;
-import com.sched.core.models.CostModelParser;
+import com.sched.core.models.CostModelSnapshots;
 import com.sched.core.models.Manifest;
 import com.sched.core.models.ManifestParser;
 import com.sched.core.interfaces.StateStore.NodeView;
@@ -18,7 +18,6 @@ import com.sched.core.interfaces.Policy;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.io.File;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -27,7 +26,6 @@ import java.util.Map;
 import java.util.Random;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.stream.Stream;
 
 public class SimApp {
     public static void main(String[] args) {
@@ -54,30 +52,15 @@ public class SimApp {
         try {
             Manifest manifest = ManifestParser.parse(manifestPath);
 
-            Map<String, CostModelSnapshot> byId = new HashMap<>();
-            File root = new File(costModelDir);
-            if (root.exists()) {
-                try (Stream<Path> paths = Files.walk(root.toPath())) {
-                    for (Path p : (Iterable<Path>) paths.filter(f -> f.toString().endsWith(".json"))::iterator) {
-                        CostModelSnapshot s = CostModelParser.parse(p.toFile());
-                        byId.put(s.snapshotId(), s);
-                    }
-                }
-            } else {
-                System.err.println("Cost models dir not found: " + costModelDir);
-            }
-
-            Map<String, CostModelSnapshot> loadedSnaps = new HashMap<>();
+            // The same loader the live scheduler uses, so a replay serves the snapshot the
+            // hardware run named (F-21).
+            Map<String, CostModelSnapshot> loadedSnaps =
+                    CostModelSnapshots.loadNamed(Path.of(costModelDir), manifest.costModelSnapshots());
             Map<String, CostModelSnapshot.Admissibility> admBounds = new HashMap<>();
-            Map<String, String> resolvedSnapshots = new HashMap<>(manifest.costModelSnapshots());
-            for (Map.Entry<String, String> e : manifest.costModelSnapshots().entrySet()) {
-                CostModelSnapshot snap = byId.get(e.getValue());
-                if (snap == null)
-                    throw new IllegalStateException("node " + e.getKey() + " names snapshot "
-                        + e.getValue() + ", which is not in " + costModelDir + "/");
-                loadedSnaps.put(e.getKey(), snap);
-                admBounds.put(e.getKey(), snap.admissibility());
+            for (Map.Entry<String, CostModelSnapshot> e : loadedSnaps.entrySet()) {
+                admBounds.put(e.getKey(), e.getValue().admissibility());
             }
+            Map<String, String> resolvedSnapshots = new HashMap<>(manifest.costModelSnapshots());
 
             List<TraceRequest> rawReqs = TraceParser.parse(trc);
 
@@ -178,11 +161,7 @@ public class SimApp {
 
             for (Manifest.SimNode n : manifest.nodes()) {
                 if (!"pool".equals(n.role())) continue;
-                CostModelSnapshot snap = loadedSnaps.get(n.nodeId());
-                if (snap == null)
-                    throw new IllegalStateException("node " + n.nodeId() + " is a pool member but has no snapshot");
-
-                double cap = Capability.resolve(n.nodeId(), snap, manifest.config());
+                double cap = Capability.forPoolNode(n.nodeId(), loadedSnaps.get(n.nodeId()), manifest.config());
                 System.out.println("Capability for " + n.nodeId() + ": " + cap + " tok/s");
                 NodeView seed = new NodeView(n.nodeId(), 0, 0, cap, 0L, true);
                 st.updateNode(seed);
@@ -284,6 +263,9 @@ public class SimApp {
             p.waitFor();
             if (out.matches("[0-9a-f]{7,40}")) return out.substring(0, 7);
         } catch (Exception ignored) {}
+        // The sha stamps which simulator produced the run, so a run carrying the fallback
+        // cannot be traced back to code. Say so where the operator will see it.
+        System.err.println("Warning: git rev-parse HEAD failed, recording the simulator sha as sim-unknown");
         return "sim-unknown";
     }
 }

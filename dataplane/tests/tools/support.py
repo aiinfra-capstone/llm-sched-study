@@ -81,10 +81,13 @@ def run_id(
     repeat: int = 1,
     staleness: float = 0.0,
     workload: str = "",
+    arm: str = "",
 ) -> str:
-    """A run id in the driver's shape, which names the workload when a campaign has several."""
+    """A run id in the driver's shape, which names the workload when a campaign has several
+    and the capability arm when it has more than the campaign's own."""
     prefix = f"{TAG}_{workload}" if workload else TAG
-    return f"{prefix}_{policy}_s{staleness:g}_{point}_r{repeat}"
+    suffix = f"_{arm}" if arm else ""
+    return f"{prefix}_{policy}{suffix}_s{staleness:g}_{point}_r{repeat}"
 
 
 def cell_rows(
@@ -96,6 +99,7 @@ def cell_rows(
     staleness: float = 0.0,
     point: str = "p1",
     workload: str = "",
+    arm: str = "",
     status: dict[int, str] | None = None,
     warmup: Sequence[int] = (),
     drop: Sequence[int] = (),
@@ -107,7 +111,7 @@ def cell_rows(
     and `drop` lists positions whose row is missing from the log. Any other keyword is a
     column: a scalar applies to every row, a sequence gives one value per position.
     """
-    rid = run_id(policy, point, repeat, staleness, workload)
+    rid = run_id(policy, point, repeat, staleness, workload, arm)
     status = status or {}
     out = []
     for i, value in enumerate(e2e, start=1):
@@ -134,6 +138,7 @@ def cell_rows(
             "is_warmup": i in warmup,
             "workload": workload,
             "point": point,
+            "arm": arm,
             "vehicle": "hardware",
             "trace_sha256": f"{repeat:064x}",
         }
@@ -161,6 +166,7 @@ def write_manifest(
     workload: str = "",
     point: str = "p1",
     load_target: dict[str, float] | None = None,
+    arm: str = "",
 ) -> Path:
     """A post-run manifest beside a run set, with only the fields the summary reads."""
     v = {
@@ -185,6 +191,8 @@ def write_manifest(
         config["seed"] = seed
     if workload:
         config["workload"] = workload
+    if arm:
+        config["capability_arm"] = arm
     man = {
         "run_id": rid,
         "policy": policy,
@@ -207,6 +215,8 @@ def manifests_for(root: Path, data: pd.DataFrame, **kw: Any) -> Path:
         named = {"workload": g["workload"].iloc[0]} if "workload" in g else {}
         if "point" in g:
             named["point"] = g["point"].iloc[0]
+        if "arm" in g and g["arm"].iloc[0]:
+            named["arm"] = g["arm"].iloc[0]
         write_manifest(
             root,
             rid,

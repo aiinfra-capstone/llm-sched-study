@@ -83,7 +83,7 @@ markers = [
 #     uv run pytest -m perf
 
 [tool.coverage.run]
-# tools/ is under the gate too: every number in the writing brief comes out of a script
+# tools/ is under the gate too: every number in results.md comes out of a script
 # there, and every run's validity is decided by one. Its CI lint job never measured whether
 # any of it runs.
 source = ["src/dataplane", "../tools"]

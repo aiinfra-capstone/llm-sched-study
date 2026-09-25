@@ -16,6 +16,15 @@ public class InMemoryStateStore implements StateStore {
     // path has no SimNodeServer, so the equivalent lives here.
     private final Map<String, AtomicInteger> inflight = new ConcurrentHashMap<>();
     private final Map<String, AtomicInteger> queueDepth = new ConcurrentHashMap<>();
+    // Every request admitted and not yet released, mapped to the node it was admitted to.
+    // A dispatch whose Execute blew its deadline after the worker accepted it is rolled
+    // back by the scheduler and later completed by the worker. Both go through this map,
+    // so only the first of the two releases the slot.
+    //
+    // An entry whose completion never arrives, say because its worker died mid-request,
+    // stays here. That leak is bounded by one run: every run starts its own scheduler
+    // process, so the map never outlives the requests of a single run.
+    private final Map<String, String> admitted = new ConcurrentHashMap<>();
 
     public void updateNode(NodeView view) {
         nodes.put(view.nodeId(), view);
@@ -40,6 +49,32 @@ public class InMemoryStateStore implements StateStore {
         AtomicInteger inf = inflight.computeIfAbsent(nodeId, k -> new AtomicInteger(0));
         queueDepth.computeIfAbsent(nodeId, k -> new AtomicInteger(0));
         return publish(nodeId, inf.incrementAndGet(), capacity);
+    }
+
+    /**
+     * Record that request {@code reqId} was admitted to a node.
+     *
+     * <p>Returns null, and counts nothing, when {@code reqId} already holds a slot on any
+     * node. A duplicate req_id on a second node would otherwise hold a slot there that no
+     * completion ever releases, since the completion releases by req_id on the first node.
+     * An empty req_id cannot be tracked and falls back to {@link #admit(String, int)}.
+     */
+    public NodeView admit(String nodeId, String reqId, int capacity) {
+        if (reqId == null || reqId.isEmpty()) return admit(nodeId, capacity);
+        if (admitted.putIfAbsent(reqId, nodeId) != null) return null;
+        return admit(nodeId, capacity);
+    }
+
+    /**
+     * Release the slot request {@code reqId} holds on a node, whether it finished or its
+     * dispatch was rolled back. Returns null, and changes nothing, when that req_id holds no
+     * slot on that node: it was already released, or it was never admitted here. An empty
+     * req_id falls back to {@link #complete(String, int)}.
+     */
+    public NodeView complete(String nodeId, String reqId, int capacity) {
+        if (reqId == null || reqId.isEmpty()) return complete(nodeId, capacity);
+        if (!admitted.remove(reqId, nodeId)) return null;
+        return complete(nodeId, capacity);
     }
 
     /**

@@ -32,7 +32,54 @@ commit that adds its tests.
 
 ## 2. Immediate backlog
 
-Nothing is open. A new requirement goes here as a row, with its owner, before its test exists.
+| Item | Owner | Note |
+|---|---|---|
+
+
+Closed on 2026-09-25: M1, M2, C2 and M5, all four against tests written before the code.
+
+M1, the offline refit. `dataplane/calibration/refit.py` reads a finished run's
+`observations.jsonl` and `campaign.json` and puts the samples back through
+`campaign._finish`, so the fit, sigma, tau and the snapshot series are the campaign's own
+and not a second implementation of them. Occupancy is recomputed from the spans in the log
+rather than read, because a campaign written before the field existed carries none. The
+campaign counts a cell's warmups in the occupancy of the samples they overlapped, keeps them
+out of the fit, and logs them with `"segment": "warmup"`, so the refit counts them the same
+way and the same samples fit the same way online and offline. A log with no warmup lines
+refits with `occupancy_counts_warmups: false` in its `campaign.json`. The refit is a new run that names its source
+as `refit_of`; the source keeps its snapshots, because those are what some campaign was
+actually served. `tools/refit_calibration.py` runs it and prints what moved, and promotes
+nothing.
+
+M2, the believed ratios. `promote.rescale_overrides` rebuilds each `capability_override`
+from the ratio it already encodes, anchored on the slow node's measured capability, and
+`main` applies it to every config it repoints. The ratio is rounded before it is applied,
+so the axis analysis-plan 6.1 froze does not walk a few parts in a million at every
+promotion. An override that does not cover the pool is refused rather than re-anchored. The
+rewrite is a text substitution, which keeps the config's layout and catches the `_comment`
+that quotes the anchor; what the comment says about 3.35 being the pair's own ratio is
+still for a person to edit after E2.0.
+
+C2, the headline. `EQUIVALENCE_MARGIN` is 0.05, `headline_verdict` maps an interval to one
+of A, B, reversed and inconclusive, and `headline_6_1` is on every point that ran the
+ordinal control, with the arm read off the control rather than named. A pair that could not
+be computed has a status and no outcome, which is not the same as an outcome of
+"inconclusive".
+
+M5, the generated tables. `tools/results_tables.py` renders `policy_means` and
+`calibration_gain` from a run set's `summary.json`, `update` rewrites the blocks in a
+document, and `--check` reports the ones that have drifted. Section 3's two anchor tables
+are generated now, and the contracts job runs the check. Converting them moved several
+interval bounds by a few ms: the document had been carrying numbers from a summarise run
+older than the committed `summary.json`, which is the drift M5 exists to stop.
+
+Closed on 2026-09-25: a forward rolled back after the worker accepted it releases its slot once.
+`InMemoryStateStore` now tracks admissions by req_id, and a rollback and a completion for one
+request release it once between them. `SchedulerGrpcServiceClosedLoopTest` pins it with a worker
+that accepts a request whose reply is lost: the rollback frees the slot, and the worker's late
+completion leaves the next request's slot and the queue behind it alone. The completion test
+there now admits by req_id and checks that a completion for a request never admitted, or one
+already released, frees nothing.
 
 Closed on 2026-09-24: `parity_check.py` has tests and has left the omit list, which now
 holds only generated code. The four cases are pinned as the row named them. Two logs

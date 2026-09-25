@@ -311,13 +311,17 @@ def load_observations(run_dir: str | Path) -> list[Observation]:
     for — it is the campaign's own bookkeeping, not part of a sample — so unknown keys are
     dropped rather than passed through. Dropping them here keeps the cliff computation
     working when the campaign learns to record something new about a segment.
+
+    Warmups are left out. The campaign logs them only so occupancy can be recounted, and
+    its own failure counts never included them, so the cliff does not either.
     """
     fields = {f.name for f in dataclasses.fields(Observation)}
     path = Path(run_dir) / "observations.jsonl"
+    rows = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
     return [
-        Observation(**{k: v for k, v in json.loads(line).items() if k in fields})
-        for line in path.read_text().splitlines()
-        if line.strip()
+        Observation(**{k: v for k, v in d.items() if k in fields})
+        for d in rows
+        if d.get("segment") != "warmup"
     ]
 
 

@@ -27,6 +27,10 @@ jobs:
       # format --check deliberately excludes tools/. Formatting is a style claim and
       # these scripts came from two people; the check above is the one that catches bugs.
       - run: uv run --with ruff ruff format --check contracts/check.py fixtures
+      # Every generated table in results.md, against the run set it names. A number in the
+      # document that no longer matches its summary.json is the failure mode nothing else
+      # here can see: both files are valid, and the document is simply wrong.
+      - run: uv run --project dataplane python tools/results_tables.py --check
 
   dataplane:
     name: "Data plane — Divyansh (A)"

@@ -20,6 +20,7 @@ comprehension, and branch coverage does not measure the sides of one.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 
 import pytest
@@ -28,6 +29,7 @@ from test_calibration_campaign import FakeEngine, _config
 from dataplane.calibration import admissible
 from dataplane.calibration import campaign as camp
 from dataplane.calibration import cost_model as cm
+from dataplane.worker.adapter import ServiceResult
 
 
 def _obs(
@@ -224,3 +226,130 @@ def test_the_counts_reach_campaign_json_and_the_samples_carry_their_occupancy(tm
     assert rows and all(r["occupancy_mean"] is not None for r in rows)
     grid = [r for r in rows if r["segment"] == "grid" and r["concurrency"] == 1]
     assert all(r["occupancy_mean"] == pytest.approx(1.0) for r in grid)
+
+
+class SlowGridEngine(FakeEngine):
+    """The fake engine with a grid slow enough that scheduling jitter cannot move a sample
+    across the steady tolerance.
+
+    Occupancy loses whatever two requests' end times differ by, as a share of the span. At
+    the fake engine's 3 ms, the 150 us the tolerance allows is a loaded machine's ordinary
+    jitter; at 40 ms it is 2 ms. Only the first `grid_calls` requests are slow, so the
+    sustained segment still fits tau the way it does under `FakeEngine`.
+    """
+
+    SERVICE_S = 0.04
+
+    def __init__(self, grid_calls: int) -> None:
+        super().__init__()
+        self.grid_calls = grid_calls
+
+    async def complete(self, prompt: list[int], output_len: int) -> ServiceResult:
+        if len(self.prompts) >= self.grid_calls:
+            return await super().complete(prompt, output_len)
+        self.prompts.append(tuple(prompt))
+        await asyncio.sleep(self.SERVICE_S)
+        return ServiceResult(
+            status="ok",
+            service_ns=int(self.SERVICE_S * 1e9),
+            prompt_tokens=len(prompt),
+            output_tokens=output_len,
+            prefill_ns=int(self.SERVICE_S * 0.3e9),
+            decode_ns=int(self.SERVICE_S * 0.7e9),
+        )
+
+
+def _c4_campaign(tmp_path) -> tuple[camp.CampaignResult, list[dict]]:
+    """One cell at four slots, two warmups and eight samples, as the real grid runs it.
+
+    The first batch is both warmups and samples 1 and 2; samples 3 to 6 are the second
+    batch, and 7 and 8 drain the cell alone together.
+    """
+    config = _config(concurrencies=[4], warmup_per_cell=2, samples_per_cell=8)
+    result = asyncio.run(camp.run_campaign(SlowGridEngine(grid_calls=10), config))
+    camp.write_result(tmp_path, result)
+    rows = [json.loads(line) for line in (tmp_path / "observations.jsonl").read_text().splitlines()]
+    return result, rows
+
+
+def test_a_cells_first_samples_count_the_warmups_beside_them_and_are_kept(tmp_path) -> None:
+    """Samples 1 and 2 of a four-slot cell share the engine with its two warmups. Counted
+    without them they read as served at two slots and are dropped as drained, which throws
+    away a quarter of every four-slot cell for a batch that was full."""
+    result, rows = _c4_campaign(tmp_path)
+    grid = [r for r in rows if r["segment"] == "grid"]
+    assert len(grid) == 8
+
+    first_two = result.observations[:2]
+    assert [o.occupancy_mean for o in first_two] == [
+        pytest.approx(4.0, abs=cm.OCCUPANCY_TOLERANCE)
+    ] * 2
+    assert cm.steady_samples(first_two) == first_two
+
+    # The same two samples counted the old way, without their warmups, are the drained
+    # case, so the assertions above are about the warmups and not about the fixture.
+    uncounted = camp._with_occupancy(
+        [dataclasses.replace(o, occupancy_mean=None) for o in first_two]
+    )
+    assert all(o.occupancy_mean < 4 - cm.OCCUPANCY_TOLERANCE for o in uncounted)
+
+
+def test_the_warmups_are_logged_and_never_fitted(tmp_path) -> None:
+    result, rows = _c4_campaign(tmp_path)
+
+    warm = [r for r in rows if r["segment"] == "warmup"]
+    assert len(warm) == 2
+    assert all((r["prompt_len"], r["output_len"], r["concurrency"]) == (64, 32, 4) for r in warm)
+    # Each warmup carries its own occupancy, counted against the cell's samples.
+    assert [r["occupancy_mean"] for r in warm] == [
+        pytest.approx(4.0, abs=cm.OCCUPANCY_TOLERANCE)
+    ] * 2
+    assert len(result.warmups) == 2
+    assert result.report["n_grid_samples"] == 8
+    assert result.report["occupancy_counts_warmups"] is True
+
+    # Samples 1 to 6 are steady and 7 and 8 drained. With the warmups fitted the cell
+    # would hold eight steady samples, not six.
+    assert result.report["grid_samples_at_stated_concurrency"] == {"p64_o32_c4": "6/8"}
+    assert result.snapshots, "the fixture must reach a fitted snapshot"
+    (entry,) = [e for e in result.snapshots[0]["entries"] if e["concurrency"] == 4]
+    assert entry["n_samples"] == 6
+
+
+def test_the_occupancy_the_campaign_records_is_computable_from_its_own_log(tmp_path) -> None:
+    """Every occupancy in `observations.jsonl` can be recomputed from the log alone. A grid
+    sample counts its cell's other samples and its cell's warmups; a warmup counts the
+    cell's other warmups and its samples; a sustained sample counts only the sustained
+    segment. A refit reads the same file, so it can only reproduce a number the file holds
+    the neighbours for."""
+    # One warmup at two slots puts the warmup and the first sample in the engine together,
+    # as two warmups at four slots do on the real grid.
+    result = asyncio.run(camp.run_campaign(FakeEngine(), _config(warmup_per_cell=1)))
+    camp.write_result(tmp_path, result)
+    rows = [json.loads(line) for line in (tmp_path / "observations.jsonl").read_text().splitlines()]
+
+    fields = {
+        "prompt_len",
+        "output_len",
+        "concurrency",
+        "service_ns",
+        "output_tokens",
+        "t_end_ns",
+        "status",
+        "prefill_ns",
+        "decode_ns",
+        "error",
+    }
+    cells: dict[tuple, list[int]] = {}
+    for i, r in enumerate(rows):
+        cells.setdefault(
+            (r["segment"], r["prompt_len"], r["output_len"], r["concurrency"]), []
+        ).append(i)
+    bare = lambda idx: [cm.Observation(**{k: rows[i][k] for k in fields}) for i in idx]
+    partner = {"grid": "warmup", "warmup": "grid"}
+
+    assert any(seg == "warmup" for seg, *_ in cells), "the fixture must log its warmups"
+    for (segment, *cell), idx in cells.items():
+        others = cells.get((partner.get(segment), *cell), []) if segment in partner else []
+        recomputed = [o.occupancy_mean for o in camp._with_occupancy(bare(idx), bare(others))]
+        assert recomputed == [rows[i]["occupancy_mean"] for i in idx], (segment, cell)

@@ -6,12 +6,15 @@ import com.sched.core.InMemoryStateStore;
 import com.sched.core.StalenessVeil;
 import com.sched.core.AdmissionFilter;
 import com.sched.core.DecisionLogger;
+import com.sched.core.Capability;
 import com.sched.core.policies.Policies;
 import com.sched.core.interfaces.Policy;
 import com.sched.core.interfaces.Clock;
 import com.sched.core.models.CostModelSnapshot.Admissibility;
+import com.sched.core.models.CostModelSnapshots;
 import com.sched.core.models.Manifest;
 import com.sched.core.models.ManifestParser;
+import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -61,50 +64,15 @@ public class LiveSchedulerApp {
         InMemoryStateStore store = new InMemoryStateStore();
         StalenessVeil veil = new StalenessVeil(stalenessNs, sysClock);
 
-        // Load admissibility bounds from the C-3 snapshots the manifest names.
-        // Same rule as SimApp: a named snapshot that is not on disk refuses
-        // instead of widening the envelope, and a stale series resolves to the
-        // newest snapshot per node class so both vehicles serve the same model.
+        // Load admissibility bounds from the C-3 snapshots the manifest names, through the
+        // loader SimApp uses too. Each node gets the snapshot it names: a named snapshot
+        // that is not on disk refuses instead of widening the envelope, and a newer one of
+        // the same class is never swapped in, since the manifest records what the run used.
+        Map<String, com.sched.core.models.CostModelSnapshot> loadedSnaps =
+                CostModelSnapshots.loadNamed(Path.of(costModelDir), manifest.costModelSnapshots());
         Map<String, Admissibility> boundsMap = new HashMap<>();
-        Map<String, com.sched.core.models.CostModelSnapshot> loadedSnaps = new HashMap<>();
-        try {
-            java.io.File root = new java.io.File(costModelDir);
-            Map<String, com.sched.core.models.CostModelSnapshot> byId = new HashMap<>();
-            if (root.exists()) {
-                try (java.util.stream.Stream<java.nio.file.Path> paths = java.nio.file.Files.walk(root.toPath())) {
-                    for (java.nio.file.Path p : (Iterable<java.nio.file.Path>) paths.filter(f -> f.toString().endsWith(".json"))::iterator) {
-                        com.sched.core.models.CostModelSnapshot s = com.sched.core.models.CostModelParser.parse(p.toFile());
-                        byId.put(s.snapshotId(), s);
-                    }
-                }
-            } else {
-                throw new IllegalStateException("cost models dir not found: " + costModelDir);
-            }
-            Map<String, com.sched.core.models.CostModelSnapshot> newestByClass = new HashMap<>();
-            for (com.sched.core.models.CostModelSnapshot s : byId.values()) {
-                com.sched.core.models.CostModelSnapshot cur = newestByClass.get(s.nodeClass());
-                if (cur == null || s.measuredAtUnix() > cur.measuredAtUnix()) {
-                    newestByClass.put(s.nodeClass(), s);
-                }
-            }
-            for (Map.Entry<String, String> e : manifest.costModelSnapshots().entrySet()) {
-                com.sched.core.models.CostModelSnapshot snap = byId.get(e.getValue());
-                if (snap == null)
-                    throw new IllegalStateException("node " + e.getKey() + " names snapshot "
-                        + e.getValue() + ", which is not in " + costModelDir + "/");
-                com.sched.core.models.CostModelSnapshot newest = newestByClass.get(snap.nodeClass());
-                if (newest != null && newest.measuredAtUnix() > snap.measuredAtUnix()) {
-                    System.out.printf("Resolving snapshot for node %s: %s -> %s [%s]%n",
-                        e.getKey(), snap.snapshotId(), newest.snapshotId(), snap.nodeClass());
-                    snap = newest;
-                }
-                boundsMap.put(e.getKey(), snap.admissibility());
-                loadedSnaps.put(e.getKey(), snap);
-            }
-        } catch (RuntimeException e) {
-            throw e;
-        } catch (Exception e) {
-            throw new IllegalStateException("failed to load C-3 snapshots from " + costModelDir + ": " + e.getMessage(), e);
+        for (Map.Entry<String, com.sched.core.models.CostModelSnapshot> e : loadedSnaps.entrySet()) {
+            boundsMap.put(e.getKey(), e.getValue().admissibility());
         }
         AdmissionFilter filter = new AdmissionFilter(boundsMap);
 
@@ -114,16 +82,10 @@ public class LiveSchedulerApp {
         long seedAt = sysClock.nowNs() - stalenessNs;
         for (Manifest.SimNode n : manifest.nodes()) {
             if (!"pool".equals(n.role())) continue;
-            com.sched.core.models.CostModelSnapshot snap = loadedSnaps.get(n.nodeId());
-            double cap = 0.0;
-            if (snap != null) {
-                try {
-                    cap = com.sched.core.Capability.resolve(n.nodeId(), snap, manifest.config());
-                    System.out.println("Capability for " + n.nodeId() + ": " + cap + " tok/s");
-                } catch (Exception ignored) {
-                    cap = 0.0;
-                }
-            }
+            // A pool node with no snapshot refuses here, as in SimApp. Seeding it at 0 left
+            // capability-weighted policies starving it for the whole run without a word.
+            double cap = Capability.forPoolNode(n.nodeId(), loadedSnaps.get(n.nodeId()), manifest.config());
+            System.out.println("Capability for " + n.nodeId() + ": " + cap + " tok/s");
             com.sched.core.interfaces.StateStore.NodeView seed =
                 new com.sched.core.interfaces.StateStore.NodeView(n.nodeId(), 0, 0, cap, 0L, true);
             store.updateNode(seed);

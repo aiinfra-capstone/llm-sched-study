@@ -84,6 +84,10 @@ H1_POLICIES = ("round_robin", "static_weighted", "jsq", "wjsq")
 LATENCY_STATS = ("mean", "p50", "p95", "p99")
 SLO_SCALES = (2.0, 5.0)
 CLIMB_RATIO = 1.10
+# Analysis-plan 6.1, amended 2026-09-24: how much of the mean the calibrated magnitude has
+# to buy on top of the ranking before Headline A is licensed, and how wide an interval may
+# be and still license Headline B.
+EQUIVALENCE_MARGIN = 0.05
 BLOCK_CAP_FRACTION = 5
 SOKAL_C = 5.0
 CHUNK = 250
@@ -538,6 +542,82 @@ def comparisons(
     return out
 
 
+def headline_cells(cells: dict[str, Cell]) -> tuple[str, str] | None:
+    """The WJSQ and `jsq_fastfirst` cells of the baseline arm, or None if nothing runs 6.1.
+
+    The arm is read off the ordinal control rather than named. `jsq_fastfirst` is JSQ with
+    ties broken toward the faster node, which is the ranking bit of calibration without the
+    magnitude, and the ablation runs it in the baseline arm alone: the believed-ratio arms
+    are points on the curve and run WJSQ by itself. So wherever the control ran is the arm
+    6.1 is about, and WJSQ under any other arm is a different question.
+
+    Returning the pair without checking that WJSQ is there is deliberate. A lost WJSQ run is
+    a headline that could not be decided, and saying so is the point; a campaign that never
+    ran the control has no 6.1 to report at all.
+    """
+    controls = sorted(n for n in cells if n == "jsq_fastfirst" or n.startswith("jsq_fastfirst@"))
+    if not controls:
+        return None
+    # If several arms ran the control, the baseline is the one that also ran plain JSQ.
+    control = min(controls, key=lambda n: (f"jsq{n.removeprefix('jsq_fastfirst')}" not in cells, n))
+    suffix = control.removeprefix("jsq_fastfirst")
+    return f"wjsq{suffix}", control
+
+
+def headline_verdict(lo: float, hi: float, margin: float = EQUIVALENCE_MARGIN) -> str:
+    """Which of analysis-plan 6.1's four outcomes an interval on `wjsq/jsq_fastfirst` licenses.
+
+    The margin is an equivalence margin, not a significance level. Before the 2026-09-24
+    amendment the rule read "separated" against "not separated", which counted an interval
+    including 1 as evidence that calibrated magnitude adds nothing, so a campaign too small
+    to tell would have licensed Headline B every time. Now B has to be earned by an interval
+    that fits inside the margin, and an interval wider than the margin says so.
+    """
+    if not math.isfinite(lo) or not math.isfinite(hi) or lo > hi:
+        raise ValueError(f"[{lo}, {hi}] is not an interval, so it licenses nothing")
+    if hi < 1 - margin:
+        return "A"
+    if lo >= 1 - margin and hi <= 1 + margin:
+        return "B"
+    if lo > 1 + margin:
+        return "reversed"
+    return "inconclusive"
+
+
+def headline_6_1(
+    cells: dict[str, Cell],
+    steady: dict[str, bool],
+    invalid: dict[str, dict[str, list[str]]],
+    n_boot: int,
+    block: int,
+    rng: np.random.Generator,
+) -> dict | None:
+    """The Headline A or B decision: WJSQ over the ordinal control, against the margin.
+
+    WJSQ over `jsq_fastfirst` on mean end-to-end latency is what the calibrated magnitude is
+    worth on top of the ranking, and its paired interval against the margin is what licenses
+    a headline. None when the campaign did not run the control, which is every campaign but
+    the ablation.
+    """
+    pair = headline_cells(cells)
+    if pair is None:
+        return None
+    arm, control = pair
+    out = contrast(cells, steady, invalid, control, arm, n_boot, block, rng)
+    head = {"arm": arm, "control": control, "margin": EQUIVALENCE_MARGIN, **out}
+    mean = out.get("mean")
+    if mean is None:
+        # A pair that could not be computed has no outcome, rather than an outcome of
+        # "undefined" that reads like a decision. The status says which cell was missing.
+        return head
+    lo, hi = mean["ratio_ci95"]
+    return head | {
+        "ratio": mean["ratio"],
+        "ratio_ci95": mean["ratio_ci95"],
+        "outcome": headline_verdict(lo, hi),
+    }
+
+
 def climb(c: Cell, block: int, n_boot: int, rng: np.random.Generator) -> dict:
     """Last-third mean over first-third mean, with a block-bootstrap interval per third."""
     n = c.e2e.shape[1]
@@ -974,6 +1054,15 @@ def summarise(frame: pd.DataFrame, n_boot: int, seed: int, runset_path: Path | N
                     ),
                 },
                 "against_reference": against_reference,
+                **(
+                    {"headline_6_1": headline}
+                    if (
+                        headline := headline_6_1(
+                            cells, steady, invalid, n_boot, block, stream(seed, "headline", *at)
+                        )
+                    )
+                    else {}
+                ),
                 "utilisation": util,
                 "operating_R_steady_cells": oper,
                 "_queue_aware": queue_aware,
@@ -1130,6 +1219,24 @@ def markdown(summary: dict) -> str:
                     f"{'yes' if e['mean_separated'] else 'no'} |"
                 )
             out.append("")
+        head = pt.get("headline_6_1")
+        if head:
+            if "outcome" in head:
+                lo, hi = head["ratio_ci95"]
+                out += [
+                    (
+                        f"Headline (analysis-plan 6.1): **{head['outcome']}**. "
+                        f"`{head['arm']}` over `{head['control']}` on the mean is "
+                        f"{head['ratio']:.3f} [{lo:.3f}, {hi:.3f}], against an equivalence "
+                        f"margin of {head['margin']:g}."
+                    ),
+                    "",
+                ]
+            else:
+                out += [
+                    f"Headline (analysis-plan 6.1): not decided, {head['status']}.",
+                    "",
+                ]
         if pt["h1"]:
             out += [
                 "| H1 on | Gain, queue-blind ms | Gain, queue-aware ms | Interaction ms | SW/RR | WJSQ/JSQ | Interaction, log | Excludes 0 (log) |",

@@ -1,6 +1,6 @@
-"""Week 1, still open — the worker wrapper and its engine adapter.
+"""Week 1 — the worker wrapper and its engine adapter.
 
-Written before the code, and skipped until it lands. That is the same pattern
+Written before the code, and skipped until it landed. That is the same pattern
 `test_trace_determinism.py` used while `gen_trace` was still a plan, and it is worth
 repeating here for a specific reason: the worker is where F-18 either holds or quietly
 stops holding, and the difference between "the split is measured" and "the split is
@@ -25,6 +25,8 @@ from __future__ import annotations
 
 import pytest
 from conftest import pending
+
+from dataplane.worker import heartbeat, log
 
 pytestmark = pytest.mark.forward
 
@@ -178,7 +180,6 @@ def test_engine_state_is_one_of_the_three_contract_values() -> None:
 
 
 def test_the_worker_record_conforms_to_c4(schema) -> None:
-    log = pytest.importorskip("dataplane.worker.log", reason="Week 1: worker log not implemented")
     record = log.build_record(
         run_id="run_0142",
         req_id="r000417",
@@ -198,7 +199,7 @@ def test_the_worker_record_carries_no_client_stamp() -> None:
     """Watch-list failure mode 3. `client_send_mono_ns` arrives on the wire for gap
     detection and must never enter a duration. The worker's queue wait is measured from
     its own admission stamp, on its own monotonic clock."""
-    source = pytest.importorskip("dataplane.worker.log").__file__
+    source = log.__file__
     with open(source) as fh:
         assert "client_send_mono_ns" not in fh.read()
 
@@ -206,8 +207,5 @@ def test_the_worker_record_carries_no_client_stamp() -> None:
 def test_heartbeat_sequence_numbers_are_gapless_per_node() -> None:
     """`validity.heartbeat_gaps` counts breaks in this sequence, and H3 is about what a
     stale estimate costs. A resequenced counter would hide the very thing being measured."""
-    emitter = pytest.importorskip(
-        "dataplane.worker.heartbeat", reason="Week 1: heartbeat emitter not implemented"
-    )
-    beat = emitter.HeartbeatEmitter(node_id="n1", run_id="run_0142")
+    beat = heartbeat.HeartbeatEmitter(node_id="n1", run_id="run_0142")
     assert [beat.next().seq for _ in range(5)] == [1, 2, 3, 4, 5]

@@ -69,8 +69,6 @@ def _gen_trace(tmp_path: Path) -> tuple[Path, str]:
 @pytest.fixture
 def fake_scheduler():
     """`fixtures/fake_scheduler` in loopback, as its own process, on an ephemeral port."""
-    if not FIXTURE.exists():
-        pytest.skip("fixtures/fake_scheduler removed (expected after Week 3)")
 
     proc = subprocess.Popen(
         [
@@ -225,13 +223,10 @@ def test_a_run_against_a_dead_scheduler_exits_nonzero(tmp_path) -> None:
 
 
 def test_the_declared_console_scripts_all_resolve() -> None:
-    """`pyproject.toml` declares three. Two exist today; `pipeline` is the Week-4 module,
-    and its entry point is already a promise the packaging makes on my behalf."""
+    """`pyproject.toml` declares these three, and each has to start."""
     assert (BIN / "gen-trace").exists()
     assert (BIN / "replay").exists()
     proc = subprocess.run(
         [str(BIN / "pipeline"), "--help"], capture_output=True, text=True, check=False
     )
-    if proc.returncode != 0 and "ModuleNotFoundError" in proc.stderr:
-        pytest.skip("Week 4: dataplane.pipeline.join not implemented yet")
-    assert proc.returncode == 0
+    assert proc.returncode == 0, proc.stderr

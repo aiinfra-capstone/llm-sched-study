@@ -52,7 +52,7 @@ import grpc
 
 from dataplane.proto import sched_grpc, sched_pb2
 from dataplane.worker.adapter import LiveState, ServiceResult
-from dataplane.worker.heartbeat import DEFAULT_INTERVAL_S, HeartbeatEmitter
+from dataplane.worker.heartbeat import DEFAULT_INTERVAL_S, Heartbeat, HeartbeatEmitter
 from dataplane.worker.llamacpp import LlamaCppAdapter
 from dataplane.worker.log import WorkerLog
 
@@ -379,8 +379,16 @@ class WorkerService(sched_grpc.WorkerServicer):
             return
         outbox: asyncio.Queue = asyncio.Queue()
         beats = asyncio.create_task(self._emitter.run(self.probe, outbox.put_nowait, stop=stop))
+        first = True
         try:
             while not stop.is_set():
+                if not first:
+                    # Beats that piled up while no stream was open are dropped, not sent
+                    # late. The scheduler would read a burst of them as fresh state, and
+                    # the outage has to stay visible as the hole in `seq` that it is.
+                    while not outbox.empty():
+                        outbox.get_nowait()
+                first = False
                 try:
                     await self._stream(outbox, stop)
                 except asyncio.CancelledError:
@@ -411,23 +419,54 @@ class WorkerService(sched_grpc.WorkerServicer):
                 await beats
 
     async def _stream(self, outbox: asyncio.Queue, stop: asyncio.Event) -> None:
-        """One `StreamHeartbeat` call: drain the outbox up, take `BeginRun` down."""
+        """One `StreamHeartbeat` call: drain the outbox up, take `BeginRun` down.
+
+        The request generator belongs to this call and ends with it. It used to outlive a
+        failed call: gRPC kept pulling from it, so every failed attempt during a scheduler
+        outage left one more consumer on the shared outbox, each taking beats and handing
+        them to a dead call. After the scheduler came back the live stream got a fraction
+        of the beats, and the holes read to the scheduler as staleness for the rest of the
+        run. One trace had 23 of them against one live stream.
+        """
+        ended = asyncio.Event()
 
         async def outgoing():
             # Polled with a timeout rather than blocked on `get()`, so that setting `stop`
             # while the node is idle ends the stream within one interval instead of
             # leaving a half-open call for gRPC to time out on at shutdown.
-            while not stop.is_set():
-                try:
-                    hb = await asyncio.wait_for(outbox.get(), self.config.heartbeat_interval_s)
-                except TimeoutError:
-                    continue
-                yield sched_pb2.Heartbeat(**hb.to_dict())
+            while not stop.is_set() and not ended.is_set():
+                hb = await self._next_beat(outbox, ended)
+                if hb is not None:
+                    yield sched_pb2.Heartbeat(**hb.to_dict())
 
         stub = sched_grpc.SchedulerStub(self._channel(self.config.scheduler_endpoint))
         call = stub.StreamHeartbeat(outgoing())
-        async for begin in call:
-            self.begin(begin.run_id)
+        try:
+            async for begin in call:
+                self.begin(begin.run_id)
+        finally:
+            ended.set()
+            call.cancel()
+
+    async def _next_beat(self, outbox: asyncio.Queue, ended: asyncio.Event) -> Heartbeat | None:
+        """The next beat, or None after one interval or as soon as the call has ended.
+
+        The pending `get()` is cancelled on every way out, a cancel from gRPC included. A
+        `get()` left running would still take the next beat off the outbox after its call
+        was gone, and that beat would reach no stream.
+        """
+        get = asyncio.ensure_future(outbox.get())
+        halt = asyncio.ensure_future(ended.wait())
+        try:
+            await asyncio.wait(
+                {get, halt},
+                timeout=self.config.heartbeat_interval_s,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            return get.result() if get.done() else None
+        finally:
+            get.cancel()
+            halt.cancel()
 
 
 async def run_worker(

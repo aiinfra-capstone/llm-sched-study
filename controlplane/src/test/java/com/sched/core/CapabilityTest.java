@@ -95,6 +95,40 @@ class CapabilityTest {
         assertEquals(0.0, cap, 1e-9);
     }
 
+    // ------------------------------------------------------- a pool node must be priced
+    //
+    // resolve() returns 0 for a null snapshot, and the live scheduler used to seed a pool
+    // node that way and carry on. Capability 0 makes static_weighted send the node nothing
+    // and wjsq divide by zero, so the run measured a different pool than its manifest named.
+    // forPoolNode is what both apps call: it refuses at startup instead.
+
+    @Test
+    @DisplayName("forPoolNode with no snapshot refuses, naming the node")
+    void forPoolNodeWithoutASnapshotRefuses() {
+        IllegalStateException e = assertThrows(IllegalStateException.class,
+                () -> Capability.forPoolNode("rtx3050", null, Map.of()));
+        assertEquals("node rtx3050 is a pool member but has no snapshot", e.getMessage());
+    }
+
+    @Test
+    @DisplayName("forPoolNode on a snapshot with no reference cell passes resolve's refusal through")
+    void forPoolNodeWithoutAReferenceCellRefuses() {
+        CostModelSnapshot empty = snapshot("empty", 0.0, List.of());
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> Capability.forPoolNode("rtx3050", empty, Map.of()));
+        assertTrue(e.getMessage().contains(empty.snapshotId()), e.getMessage());
+    }
+
+    @Test
+    @DisplayName("forPoolNode on a usable snapshot is resolve")
+    void forPoolNodeAgreesWithResolve() {
+        Map<String, Object> config = Map.of("capability_concurrency", 2);
+        assertEquals(Capability.resolve("n1", SPLIT_SNAP, config),
+                Capability.forPoolNode("n1", SPLIT_SNAP, config), 0.0);
+        assertEquals(50.0, Capability.forPoolNode("n1", SPLIT_SNAP,
+                Map.of("capability_override", Map.of("n1", 50.0))), 1e-9);
+    }
+
     @Test
     @DisplayName("resolve capability_override missing node falls through")
     void resolveOverrideMissingNodeFallsThrough() {

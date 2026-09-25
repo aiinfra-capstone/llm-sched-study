@@ -185,8 +185,7 @@ public class SchedulerGrpcService extends SchedulerGrpc.SchedulerImplBase {
             haveChannel = chosenNode != null && workerChannels.containsKey(chosenNode);
             boolean fixture = chosenNode != null && workerChannels.isEmpty();
             if (haveChannel || fixture) {
-                admitLocked(chosenNode);
-                admitted = true;
+                admitted = admitLocked(chosenNode, req.getReqId());
             }
         }
 
@@ -227,10 +226,12 @@ public class SchedulerGrpcService extends SchedulerGrpc.SchedulerImplBase {
 
         // The admission was recorded before the forward so that concurrent dispatches see
         // it. A forward that did not reach the worker takes it back, since that request
-        // will never report a completion.
+        // will never report a completion. A forward that timed out may still have reached
+        // the worker, which then reports a completion for it too. The rollback and the
+        // completion both release by req_id, so whichever comes second does nothing.
         if (admitted && !forwarded) {
             synchronized (stateLock) {
-                completeLocked(chosenNode);
+                completeLocked(chosenNode, req.getReqId());
             }
         }
 
@@ -251,22 +252,34 @@ public class SchedulerGrpcService extends SchedulerGrpc.SchedulerImplBase {
         responseObserver.onCompleted();
     }
 
-    /** Record an admission in the store and the veil. Caller holds {@link #stateLock}. */
-    private void admitLocked(String nodeId) {
+    /**
+     * Record an admission in the store and the veil. Returns false, and counts nothing, when
+     * {@code reqId} already holds a slot: the caller must then not roll it back either, or it
+     * would free the slot of the request that does hold it. Caller holds {@link #stateLock}.
+     */
+    private boolean admitLocked(String nodeId, String reqId) {
         int cap = workerCapacity.getOrDefault(nodeId, 0);
+        NodeView view = store.admit(nodeId, reqId, cap);
+        if (view == null) return false;
         // The policy reads the veil, not the store, so the admission has to reach the veil
         // too. Updating only the store left JSQ and WJSQ reading queue depth from the last
         // heartbeat, up to a second old at staleness 0, while the DES pushes every admission
         // to both (SimNodeServer.updateStore).
-        veil.updateNode(store.admit(nodeId, cap));
+        veil.updateNode(view);
         if (inflight.containsKey(nodeId)) inflight.get(nodeId).incrementAndGet();
+        return true;
     }
 
-    /** Record a completion, or undo an admission. Caller holds {@link #stateLock}. */
-    private void completeLocked(String nodeId) {
+    /**
+     * Record a completion, or undo an admission. Does nothing when {@code reqId} holds no
+     * slot on the node, so a rollback and a completion for the same request release it
+     * once. Caller holds {@link #stateLock}.
+     */
+    private void completeLocked(String nodeId, String reqId) {
         int cap = workerCapacity.getOrDefault(nodeId, 0);
-        NodeView done = store.complete(nodeId, cap);
-        if (done != null) veil.updateNode(done);
+        NodeView done = store.complete(nodeId, reqId, cap);
+        if (done == null) return;
+        veil.updateNode(done);
         if (inflight.containsKey(nodeId)) {
             inflight.get(nodeId).updateAndGet(v -> Math.max(0, v - 1));
         }
@@ -292,7 +305,7 @@ public class SchedulerGrpcService extends SchedulerGrpc.SchedulerImplBase {
             return;
         }
         synchronized (stateLock) {
-            completeLocked(nodeId);
+            completeLocked(nodeId, req.getReqId());
         }
         if (logger != null) {
             logger.logRecord(new CompletionObservedRecord(

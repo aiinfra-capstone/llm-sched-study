@@ -1,7 +1,7 @@
 # Experiment plan
 
 What we run, in what order, and what has to be true before each one starts. Status as of
-**2026-09-16**. Owners: **D** Divyansh (data plane, measurement), **A** Aditya (control plane,
+**2026-09-25**. Owners: **D** Divyansh (data plane, measurement), **A** Aditya (control plane,
 simulation), **J** joint.
 
 This document is edited in place as campaigns finish. It does not grow new planning documents
@@ -206,3 +206,13 @@ Append one line per campaign, newest last. Numbers go in `results.md`, not here.
   were found by the new tests and fixed the same day (`test-plan.md` section 2), and
   `tools/parity_check.py` closes 3.8's last requirement: 19,963 decisions made on the same
   state in both vehicles, and the same node chosen in every one.
+- **2026-09-25** Four instrument changes, all written against tests that came first. The
+  offline refit means the 1650 Ti's 2026-09-17 calibration can be fitted by the occupancy
+  rule without re-running it: `tools/refit_calibration.py <run_dir>`, then promote the run
+  it writes. Promotion now re-anchors the ablation's believed-ratio arms on the slow node's
+  new capability, so E2.0 cannot leave the value-of-calibration curve claiming ratios the
+  pool no longer has. `campaign_summary.py` decides Headline A or B against the 0.05
+  equivalence margin the analysis plan gained yesterday. And `results.md` section 3 is
+  generated from `runs/exp/mpr2_1650ti_3050/summary.json`, with `--check` in CI; converting
+  it moved interval bounds by a few ms, because the document had been carrying an older
+  summarise run's numbers.

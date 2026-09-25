@@ -72,6 +72,7 @@ import pool_load
 from dataplane.harness import gen_trace, launch
 from dataplane.harness import manifest as manifest_mod
 from dataplane.harness import replay as replay_mod
+from pool_load import snapshot_index
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SNAPSHOT_ROOT = REPO_ROOT / "contracts" / "cost_models"
@@ -320,14 +321,6 @@ class TraceFile:
 def _repo_path(p: str) -> Path:
     path = Path(p)
     return path if path.is_absolute() else REPO_ROOT / path
-
-
-def snapshot_index(root: Path = SNAPSHOT_ROOT) -> dict[str, dict[str, Any]]:
-    index = {}
-    for p in sorted(root.glob("*/*.json")):
-        snap = json.loads(p.read_text(encoding="utf-8"))
-        index[snap["snapshot_id"]] = snap
-    return index
 
 
 PLACEHOLDER_SNAPSHOT = "REPLACE-WITH-THE-"
@@ -986,7 +979,7 @@ def main(argv: list[str] | None = None) -> int:
         c.clock_sync = json.loads(args.clock_sync.read_text(encoding="utf-8"))
     runs = plan(c)
     try:
-        check_campaign(c, snapshot_index(), args.allow_colocation, allow_placeholder=args.dry_run)
+        check_campaign(c, snapshot_index(SNAPSHOT_ROOT), args.allow_colocation, allow_placeholder=args.dry_run)
         traces = {
             (r.workload.name, r.gen_seed): trace_for(r.workload, r.gen_seed)
             for r in runs

@@ -243,8 +243,15 @@ def test_write_result_lays_out_one_directory_per_campaign(tmp_path: Path) -> Non
     camp.write_result(tmp_path, result)
 
     observations = (tmp_path / "observations.jsonl").read_text().splitlines()
-    assert len(observations) == len(result.observations) + len(result.sustained)
-    assert {json.loads(o)["segment"] for o in observations} == {"grid", "sustained"}
+    assert len(observations) == (
+        len(result.observations) + len(result.warmups) + len(result.sustained)
+    )
+    assert [json.loads(o)["segment"] for o in observations] == (
+        ["grid"] * len(result.observations)
+        + ["warmup"] * len(result.warmups)
+        + ["sustained"] * len(result.sustained)
+    )
+    assert len(result.warmups) == 2  # one per cell, two cells
 
     snapshots = sorted((tmp_path / "snapshots").glob("*.json"))
     assert len(snapshots) == len(result.snapshots)

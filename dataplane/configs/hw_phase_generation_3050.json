@@ -1,5 +1,5 @@
 {
-  "_comment": "P2 in docs/checkpoint.md: the generation workload shape through the same five policies on the 1650 Ti and 3050 pool. The three shape traces share arrivals and priorities and differ only in lengths, so the comparison is paired. Points are the anchor campaign's mid and heavy (mpr2_1650ti_3050); its light point separated no policy. threshold_t and the snapshots are the anchor campaign's.",
+  "_comment": "One of the first pair's three shape campaigns (docs/experiment-plan.md section 8, 2026-09-15), and one of the held-out run sets docs/analysis-plan.md section 6.6 validates the simulator against: the generation workload shape through the same five policies on the 1650 Ti and 3050 pool. The three shape traces share arrivals and priorities and differ only in lengths, so the comparison is paired. Points are the anchor campaign's mid and heavy (mpr2_1650ti_3050); its light point separated no policy. threshold_t and the snapshots are the anchor campaign's.",
   "tag": "phase_generation_1650ti_3050",
   "trace": "runs/traces/generation_1b.trace.jsonl",
   "trace_sha256": "18a9ed025959da1c485675b2735b57e2e6c47cc0a231f2ddd0126d9132624145",

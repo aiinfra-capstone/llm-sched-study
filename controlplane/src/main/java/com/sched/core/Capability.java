@@ -71,6 +71,24 @@ public final class Capability {
     }
 
     /**
+     * Capability to seed a pool node with, for SimApp and the live scheduler alike.
+     *
+     * <p>A pool node without a snapshot has no calibrated capability. The live scheduler
+     * used to seed it at 0 and carry on, so capability-weighted policies silently starved
+     * that node for the whole run. Both vehicles now refuse at startup instead.
+     *
+     * @throws IllegalStateException if {@code snap} is null
+     * @throws IllegalArgumentException from {@link #resolve}, unchanged, if the snapshot has
+     *         no reference cell
+     */
+    public static double forPoolNode(String nodeId, CostModelSnapshot snap, java.util.Map<String, Object> config) {
+        if (snap == null) {
+            throw new IllegalStateException("node " + nodeId + " is a pool member but has no snapshot");
+        }
+        return resolve(nodeId, snap, config);
+    }
+
+    /**
      * Resolve capability for a node under manifest config (Issue #21 Item 3).
      * Supports capability_override, capability_concurrency, and decode_only / capability_mode.
      */

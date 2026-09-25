@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
+import re
 from pathlib import Path
 from typing import ClassVar
 
@@ -104,12 +105,61 @@ class _Scheduler(sched_grpc.SchedulerServicer):
             self.heartbeats.append(hb)
 
 
-async def _start(servicer, adder):
+async def _start(servicer, adder, endpoint: str = "127.0.0.1:0"):
     server = grpc.aio.server()
     adder(servicer, server)
-    port = server.add_insecure_port("127.0.0.1:0")
+    port = server.add_insecure_port(endpoint)
     await server.start()
     return server, f"127.0.0.1:{port}"
+
+
+async def _until(condition, *, what: str, timeout_s: float = 10.0) -> None:
+    """Wait until `condition()` holds, and fail the test if it never does.
+
+    A fixed sleep is too short on a loaded machine and wasted time on a quiet one. This
+    waits as long as the thing takes, up to a bound only a hang reaches.
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout_s
+    while not condition():
+        if loop.time() > deadline:
+            raise AssertionError(f"waited {timeout_s}s for {what}")
+        await asyncio.sleep(0.005)
+
+
+_SERVING = re.compile(r"worker \S+ on :(\d+) ->")
+
+
+async def _serving_port(capsys, task: asyncio.Task) -> int:
+    """The port `run_worker` bound, read off the line it prints once its server is up.
+
+    The worker binds port 0 and the OS picks a free port, so two test runs in parallel
+    cannot collide on a fixed one. The line is printed after the server has started, so
+    reading it is also the wait for the worker to be ready.
+    """
+    seen: list[str] = []
+
+    def serving():
+        seen.append(capsys.readouterr().out)
+        if task.done():
+            raise AssertionError(f"run_worker returned {task.result()} before it was serving")
+        return _SERVING.search("".join(seen))
+
+    await _until(serving, what="run_worker to start serving")
+    return int(_SERVING.search("".join(seen)).group(1))
+
+
+def _count_streams(svc: serve.WorkerService) -> list[None]:
+    """One entry per `StreamHeartbeat` call the worker opens, so a test can count them."""
+    attempts: list[None] = []
+    real = svc._stream
+
+    async def counted(outbox, stop):
+        attempts.append(None)
+        await real(outbox, stop)
+
+    svc._stream = counted
+    return attempts
 
 
 def _config(tmp_path, **over):
@@ -302,7 +352,12 @@ def test_heartbeats_carry_the_wrappers_queue_depth_which_slots_cannot_see(tmp_pa
         stop = asyncio.Event()
         hb = asyncio.create_task(svc.heartbeat_forever(stop=stop))
         work = asyncio.gather(*(svc.serve_one(_request(f"r{i:04d}")) for i in range(4)))
-        await asyncio.sleep(0.25)
+        # While the backlog is still there: the first request holds the one slot for 0.4 s
+        # and the other three wait in the wrapper.
+        await _until(
+            lambda: any(h.queue_depth >= 1 for h in sched.heartbeats),
+            what="a heartbeat that reports the wrapper's backlog",
+        )
         depths = [h.queue_depth for h in sched.heartbeats]
         await work
         stop.set()
@@ -410,19 +465,82 @@ def test_a_scheduler_that_is_not_there_is_retried_and_then_given_up_on(tmp_path)
         svc = serve.WorkerService(
             _config(tmp_path, scheduler_endpoint="127.0.0.1:1"), _FakeAdapter()
         )
+        attempts = _count_streams(svc)
         stop = asyncio.Event()
         retrying = asyncio.create_task(svc.heartbeat_forever(stop=stop, reconnect_s=0.02))
-        await asyncio.sleep(0.15)
+        await _until(lambda: len(attempts) >= 3, what="the worker to retry the scheduler")
         stop.set()
         await retrying
+        retried = len(attempts)
+        # Without a reconnect interval, the first failure is the last attempt.
         await svc.heartbeat_forever(stop=asyncio.Event(), reconnect_s=None)
         await svc.drain()
+        return retried, len(attempts) - retried
 
-    asyncio.run(go())
+    retried, without_retry = asyncio.run(go())
+    assert retried >= 2
+    assert without_retry == 1
+
+
+async def _outage_then_scheduler(tmp_path, *, beats_after: int):
+    """A worker that starts while its scheduler is down, retries through the outage, and
+    then reaches a scheduler that comes up on the address it was given.
+
+    Returns the seqs the scheduler received, and the last seq the worker had emitted when
+    the scheduler came up.
+    """
+    # An address that nothing listens on until the scheduler takes it later.
+    placeholder, endpoint = await _start(_Scheduler(), sched_grpc.add_SchedulerServicer_to_server)
+    await placeholder.stop(None)
+    svc = serve.WorkerService(_config(tmp_path, scheduler_endpoint=endpoint), _FakeAdapter())
+    attempts = _count_streams(svc)
+    stop = asyncio.Event()
+    beating = asyncio.create_task(svc.heartbeat_forever(stop=stop, reconnect_s=0.02))
+    await _until(
+        lambda: len(attempts) >= 3 and svc._emitter.emitted,
+        what="the worker to beat and retry while the scheduler is down",
+    )
+    emitted_while_down = svc._emitter.emitted[-1].seq
+
+    sched = _Scheduler()
+    server, _ = await _start(sched, sched_grpc.add_SchedulerServicer_to_server, endpoint)
+    await _until(
+        lambda: len(sched.heartbeats) >= beats_after,
+        what=f"{beats_after} heartbeats after the scheduler came back",
+    )
+    stop.set()
+    await beating
+    await svc.drain()
+    await server.stop(None)
+    return [h.seq for h in sched.heartbeats], emitted_while_down
+
+
+def test_a_reconnect_shows_up_as_a_hole_in_seq(tmp_path) -> None:
+    """The beat cadence keeps counting while the transport is down, so the scheduler finds
+    the outage as missing seqs, and never receives a seq older than one it already has."""
+    received, emitted_while_down = asyncio.run(_outage_then_scheduler(tmp_path, beats_after=3))
+
+    assert received == sorted(set(received)), "seq arrives in order and never twice"
+    assert set(range(1, emitted_while_down + 1)) - set(received), (
+        f"every beat emitted during the outage arrived late: {received}"
+    )
+
+
+def test_once_the_stream_is_back_no_heartbeat_is_lost(tmp_path) -> None:
+    """After the scheduler returns, every beat reaches it. The only hole in `seq` a
+    scheduler may see is the outage itself: a beat lost on a live stream reads as a gap the
+    node never had, and the scheduler ages its estimate of the node for no reason.
+
+    Each failed `StreamHeartbeat` call leaves the request iterator it was given, and one
+    still pulling from the shared outbox takes a beat into a call that no longer exists."""
+    received, _ = asyncio.run(_outage_then_scheduler(tmp_path, beats_after=30))
+
+    missing = sorted(set(range(received[0], received[-1] + 1)) - set(received))
+    assert missing == [], f"lost on a live stream: {missing} (received {received})"
 
 
 def test_run_worker_waits_for_the_model_instead_of_sleeping_a_constant(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, capsys
 ) -> None:
     """Loading the 8B GGUF is minutes cold and seconds warm, so any fixed wait is either
     wasted time or a race with a node that is not ready."""
@@ -441,12 +559,15 @@ def test_run_worker_waits_for_the_model_instead_of_sleeping_a_constant(
         task = asyncio.create_task(
             serve.run_worker(_config(tmp_path), bind="127.0.0.1:0", stop=stop, engine_poll_s=0.01)
         )
-        await asyncio.sleep(0.2)
+        # The worker serves only once the engine answered healthy.
+        await _serving_port(capsys, task)
+        polled = len(polls)
         stop.set()
-        return await task
+        return await task, polled
 
-    assert asyncio.run(go()) == 0
-    assert len(polls) >= 2
+    rc, polled_before_serving = asyncio.run(go())
+    assert rc == 0
+    assert polled_before_serving == 2
 
 
 def test_run_worker_refuses_to_announce_a_node_whose_engine_never_loaded(tmp_path) -> None:
@@ -457,7 +578,7 @@ def test_run_worker_refuses_to_announce_a_node_whose_engine_never_loaded(tmp_pat
 
 
 def test_run_worker_serves_execute_over_a_real_socket_and_drains_on_the_way_out(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, capsys
 ) -> None:
     adapter = _FakeAdapter(service_s=0.05)
     monkeypatch.setattr(serve, "LlamaCppAdapter", lambda *a, **k: adapter)
@@ -467,11 +588,12 @@ def test_run_worker_serves_execute_over_a_real_socket_and_drains_on_the_way_out(
         client_server, client_ep = await _start(sink, sched_grpc.add_ClientServicer_to_server)
         stop = asyncio.Event()
         config = _config(tmp_path)
-        task = asyncio.create_task(serve.run_worker(config, bind="127.0.0.1:50077", stop=stop))
-        await asyncio.sleep(0.2)
-        async with grpc.aio.insecure_channel("127.0.0.1:50077") as ch:
+        task = asyncio.create_task(serve.run_worker(config, bind="127.0.0.1:0", stop=stop))
+        port = await _serving_port(capsys, task)
+        async with grpc.aio.insecure_channel(f"127.0.0.1:{port}") as ch:
             await sched_grpc.WorkerStub(ch).Execute(_request(client_endpoint=client_ep))
-            await asyncio.sleep(0.3)
+        # Execute acknowledges before the work is done, and stopping drains it: the
+        # delivery below happens on the way out, which is what this test is about.
         stop.set()
         rc = await task
         await client_server.stop(None)
@@ -652,15 +774,15 @@ def test_the_shutdown_line_counts_every_outcome(tmp_path, monkeypatch, stub, cap
     async def go():
         stop = asyncio.Event()
         task = asyncio.create_task(
-            serve.run_worker(_config(tmp_path), bind="127.0.0.1:50078", stop=stop)
+            serve.run_worker(_config(tmp_path), bind="127.0.0.1:0", stop=stop)
         )
-        await asyncio.sleep(0.2)
-        async with grpc.aio.insecure_channel("127.0.0.1:50078") as ch:
+        port = await _serving_port(capsys, task)
+        async with grpc.aio.insecure_channel(f"127.0.0.1:{port}") as ch:
             worker = sched_grpc.WorkerStub(ch)
             await worker.Execute(_request("r0001", client_endpoint="c:1"))
             await worker.Execute(_request("r0002", client_endpoint="c:1"))
             await worker.Execute(_request("r0003", client_endpoint="c:1", output_len=3))
-            await asyncio.sleep(0.3)
+        # The shutdown drains all three before it prints the line under test.
         stop.set()
         return await task
 

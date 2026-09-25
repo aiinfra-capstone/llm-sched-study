@@ -79,25 +79,32 @@ is the least heterogeneous number the snapshots contain.
 ## 3. K3 and H1 on the anchor trace
 
 45 runs, all valid, no transient cell. Mean end-to-end latency in ms [95% interval].
+Threshold sends everything to the 3050 at this cutoff. The two tables below are generated
+from the run set's own `summary.json` by `tools/results_tables.py`, and CI fails if they
+stop matching it.
 
-| Policy | 1.3 req/s | 2.4 req/s | 3.2 req/s |
+<!-- generated: policy_means runs/exp/mpr2_1650ti_3050/summary.json -->
+| Policy | 1.305 req/s | 2.385 req/s | 3.195 req/s |
 |---|---|---|---|
-| RoundRobin | 916 [814, 1023] | 1516 [1330, 1713] | 2949 [2656, 3243] |
-| StaticWeighted | 788 [710, 874] | 871 [777, 967] | 996 [872, 1132] |
-| JSQ | 734 [678, 794] | 873 [795, 959] | 1011 [902, 1134] |
-| WJSQ | 632 [594, 672] | 761 [691, 834] | 832 [759, 916] |
-| Threshold (3050 only) | 655 [597, 712] | 755 [698, 808] | 851 [775, 931] |
+| RoundRobin | 916 [815, 1028] | 1516 [1323, 1696] | 2949 [2655, 3225] |
+| StaticWeighted | 788 [710, 881] | 871 [780, 973] | 996 [875, 1131] |
+| JSQ | 734 [676, 794] | 873 [786, 974] | 1011 [899, 1135] |
+| WJSQ | 632 [594, 671] | 761 [690, 835] | 832 [755, 916] |
+| Threshold | 655 [601, 713] | 755 [701, 814] | 851 [777, 933] |
+<!-- /generated -->
 
 p95 in ms [95% interval]. Secondary: percentile bootstrap intervals are unreliable where the
 p95 lands on a cluster of near-identical latencies.
 
-| Policy | 1.3 req/s | 2.4 req/s | 3.2 req/s |
+<!-- generated: policy_means runs/exp/mpr2_1650ti_3050/summary.json stat=p95 -->
+| Policy | 1.305 req/s | 2.385 req/s | 3.195 req/s |
 |---|---|---|---|
-| RoundRobin | 2689 [1830, 3173] | 4443 [3730, 5228] | 7396 [6723, 8532] |
-| StaticWeighted | 1654 [1307, 2441] | 1859 [1584, 2212] | 2120 [1749, 2521] |
-| JSQ | 1632 [1376, 1718] | 1916 [1621, 2237] | 2294 [1815, 2971] |
-| WJSQ | 1119 [900, 1611] | 1616 [1500, 1761] | 1615 [1354, 2043] |
-| Threshold (3050 only) | 1244 [1006, 1522] | 1385 [1236, 1492] | 1538 [1331, 1655] |
+| RoundRobin | 2689 [1840, 3174] | 4443 [3730, 5138] | 7396 [6720, 8042] |
+| StaticWeighted | 1654 [1307, 2441] | 1859 [1579, 2212] | 2120 [1774, 2523] |
+| JSQ | 1632 [1376, 1719] | 1916 [1621, 2283] | 2294 [1826, 2967] |
+| WJSQ | 1119 [895, 1611] | 1616 [1472, 1761] | 1615 [1347, 2043] |
+| Threshold | 1244 [1018, 1522] | 1385 [1237, 1495] | 1538 [1331, 1647] |
+<!-- /generated -->
 
 Routing shares: RoundRobin 50% to the 3050, JSQ 57 to 63%, StaticWeighted 67 to 68% against a
 nominal 61%, WJSQ 72 to 73%, Threshold 100%.

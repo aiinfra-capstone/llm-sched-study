@@ -114,11 +114,19 @@ The curve is reported in full whatever its shape.
 
 | Outcome | Conclusion licensed |
 |---|---|
-| `wjsq(1.57)` beats `jsq_fastfirst`, separated | Calibrated magnitude adds beyond the ranking bit. Headline A |
-| `wjsq(1.57)` and `jsq_fastfirst` not separated | The ranking is what pays, and the magnitude adds no more than the interval's width. Headline B |
+| `wjsq(1.57)/jsq_fastfirst` interval entirely below 1 - d | Calibrated magnitude adds more than d beyond the ranking bit. Headline A |
+| The interval inside [1 - d, 1 + d] | The ranking is what pays, and the magnitude adds or costs no more than d. Headline B |
+| The interval entirely above 1 + d | Calibrated magnitude costs latency against the ranking alone. Reported as reversed, and neither headline is used as written |
+| The interval crosses 1 - d or 1 + d | Inconclusive. Neither headline is licensed, and the paper reports the interval against the margin |
 | `ect` beats the best `wjsq` arm, separated | The scalar was the limit rather than calibration itself, and the paper says which policy earns the profile |
 | The curve's minimum sits at a believed ratio far from the operating one | We report how wrong an estimate can be before it stops paying, which is the quantitative form of K2 |
 | Every arm within one interval of `jsq` | Calibration buys nothing measurable on this pool at this load, reported as a null with its interval |
+
+The ratio is `wjsq` over `jsq_fastfirst` on mean end-to-end latency in the baseline arm, with
+its paired 95% interval, and the equivalence margin d is 0.05. A separated gain smaller than d
+is Headline B, not A: A claims the router gains X% from calibrated magnitude, and a gain inside
+the margin is what B's "adds no more than X%" covers. `tools/campaign_summary.py` computes the
+outcome as `headline_6_1` at the ablation's point.
 
 ### 6.2 Seeded anchor, `hw_seeded_anchor_3050.json` (K3)
 
@@ -233,3 +241,4 @@ paper's structure. X and Y are filled from the runs.
 | Date | Change | Measurement that forced it |
 |---|---|---|
 | 2026-09-16 | Plan frozen | None. Initial |
+| 2026-09-24 | 6.1 gains an equivalence margin of 0.05 and four outcomes (A, B, reversed, inconclusive) in place of "separated" and "not separated" | None; made before the ablation runs. Audit item C2: "not separated" read an interval that includes 1 as evidence of no effect, so with three repeats B would have won whenever the campaign was too small to tell. 0.05 is under half the smallest queue-aware calibration gain the first pair measured (WJSQ/JSQ 0.738 to 0.900) and wide enough for three seeded repeats to land inside |

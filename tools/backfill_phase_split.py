@@ -39,7 +39,8 @@ def cell_ratios(obs_path: pathlib.Path) -> dict[tuple[int, int, int], tuple[floa
         if not line.strip():
             continue
         o = json.loads(line)
-        if o.get("status") != "ok":
+        # A warmup pays the engine's first-request setup, which is not part of any cell.
+        if o.get("status") != "ok" or o.get("segment") == "warmup":
             continue
         if o.get("prefill_ns") is None or o.get("decode_ns") is None:
             continue

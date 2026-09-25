@@ -37,7 +37,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import pool_load
 
@@ -119,6 +119,118 @@ def inversions(snap: dict[str, Any], tolerance: float = 0.02) -> list[str]:
     return out
 
 
+def rescale_overrides(
+    config: dict[str, Any], capabilities: dict[str, float]
+) -> tuple[dict[str, Any], list[str]]:
+    """The ablation's believed-ratio arms, re-expressed against a recalibrated pool.
+
+    Analysis-plan 6.1 sweeps what WJSQ is *told* the pool's capability ratio is: 1.0, 1.2,
+    2.5, 3.35, 5.0 and 100. Those ratios are the axis of the value-of-calibration curve and
+    they never move. What the config stores is not the ratio but the pair of tok/s numbers
+    that expresses it, anchored on the slow node's measured capability, so a recalibration
+    of that node leaves every arm claiming a ratio it no longer has. Nothing would fail:
+    the campaign would run and the curve's x-axis would be quietly wrong by whatever the
+    node moved by.
+
+    So each override is rebuilt from the ratio it already encodes, with the slow node put
+    back at its measurement. The slow node is the anchor because it is the one the arms
+    hold fixed, and it is identified by measurement, not by name: whichever node in the
+    override has the lowest measured capability.
+
+    This is why promoting the fast node changes no override. Its measured capability is not
+    what any arm is anchored on, and what the pair's own ratio is at four slots is the `c4`
+    arm's job to read from the cost model rather than a number written into a belief.
+
+    Returns the rewritten config and one line per value that moved, which is empty when
+    nothing did.
+    """
+    out = json.loads(json.dumps(config))
+    changed: list[str] = []
+    for arm in out.get("capability_arms", []):
+        override = arm.get("capability_override")
+        if not override:
+            continue
+        name = str(arm.get("name", ""))
+        if set(override) != set(capabilities):
+            # An arm that names a node the pool does not have, or leaves one out, is not a
+            # belief about this pool at all. Rescaling it would invent an anchor, so it is
+            # refused here rather than quietly re-expressed against a pool it never meant.
+            raise ValueError(
+                f"{name}: capability_override covers {sorted(override)}, but the pool this "
+                f"config names is {sorted(capabilities)}"
+            )
+        anchor = min(override, key=lambda n: capabilities[n])
+        base = override[anchor]
+        # The believed ratio is recovered from the pair and rounded before it is applied.
+        # The config stores the product of a ratio and a measurement, both already rounded,
+        # so the quotient comes back a few parts in a million off the ratio the plan states,
+        # and re-anchoring would walk the axis a little further from it at every promotion.
+        rebuilt = {
+            node: round(capabilities[anchor] * round(value / base, 4), 3)
+            for node, value in override.items()
+        }
+        # A value left exactly as written when the rescale lands on it, so a promotion that
+        # moves nothing rewrites nothing.
+        if rebuilt != override:
+            arm["capability_override"] = rebuilt
+            changed.extend(
+                f"{name}: {node} {override[node]:g} -> {value:g}"
+                for node, value in rebuilt.items()
+                if value != override[node]
+            )
+    return out, changed
+
+
+def without_comments(value: Any) -> Any:
+    """The same structure with every `_`-prefixed key dropped, comments included."""
+    if isinstance(value, dict):
+        return {k: without_comments(v) for k, v in value.items() if not k.startswith("_")}
+    if isinstance(value, list):
+        return [without_comments(v) for v in value]
+    return value
+
+
+def rewrite_overrides(text: str, before: dict[str, Any], after: dict[str, Any]) -> str:
+    """`after` written back over the config text, by replacing the numbers that moved.
+
+    As a text substitution rather than a JSON dump, because a config is written to be read:
+    it carries a `_comment` that explains what each arm is, and that comment quotes the
+    anchor. A dump would keep the stale sentence and reformat everything around it. The
+    substitution catches the prose too, which is the only way the old number stops being
+    in the file.
+
+    It falls back to a dump if the edited text no longer parses as the config it should be,
+    which is what happens if one of these numbers is also something else in the file. The
+    check ignores the comments, since editing them is the point.
+    """
+    moves: dict[float, float] = {}
+    for was, now in zip(
+        before.get("capability_arms", []), after.get("capability_arms", []), strict=True
+    ):
+        for node, value in (now.get("capability_override") or {}).items():
+            old_value = was["capability_override"][node]
+            if value != old_value:
+                moves[old_value] = value
+    out = text
+    for old_value, value in sorted(moves.items(), key=lambda kv: -len(json.dumps(kv[0]))):
+        out = out.replace(json.dumps(old_value), json.dumps(value))
+    try:
+        if without_comments(json.loads(out)) != without_comments(after):
+            return json.dumps(after, indent=2) + "\n"
+    except json.JSONDecodeError:
+        return json.dumps(after, indent=2) + "\n"
+    return out
+
+
+def capabilities_of(config: dict[str, Any], index: dict[str, dict[str, Any]]) -> dict[str, float]:
+    """What each of a config's nodes is measured at, under the snapshots it names."""
+    return {
+        node_id: pool_load.capability(index[snapshot_id])
+        for node_id, snapshot_id in (config.get("cost_model_snapshots") or {}).items()
+        if snapshot_id in index
+    }
+
+
 def configs_naming(snapshot_id: str) -> list[Path]:
     """Configs whose cost_model_snapshots name this id, confirmed by parsing, not by grep."""
     hits = []
@@ -131,6 +243,45 @@ def configs_naming(snapshot_id: str) -> list[Path]:
         if isinstance(d, dict) and snapshot_id in (d.get("cost_model_snapshots") or {}).values():
             hits.append(path)
     return hits
+
+
+class Repoint(NamedTuple):
+    """One config's rewrite: where it goes, its new text, and a line per override that moved."""
+
+    path: Path
+    text: str
+    changed: list[str]
+
+
+def plan_repoint(old_id: str, new_snap: dict[str, Any], index: dict[str, dict]) -> list[Repoint]:
+    """Every config that names `old_id`, rewritten to name `new_snap`, without writing any.
+
+    Planning is kept apart from writing so a refusal leaves nothing behind. When the check ran
+    inside the write loop, a config that could not be re-anchored stopped the promotion after
+    the snapshots were copied and the configs before it were rewritten, so the contracts and
+    half the configs had moved and the rest had not.
+
+    Raises ValueError naming the config when one of its believed-ratio arms cannot be
+    re-anchored.
+    """
+    # The index the configs are read against has to hold the snapshot being promoted, or a
+    # dry run would price the arms off the calibration this one replaces.
+    fresh_index = {**index, new_snap["snapshot_id"]: new_snap}
+    plans = []
+    for path in configs_naming(old_id):
+        text = path.read_text(encoding="utf-8")
+        # The id is swapped as text so a config's layout and comments survive. Only a
+        # config whose arms move is rewritten as JSON, and only then.
+        moved = text.replace(old_id, new_snap["snapshot_id"])
+        config = json.loads(moved)
+        try:
+            rescaled, changed = rescale_overrides(config, capabilities_of(config, fresh_index))
+        except ValueError as exc:
+            raise ValueError(f"{path.relative_to(REPO_ROOT)} cannot be re-anchored: {exc}") from exc
+        if changed:
+            moved = rewrite_overrides(moved, config, rescaled)
+        plans.append(Repoint(path, moved, changed))
+    return plans
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -216,26 +367,32 @@ def main(argv: list[str] | None = None) -> int:
             print("  " + line)
         print()
 
-    # 3. Promote.
+    # 3. Promote, once every check has passed. The configs are planned before anything is
+    # copied, so a config that refuses leaves the contracts and every config untouched.
     dest = SNAPSHOT_ROOT / node_class
     for p in series:
         target = dest / p.name
         if target.exists() and target.read_bytes() != p.read_bytes():
             print(f"refusing: {target} exists with different content")
             return 2
+    try:
+        repoints = plan_repoint(old["snapshot_id"], new, index) if old is not None else []
+    except ValueError as exc:
+        print(f"refusing: {exc}")
+        return 2
     if not args.dry_run:
         dest.mkdir(parents=True, exist_ok=True)
         for p in series:
             shutil.copy2(p, dest / p.name)
     print(f"{'would promote' if args.dry_run else 'promoted'} {len(series)} snapshot(s) to {dest}")
 
-    # 4. Repoint.
-    repointed = configs_naming(old["snapshot_id"]) if old is not None else []
-    for path in repointed:
-        text = path.read_text(encoding="utf-8")
+    # 4. Repoint, and re-anchor any believed-ratio arm the new measurement moves.
+    for plan in repoints:
         if not args.dry_run:
-            path.write_text(text.replace(old["snapshot_id"], new["snapshot_id"]), encoding="utf-8")
-        print(f"  {'would repoint' if args.dry_run else 'repointed'} {path.relative_to(REPO_ROOT)}")
+            plan.path.write_text(plan.text, encoding="utf-8")
+        print(f"  {'would repoint' if args.dry_run else 'repointed'} {plan.path.relative_to(REPO_ROOT)}")
+        for line in plan.changed:
+            print(f"    {'would rescale' if args.dry_run else 'rescaled'} {line}")
     if args.dry_run:
         return 0
 

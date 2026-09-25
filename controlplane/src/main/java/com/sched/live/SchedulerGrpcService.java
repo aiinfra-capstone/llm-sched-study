@@ -152,6 +152,7 @@ public class SchedulerGrpcService extends SchedulerGrpc.SchedulerImplBase {
         long seq;
         boolean haveChannel;
         boolean admitted = false;
+        boolean duplicate = false;
         synchronized (stateLock) {
             long startNs = System.nanoTime();
 
@@ -186,6 +187,7 @@ public class SchedulerGrpcService extends SchedulerGrpc.SchedulerImplBase {
             boolean fixture = chosenNode != null && workerChannels.isEmpty();
             if (haveChannel || fixture) {
                 admitted = admitLocked(chosenNode, req.getReqId());
+                duplicate = !admitted;
             }
         }
 
@@ -194,7 +196,11 @@ public class SchedulerGrpcService extends SchedulerGrpc.SchedulerImplBase {
         // scheduler is in the request path but not the response path.
         boolean forwarded = false;
         String forwardError = null;
-        if (haveChannel) {
+        if (duplicate) {
+            // A req_id that already holds a slot took none here, so forwarding it would have
+            // the worker run a request no slot accounts for. It is refused instead.
+            forwardError = "duplicate req_id";
+        } else if (haveChannel) {
             io.grpc.ManagedChannel ch = workerChannels.get(chosenNode);
             try {
                 com.sched.v1.WorkerGrpc.WorkerBlockingStub stub = com.sched.v1.WorkerGrpc.newBlockingStub(ch)

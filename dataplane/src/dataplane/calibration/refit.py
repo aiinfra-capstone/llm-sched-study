@@ -135,9 +135,9 @@ def refit_run(run_dir: Path, out_root: Path) -> Path:
     )
     result.failures = campaign._failure_counts(result.observations + result.sustained)
     # `_finish` stamps the run id and `measured_at_unix` with the time of the fit, not the
-    # time the samples were taken, and that is on purpose. The scheduler serves the newest
-    # snapshot in a class, so a refit stamped with the source run's time would tie with the
-    # snapshot it replaces and could never be promoted over it. `refit_of` keeps the link
+    # time the samples were taken, and that is on purpose. Promotion refuses a snapshot that
+    # is not newer than the newest in its class, so a refit stamped with the source run's
+    # time would tie with the snapshot it replaces and could never be promoted over it. `refit_of` keeps the link
     # back to when the engine actually ran.
     campaign._finish(result, config)
     result.report["refit_of"] = source.get("run_id", run_dir.name)

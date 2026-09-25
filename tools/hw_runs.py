@@ -98,6 +98,9 @@ ARM_KEYS = (
     "threshold_t",
 )
 READY_LINE = "Live Control Plane active"
+# The live scheduler used to print this when it swapped a named snapshot for the newest one
+# of its class. It serves exactly the one the manifest names now, so the line should never
+# appear. The check stays so that the swap coming back stops a run instead of mislabelling it.
 RESOLVED_LINE = "Resolving snapshot"
 
 
@@ -415,16 +418,17 @@ def check_campaign(
         ngl = node["engine_config"]["ngl"]
         if f"_ngl{ngl}_" not in f"_{node_class}_":
             raise ValueError(f"{node_id!r} runs ngl {ngl} but {snap_id} is for {node_class}")
-        # The scheduler quietly serves the newest snapshot in a class, whatever the manifest
-        # names. Naming an older one would leave a record claiming a model that did not run.
+        # Every promotion repoints each config that named the class's newest snapshot to the
+        # one it promotes (promote_calibration.py, step 4). A config naming an older one
+        # missed a promotion, and would run on a calibration the other campaigns have left.
         newest = max(
             (s for s in index.values() if s["node_class"] == node_class),
             key=lambda s: s["measured_at_unix"],
         )
         if newest["snapshot_id"] != snap_id:
             raise ValueError(
-                f"{node_id!r} names {snap_id}, but the scheduler would serve the newest snapshot "
-                f"in {node_class}, {newest['snapshot_id']}; name that one"
+                f"{node_id!r} names {snap_id}, but the newest snapshot in {node_class} is "
+                f"{newest['snapshot_id']}, so this config missed a promotion; name that one"
             )
 
 

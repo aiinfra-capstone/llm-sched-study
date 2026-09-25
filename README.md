@@ -399,8 +399,9 @@ The manifest is a pre-run input here, not the post-run C-6 record, which is why 
 `manifest.pre.json`: `runset` only reads `manifest.json`, so a run that dies halfway leaves
 nothing that looks like a data point. The scheduler takes its run id, policy, staleness and
 log file from it at startup, so **one scheduler process serves exactly one run**. The
-scheduler also serves the newest snapshot in each node class whatever the manifest names,
-so the manifest has to name the newest one or it records a model that did not run.
+scheduler serves exactly the snapshot the manifest names, and `hw_runs.py` refuses a config
+that names anything older than the newest in its node class: every promotion repoints the
+configs to the newest, so an older one means that config missed a promotion.
 
 For a campaign we do not do any of this by hand. `tools/hw_runs.py` writes the pre-run
 manifest, starts a fresh scheduler per run, replays, stops the scheduler, pulls each node's

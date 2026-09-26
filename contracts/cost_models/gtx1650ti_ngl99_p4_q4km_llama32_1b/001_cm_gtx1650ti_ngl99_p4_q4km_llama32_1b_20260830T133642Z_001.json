@@ -160,8 +160,8 @@
     "fit_r2": 0.0
   },
   "admissibility": {
-    "max_prompt": 2048,
-    "max_output": 256,
+    "max_prompt": 512,
+    "max_output": 128,
     "timeout_ceiling_ms": 60000
   },
   "provenance": {

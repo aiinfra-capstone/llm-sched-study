@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/CAPSTONE_ORG/REPO/contracts/schemas/trace.schema.json",
+  "$id": "https://github.com/aiinfra-capstone/llm-sched-study/contracts/schemas/trace.schema.json",
   "title": "C-2 \u2014 Trace file record",
-  "description": "JSONL. Line 1 is the header record; every subsequent line is one request. Token IDs are NOT stored \u2014 only content_seed. The materializer turns (content_seed, prompt_len, vocab_size) into an exact token sequence deterministically, which keeps traces small and diffable and makes the file portable to the simulator, which needs no token content at all. Regenerating a trace with the same seed and parameters MUST produce a byte-identical file (Week-1 test, not an assumption). Float formatting is the usual culprit: arrival_offset_s is fixed at 4 decimal places. The trace's SHA-256 is the identity used everywhere downstream.",
+  "description": "JSONL. Line 1 is the header record; every subsequent line is one request. Token IDs are NOT stored \u2014 only content_seed. The materializer turns (content_seed, prompt_len, vocab_size) into an exact token sequence deterministically, which keeps traces small and diffable and makes the file portable to the simulator, which needs no token content at all. The header carries `generator_git_sha` and the SHA-256 is taken over the whole file, so the hash identifies (config, seed, generator commit). Regenerating a trace with the same config and seed, stamped with the recorded generator sha, MUST produce a byte-identical file whenever the generator still writes the same stream (Week-1 test, not an assumption). Float formatting is the usual culprit: arrival_offset_s is fixed at 4 decimal places. The trace's SHA-256 is the identity used everywhere downstream.",
   "oneOf": [
     {
       "$ref": "#/$defs/header"
@@ -127,7 +127,8 @@
           "type": "boolean"
         },
         "generator_git_sha": {
-          "type": "string"
+          "type": "string",
+          "description": "The commit of the generator that wrote this file, or the sha passed to `gen_trace.generate` when a trace is regenerated at a recorded commit. It is inside the hashed bytes, so the same config and seed at a different commit give a different SHA-256."
         }
       }
     },

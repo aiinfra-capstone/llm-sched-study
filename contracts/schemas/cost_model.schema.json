@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/CAPSTONE_ORG/REPO/contracts/schemas/cost_model.schema.json",
+  "$id": "https://github.com/aiinfra-capstone/llm-sched-study/contracts/schemas/cost_model.schema.json",
   "title": "C-3 \u2014 Cost model snapshot",
-  "description": "The most load-bearing artifact. Divyansh Shukla (A) produces these; Aditya's live scheduler AND B's DES both consume them. This is where the two halves of the project actually meet.\n\nTWO REQUIREMENTS THAT FOLLOW FROM H3 AND ARE EASY TO MISS:\n1. A must emit a TIME-ORDERED SERIES of snapshots during the calibration campaign, not one final fitted model. Staleness injection (F-8) means B serves the scheduler a snapshot from s seconds ago. If A emits only one snapshot, B has to synthesize aging by perturbing parameters \u2014 which makes H3 a study of B's perturbation model rather than of real drift. Real snapshot history makes H3 an empirical result.\n2. stochastic.autocorr_time_s is MPR-1's headline number and is what F-22 uses to give the DES realistic variance. It is a deliverable, not a diagnostic.\n\nON `form`: F-7 permits a lookup table OR a <=6-parameter regression. Pick ONE and commit at end of Week 2 \u2014 supporting both doubles B's interpolation logic for no research gain.",
+  "description": "The most load-bearing artifact. Divyansh Shukla (A) produces these; Aditya's live scheduler AND B's DES both consume them. This is where the two halves of the project actually meet.\n\nSnapshots are kept as a time-ordered series per calibration campaign. The series was required for H3, which would serve the scheduler a snapshot from s seconds ago; H3 is out of paper one (research plan section 5), so paper one reads one named snapshot per node and the series stays for M12.\n\nstochastic.autocorr_time_s is a measurement reported for characterisation (K6). The simulator does not read it: its noise is one lognormal multiplier per request with sigma from stochastic.sigma, independent across requests.\n\nON `form`: F-7 permits a lookup table OR a <=6-parameter regression. Pick ONE and commit at end of Week 2 \u2014 supporting both doubles B's interpolation logic for no research gain.",
   "type": "object",
   "required": [
     "cost_model_schema",
@@ -115,7 +115,7 @@
     },
     "stochastic": {
       "type": "object",
-      "description": "F-22: the DES service-time model MUST include a stochastic component fitted to observed throughput variance.",
+      "description": "F-22: the DES service-time model MUST include a stochastic component fitted to observed throughput variance. The simulator multiplies each request's service time by exp(sigma Z - sigma^2 / 2), one draw per request, independent across requests, with no autocorrelation.",
       "required": [
         "model",
         "sigma",
@@ -133,7 +133,7 @@
         "autocorr_time_s": {
           "type": "number",
           "exclusiveMinimum": 0,
-          "description": "tau. MPR-1 headline number."
+          "description": "tau, reported for characterisation (K6, MPR-1). The simulator does not read it. Meaningful only when `tau_resolved` is true: at the 5 s window floor it is a censored bound, not a measurement."
         },
         "fit_r2": {
           "type": "number"

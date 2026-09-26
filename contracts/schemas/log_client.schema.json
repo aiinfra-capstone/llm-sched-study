@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/CAPSTONE_ORG/REPO/contracts/schemas/log_client.schema.json",
+  "$id": "https://github.com/aiinfra-capstone/llm-sched-study/contracts/schemas/log_client.schema.json",
   "title": "C-4 — client_{run_id}.jsonl (Divyansh, A)",
   "description": "Appended locally, never written over the network. Joined offline on req_id.",
   "type": "object",

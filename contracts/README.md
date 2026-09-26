@@ -75,10 +75,11 @@ an example that no longer exercises the schema is how drift gets in.
    The failure this prevents: A learns something in Week 2, adds a field, and B's DES
    quietly reads garbage.
 
-3. **C-3 is a time-ordered *series*, not a final fitted model.** Staleness injection
-   (F-8) serves the scheduler a snapshot from *s* seconds ago. If A emits only one
-   snapshot, B has to synthesize aging by perturbing parameters — which turns H3 into a
-   study of B's perturbation model rather than of real drift.
+3. **C-3 is kept as a time-ordered *series*.** The series was required for H3, where
+   staleness injection (F-8) would serve the scheduler a snapshot from *s* seconds ago.
+   H3 is out of paper one, so each run names one snapshot per node and the series stays
+   for M12. `stochastic.autocorr_time_s` is reported for K6 and the simulator does not
+   read it: its noise is one i.i.d. lognormal multiplier per request.
 
 ## Regenerating gRPC stubs
 

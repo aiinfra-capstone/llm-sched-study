@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/CAPSTONE_ORG/REPO/contracts/schemas/manifest.schema.json",
+  "$id": "https://github.com/aiinfra-capstone/llm-sched-study/contracts/schemas/manifest.schema.json",
   "title": "C-6 \u2014 Run manifest",
   "description": "One JSON per run, written by the launcher BEFORE the run and finalised after. F-20: every experiment reproducible from a single config file plus a seed.\n\n`vehicle` is 'hardware' or 'simulator', and F-24 requires every simulated figure to be labelled. Make the figure scripts READ THIS FIELD and stamp the plot automatically \u2014 labelling by hand fails exactly once, in the final report.",
   "type": "object",
@@ -80,7 +80,7 @@
     "trace_sha256": {
       "type": "string",
       "pattern": "^[0-9a-f]{64}$",
-      "description": "The trace's identity everywhere downstream. Replay client verifies before t0."
+      "description": "The trace's identity everywhere downstream: it identifies (config, seed, generator commit), since the header's `generator_git_sha` is hashed with the rest. Replay client verifies before t0."
     },
     "policy": {
       "enum": [
@@ -449,7 +449,7 @@
         "engine_unchecked": {
           "type": "integer",
           "minimum": 0,
-          "description": "Pool nodes whose engine process could not be read before and after the run, so a restart inside the run can be neither confirmed nor ruled out. Optional, and absent means the run predates the field.\\n\\nFatal, like `engine_restarts`, and for the reason `engine_restarts: 0` was never evidence on its own: a driver that cannot see the engine cannot report that it stayed up, and a run whose pool was not shown to be the one the manifest claims is not a measurement of that pool."
+          "description": "Pool nodes whose engine process could not be read before and after the run, so a restart inside the run can be neither confirmed nor ruled out. Optional, and absent means the run predates the field. Fatal, like `engine_restarts`, and for the reason `engine_restarts: 0` was never evidence on its own: a driver that cannot see the engine cannot report that it stayed up, and a run whose pool was not shown to be the one the manifest claims is not a measurement of that pool."
         },
         "valid": {
           "type": "boolean"
@@ -462,7 +462,7 @@
         "clock_unsynced_hosts": {
           "type": "integer",
           "minimum": 0,
-          "description": "Hosts in `clock_sync.hosts` whose time daemon reported no discipline. Optional, and absent means the run predates the field or had no clock block at all.\\n\\nReported, never fatal. The pipeline acts only on the rate error, since a constant offset cancels in a difference of single-host durations, and 100 ppm on a 900 ms request is 0.09 ms. An unsynchronised host costs the evidence that the durations were comparable, not the durations themselves."
+          "description": "Hosts in `clock_sync.hosts` whose time daemon reported no discipline. Optional, and absent means the run predates the field or had no clock block at all. Reported, never fatal. The pipeline acts only on the rate error, since a constant offset cancels in a difference of single-host durations, and 100 ppm on a 900 ms request is 0.09 ms. An unsynchronised host costs the evidence that the durations were comparable, not the durations themselves."
         },
         "worker_log_incomplete": {
           "type": "integer",

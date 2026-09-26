@@ -52,8 +52,8 @@
     "fit_r2": 0.9885
   },
   "admissibility": {
-    "max_prompt": 2048,
-    "max_output": 256,
+    "max_prompt": 128,
+    "max_output": 64,
     "timeout_ceiling_ms": 300000
   },
   "provenance": {

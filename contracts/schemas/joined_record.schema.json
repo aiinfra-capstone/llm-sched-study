@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/CAPSTONE_ORG/REPO/contracts/schemas/joined_record.schema.json",
+  "$id": "https://github.com/aiinfra-capstone/llm-sched-study/contracts/schemas/joined_record.schema.json",
   "title": "C-5 \u2014 Joined record (one row per request)",
   "description": "Emitted as Parquet by Divyansh's pipeline, which is a PURE FUNCTION of (manifest, three log files). No network, no engine, runnable on a laptop. Figure scripts consume Parquet only. Keeping these two stages separate means B can hand A a directory of simulator logs and A's pipeline processes them with zero changes.\n\nTHE HONEST HANDLING OF F-18: F-18 asks for transport_in and transport_out as separate stages. Without clock synchronisation across machines you CANNOT measure them separately \u2014 you can only measure the sum of everything not accounted for by single-host durations. Report it as one residual, state why, and note that on a LAN it is small enough that its decomposition does not affect any hypothesis. Do NOT install PTP to fix this; it is a week you do not have, for a number you do not need.\n\nCLOCK DISCIPLINE (\u00a712.3): there is NO cross-host subtraction anywhere in this schema. transport_residual_ms is named 'residual' precisely so nobody mistakes it for a measurement.",
   "type": "object",

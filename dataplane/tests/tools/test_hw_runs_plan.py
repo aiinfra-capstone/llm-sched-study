@@ -74,7 +74,10 @@ def _check_committed(c: hw_runs.Campaign) -> None:
 def test_a_single_trace_config_plans_the_run_ids_it_planned_before_workloads(config) -> None:
     """The golden lists were written by the hw_runs.py committed before workloads and seeds
     existed. On the first pair they are also the run directories on disk."""
-    c = hw_runs.Campaign.from_dict(json.loads((CONFIGS / config).read_text()))
+    # A config retired since the golden list was written lives under configs/archive/. Its
+    # run ids are still the names of run directories on disk, so it stays checked.
+    path = CONFIGS / config if (CONFIGS / config).is_file() else CONFIGS / "archive" / config
+    c = hw_runs.Campaign.from_dict(json.loads(path.read_text()))
     assert [r.run_id for r in hw_runs.plan(c)] == json.loads(GOLDEN.read_text())[config]
 
 

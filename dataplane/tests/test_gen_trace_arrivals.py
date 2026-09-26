@@ -271,16 +271,25 @@ def test_content_seeds_fit_a_positive_32_bit_range(trace_config, tmp_path: Path)
         assert 0 <= r["content_seed"] < 2**31 - 1
 
 
-def test_the_committed_smoke_config_still_generates(schema, tmp_path: Path) -> None:
-    """`configs/smoke.json` is the config I reach for first on a new node. If it has
-    drifted out of conformance, I want to know here and not on the node."""
-    config = json.loads(
-        (Path(__file__).resolve().parents[1] / "configs" / "smoke.json").read_text()
-    )
-    path = tmp_path / "smoke.jsonl"
+TRACE_CONFIGS = sorted((Path(__file__).resolve().parents[1] / "configs").glob("trace_*.json"))
+
+
+@pytest.mark.parametrize("config_path", TRACE_CONFIGS, ids=lambda p: p.stem)
+def test_every_committed_trace_config_still_generates(
+    config_path: Path, schema, tmp_path: Path
+) -> None:
+    """The trace configs the campaigns name are the ones a node generates from. If one has
+    drifted out of conformance, I want to know here and not on the node. Archived configs
+    are not checked: nothing runs from them."""
+    config = json.loads(config_path.read_text())
+    path = tmp_path / f"{config_path.stem}.jsonl"
     gen_trace.generate(config, path)
     lines = [json.loads(line) for line in path.read_text().splitlines()]
-    assert_conforms(schema("trace"), lines, "smoke line")
+    assert_conforms(schema("trace"), lines, f"{config_path.stem} line")
+
+
+def test_there_are_trace_configs_to_check() -> None:
+    assert len(TRACE_CONFIGS) >= 6
 
 
 @pytest.mark.parametrize("bucket", ["p0_o64", "p128_o0", "p0_o0"])

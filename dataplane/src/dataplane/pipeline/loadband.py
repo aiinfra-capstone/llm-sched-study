@@ -38,18 +38,19 @@ Two operational definitions, both stated here rather than tuned later:
   `SATURATION_DRIFT` is a trend test: a stable queue has a stationary latency distribution
   and an unstable one climbs for as long as you keep offering load, so fit end-to-end
   latency against arrival time and call the point saturated when the fitted rise across the
-  window is at least as large as the run's own p50. `SATURATION_SHORTFALL` is the direct
-  reading: in an open-loop replay the offered rate is fixed by the trace, so if the pool
-  retires meaningfully **less** than that over the whole run, the backlog grew — by
-  definition, not by inference.
+  window is at least as large as the run's own p50. The shortfall is the direct reading: over
+  the window the requests arrived in, the pool completed fewer than arrived, so the backlog
+  grew. Both rates are counted over that one window, arrivals from the client's own send
+  stamps and completions that finished inside it, so the drain after the last arrival never
+  enters either. The threshold is `shortfall_threshold(n)`, three Poisson standard
+  deviations of the arrival count below one, so it tightens as runs get longer.
 
   Both are here because the first sweep on real hardware showed the trend test missing a
   point that was genuinely over the knee. At 1.80 req/s against a pool that retires about
   1.65, the excess is small enough that the backlog builds slowly, and over a 111-second run
-  the fitted rise reached only 0.30 of the run's p50 — under the trend threshold, while the
-  pool was visibly retiring 1.63 req/s against 1.80 offered. A level test cannot tell "slow
-  but stable" from "not keeping up"; the trend test can, but not quickly. The shortfall test
-  sees it immediately, and reporting both is more honest than choosing one and hoping.
+  the fitted rise reached only 0.30 of the run's p50. An 8% shortfall on about 200 arrivals
+  is inside three standard deviations of the count, so at that run length neither reading
+  resolves it; a longer run does.
 
 Both are why the anchors are replayed open-loop and why send lag is a validity condition. A
 closed-loop client cannot produce an unstable queue at all — it throttles itself — so it
@@ -76,12 +77,12 @@ from typing import Any
 __all__ = [
     "QUEUEING_ONSET",
     "SATURATION_DRIFT",
-    "SATURATION_SHORTFALL",
     "LoadBand",
     "LoadPoint",
     "characterize",
     "point_from_run",
     "read_runs",
+    "shortfall_threshold",
 ]
 
 # A point's p99 this far above the *reference point's p99* means requests are waiting behind
@@ -94,11 +95,19 @@ QUEUEING_ONSET = 1.2
 # queue does.
 SATURATION_DRIFT = 1.0
 
-# Achieved throughput this far below the offered rate means the pool did not keep up. 5% is
-# above the sampling noise in a completion count over a run of a few hundred requests, and
-# below any shortfall a stable queue produces — a stable pool retires exactly what it is
-# offered, because the trace, not the pool, decides when requests arrive.
-SATURATION_SHORTFALL = 0.95
+
+def shortfall_threshold(n_arrivals: int) -> float:
+    """The fraction of the arrival rate a pool has to retire to count as keeping up.
+
+    `1 - 3 / sqrt(n)`: an arrival count over a window is Poisson, so its standard deviation
+    is sqrt(n), and a completion count three of those below the arrival count is not noise.
+    It tightens with run length, which a fixed fraction does not. Zero when the run is too
+    short for the bound to be positive.
+    """
+    if n_arrivals <= 0:
+        return 0.0
+    return max(0.0, 1.0 - 3.0 / math.sqrt(n_arrivals))
+
 
 # Under this many completed requests a percentile is a story about three numbers. Points
 # below it are carried (they are still evidence the run happened) but never used to place
@@ -120,6 +129,10 @@ class LoadPoint:
     achieved_rps: float
     n_nodes: int
     failures: int
+    # What arrived, as opposed to `lambda_rps`, what the trace was asked for: arrivals over
+    # the arrival window, and the count the shortfall threshold is set from.
+    offered_rps: float = 0.0
+    n_arrivals: int = 0
 
     @property
     def usable(self) -> bool:
@@ -133,8 +146,10 @@ class LoadPoint:
 
     @property
     def short(self) -> bool:
-        """The pool retired less than the trace offered, so the backlog grew."""
-        return self.lambda_rps > 0 and self.achieved_rps < SATURATION_SHORTFALL * self.lambda_rps
+        """Over the arrival window, the pool completed fewer than arrived: the backlog grew."""
+        return self.offered_rps > 0 and self.achieved_rps < (
+            shortfall_threshold(self.n_arrivals) * self.offered_rps
+        )
 
     @property
     def saturated(self) -> bool:
@@ -151,7 +166,9 @@ class LoadPoint:
             "p95_ms": round(self.p95_ms, 2),
             "p99_ms": round(self.p99_ms, 2),
             "drift_ms": round(self.drift_ms, 2),
+            "offered_rps": round(self.offered_rps, 4),
             "achieved_rps": round(self.achieved_rps, 4),
+            "shortfall_threshold": round(shortfall_threshold(self.n_arrivals), 4),
             "saturated": self.saturated,
             "climbing": self.climbing,
             "short": self.short,
@@ -185,7 +202,7 @@ class LoadBand:
             "onset_rule": f"p99 >= {QUEUEING_ONSET} x the reference point's p99",
             "saturation_rule": (
                 f"fitted rise across the window >= {SATURATION_DRIFT} x own p50, "
-                f"or achieved throughput < {SATURATION_SHORTFALL} x offered"
+                "or completions over the arrival window < (1 - 3/sqrt(arrivals)) x arrivals"
             ),
             "points": [p.to_dict() for p in self.points],
         }
@@ -244,20 +261,49 @@ def _drift_ms(offsets_s: list[float], latencies_ms: list[float]) -> float:
     return (sxy / sxx) * span
 
 
-def _achieved_rps(ok: list[dict[str, Any]]) -> float:
-    """Completions per second, measured from first send to last delivery.
+def _arrival_window(sent: list[dict[str, Any]]) -> tuple[float, float]:
+    """First and last send, on the client's own clock."""
+    offsets = [float(r["actual_send_offset_s"]) for r in sent]
+    return min(offsets), max(offsets)
 
-    Spans the drain as well as the trace window, on purpose: a saturated run finishes
-    retiring its backlog after the last request was sent, and a rate computed over the
-    trace window alone would credit the pool with throughput it only reached by running
-    late. Every stamp here is this client's own monotonic clock.
+
+def _offered_rps(sent: list[dict[str, Any]]) -> float:
+    """Arrivals over the arrival window: the rate the trace actually delivered."""
+    if len(sent) < 2:
+        return 0.0
+    first, last = _arrival_window(sent)
+    return len(sent) / (last - first) if last > first else 0.0
+
+
+def _achieved_rps(ok: list[dict[str, Any]], window: tuple[float, float] | None = None) -> float:
+    """Completions per second over the arrival window, drain excluded.
+
+    Only completions that finished inside the window count, and the window is the one the
+    requests arrived in, so this and `_offered_rps` are two counts over one span. A rate
+    that ran on into the drain would read a stable run with one slow last request as a pool
+    that could not keep up. Every stamp here is this client's own monotonic clock.
     """
     if len(ok) < 2:
         return 0.0
-    first_send = min(float(r["actual_send_offset_s"]) for r in ok)
-    last_done = max(float(r["actual_send_offset_s"]) + r["e2e_duration_ns"] / 1e9 for r in ok)
-    span = last_done - first_send
-    return len(ok) / span if span > 0 else 0.0
+    first, last = window if window is not None else _arrival_window(ok)
+    if last <= first:
+        return 0.0
+    done = sum(
+        1 for r in ok if float(r["actual_send_offset_s"]) + r["e2e_duration_ns"] / 1e9 <= last
+    )
+    return done / (last - first)
+
+
+def _lambda_rps(manifest: dict[str, Any]) -> float:
+    """The rate the run was asked for. For an MMPP trace that is the dwell-weighted mean,
+    scaled by the run's compression, not the quiet rate the manifest's `lambda` may carry."""
+    config = manifest.get("config", {})
+    arrival = config.get("arrival")
+    if isinstance(arrival, dict) and "process" in arrival and "rate_scale" in config:
+        from dataplane.harness.gen_trace import mean_rate
+
+        return mean_rate(arrival) * float(config["rate_scale"])
+    return float(manifest["lambda"])
 
 
 def point_from_run(manifest: dict[str, Any], records: list[dict[str, Any]]) -> LoadPoint:
@@ -274,17 +320,20 @@ def point_from_run(manifest: dict[str, Any], records: list[dict[str, Any]]) -> L
     ok = [r for r in windowed if r.get("status") == "ok"]
     latencies = [r["e2e_duration_ns"] / 1e6 for r in ok]
     offsets = [float(r["intended_offset_s"]) for r in ok]
+    window = _arrival_window(windowed) if windowed else None
     return LoadPoint(
         name=manifest.get("config", {}).get("operating_point", manifest["run_id"]),
-        lambda_rps=float(manifest["lambda"]),
+        lambda_rps=_lambda_rps(manifest),
         n=len(ok),
         p50_ms=_percentile(latencies, 0.50),
         p95_ms=_percentile(latencies, 0.95),
         p99_ms=_percentile(latencies, 0.99),
         drift_ms=_drift_ms(offsets, latencies),
-        achieved_rps=_achieved_rps(ok),
+        achieved_rps=_achieved_rps(ok, window),
         n_nodes=len([n for n in manifest["nodes"] if n.get("role", "pool") == "pool"]),
         failures=len(windowed) - len(ok),
+        offered_rps=_offered_rps(windowed),
+        n_arrivals=len(windowed),
     )
 
 
@@ -362,7 +411,7 @@ def main(argv: list[str] | None = None) -> int:
         if p.climbing:
             flags.append("latency still climbing")
         if p.short:
-            flags.append(f"retired only {p.achieved_rps:.2f}/s")
+            flags.append(f"retired only {p.achieved_rps:.2f}/s of {p.offered_rps:.2f}/s arrived")
         if p.failures:
             flags.append(f"{p.failures} failed")
         print(

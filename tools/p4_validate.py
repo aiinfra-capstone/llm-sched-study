@@ -46,9 +46,17 @@ SNAPSHOT_ROOT = REPO_ROOT / "contracts" / "cost_models"
 
 
 def run_one_sim(
-    trace: Path, hw_manifest: Path, out_dir: Path, cost_models: Path
+    trace: Path,
+    hw_manifest: Path,
+    out_dir: Path,
+    cost_models: Path,
+    *,
+    deterministic: bool = True,
 ) -> tuple[bool, str]:
     """Run SimApp for one hardware manifest. Returns (ok, log tail).
+
+    Deterministic by default, for F-20 parity. `deterministic=False` lets SimApp draw its
+    i.i.d. lognormal service noise from each snapshot's `stochastic.sigma`.
 
     `mvn exec:java -Dexec.args=...` splits on spaces, so a manifest under a path
     with spaces ("drive files/...") arrives truncated. Stage it to a space-free
@@ -62,6 +70,7 @@ def run_one_sim(
     except OSError as e:
         return False, f"could not stage {hw_manifest}: {e}"
     manifest_arg = staged
+    noise = " --deterministic" if deterministic else ""
     cmd = [
         find_mvn(),
         "-q",
@@ -69,7 +78,7 @@ def run_one_sim(
         str(REPO_ROOT / "controlplane" / "pom.xml"),
         "exec:java",
         "-Dexec.mainClass=com.sched.sim.SimApp",
-        f"-Dexec.args={trace} {manifest_arg} {out_dir} --deterministic --cost-models {cost_models}",
+        f"-Dexec.args={trace} {manifest_arg} {out_dir}{noise} --cost-models {cost_models}",
     ]
     r = subprocess.run(
         cmd,
@@ -187,6 +196,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--keep-going", action="store_true", help="compare remaining runs after a SimApp failure"
     )
+    ap.add_argument(
+        "--stochastic",
+        action="store_true",
+        help="let SimApp draw its lognormal service noise; the default is --deterministic",
+    )
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args(argv)
 
@@ -233,6 +247,21 @@ def main(argv: list[str] | None = None) -> int:
 
     results: list[dict] = []
     failures: list[str] = []
+
+    def not_replayed(run_id: str, policy: str = "?", point: str = "?") -> None:
+        # A run that never reached SimApp is an error in the tally, and not a run compared.
+        results.append(
+            {
+                "run_id": run_id,
+                "policy": policy,
+                "point": point,
+                "rc": 1,
+                "err_p50": None,
+                "err_p95": None,
+                "compared": False,
+            }
+        )
+
     for run_dir in run_dirs:
         hw_manifest = run_dir / "manifest.json"
         try:
@@ -240,6 +269,7 @@ def main(argv: list[str] | None = None) -> int:
         except (json.JSONDecodeError, OSError) as e:
             print(f"\n=== {run_dir.name} ===\n  FAIL: could not read manifest: {e}")
             failures.append(f"{run_dir.name}: bad manifest")
+            not_replayed(run_dir.name)
             if not args.keep_going:
                 break
             continue
@@ -248,6 +278,11 @@ def main(argv: list[str] | None = None) -> int:
         if not trace.exists():
             print(f"\n=== {run_id} ===\n  FAIL: trace not found: {trace}")
             failures.append(f"{run_id}: trace not found")
+            not_replayed(
+                run_id,
+                man.get("policy", "?"),
+                man.get("config", {}).get("operating_point", "?"),
+            )
             if not args.keep_going:
                 break
             continue
@@ -259,7 +294,9 @@ def main(argv: list[str] | None = None) -> int:
         if list(sim_dir.glob("client_*.jsonl")) and (sim_dir / "manifest.json").exists():
             print(f"  sim exists, reusing {sim_dir}")
         else:
-            ok, tail = run_one_sim(trace, hw_manifest, sim_dir, cost_models)
+            ok, tail = run_one_sim(
+                trace, hw_manifest, sim_dir, cost_models, deterministic=not args.stochastic
+            )
             if not ok:
                 print(f"  FAIL: SimApp failed:\n  {tail[-1200:]}")
                 failures.append(f"{run_id}: SimApp failed")
@@ -332,18 +369,28 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  {pol:15s} {pt!s:8s}  pass {passed}/{len(rows)}  outside {outside}  error {err}")
         for rid, e50, e95 in errs:
             print(f"      MISS {rid}: p50={e50:+.1f}% p95={e95:+.1f}%")
+    compared = sum(1 for r in results if r.get("compared", True))
     print(
-        f"\n{len(results)}/{len(run_dirs)} runs compared: {npass} pass, {nfail} outside tolerance, {nerr} errors"
+        f"\n{compared}/{len(run_dirs)} runs compared: {npass} pass, {nfail} outside tolerance, "
+        f"{nerr} errors"
     )
     if failures and not args.keep_going:
         print(f"Stopped early ({len(failures)} failures). Rerun with --keep-going to see the rest.")
-    if args.contrasts and not nerr:
-        return contrasts(hw_root, out_root)
-    if nerr:
-        print("P4 FAILED: comparison errors (see above) — not citable until they are fixed.")
+    # Every run that was found and not compared is an error above, so the second condition
+    # restates the first. It is here so that a later change cannot pass a partial campaign.
+    if nerr or compared < len(run_dirs):
+        print(
+            f"P4 FAILED: {nerr} errors, {compared} of {len(run_dirs)} runs compared (see "
+            "above), not citable until they are fixed."
+        )
         return 1
+    if args.contrasts:
+        return contrasts(hw_root, out_root)
     if nfail:
-        print("P4 MIXED: some runs outside ±25% — explain the misses before citing the simulator.")
+        print(
+            f"P4 MIXED: some runs outside ±{args.tolerance:g}%, explain the misses before "
+            "citing the simulator."
+        )
         return 2
     print("P4 PASSED: every run within tolerance.")
     return 0

@@ -29,6 +29,8 @@ STOCHASTIC = {
     "sigma": 0.03,
     "autocorr_time_s": 10.0,
     "fit_r2": 0.4,
+    "tau_resolved": True,
+    "tau_censored": False,
 }
 
 
@@ -224,12 +226,79 @@ def test_cli_writes_the_envelope_and_names_what_it_could_not_measure(tmp_path, c
 
 
 def test_cli_ceiling_override_tightens_the_set_without_recalibrating(tmp_path, capsys) -> None:
-    """A pool can be run against a stricter timeout than it was calibrated at; the envelope
-    has to follow, and the buckets line has to be able to say 'none'."""
+    """A pool can be run against a stricter timeout than it was calibrated at. The set
+    itself has to follow, not only the label: FAST's (512, 128) cell has a 3000 ms p95, so
+    at a 1000 ms ceiling only the (128, 64) cell is left."""
     root = tmp_path / "runs"
-    _write_run(root, "gpu_a", FAST)
+    run = _write_run(root, "gpu_a", FAST)
+    assert admissible.main([str(root)]) == 0
+    assert "admissible set: prompt <= 512, output <= 128 at a 60000 ms" in capsys.readouterr().out
     assert admissible.main([str(root), "--ceiling-ms", "1000"]) == 0
-    assert "at a 1000 ms ceiling" in capsys.readouterr().out
+    assert "admissible set: prompt <= 128, output <= 64 at a 1000 ms" in capsys.readouterr().out
+    tight = admissible.pool_envelope([run], timeout_ceiling_ms=1000)
+    assert (tight["max_prompt"], tight["max_output"]) == (128, 64)
+    assert tight["buckets"] == ["p128_o64"]
+
+
+def _grid(p95: dict[tuple[int, int], float], prompt_edges=(1, 128, 512), output_edges=(1, 64, 128)):
+    """A snapshot whose cells have the given p95, at concurrency 1 and 4 alike."""
+    p_lo = dict(zip(prompt_edges[1:], (1, *(e + 1 for e in prompt_edges[1:-1])), strict=True))
+    o_lo = dict(zip(output_edges[1:], (1, *(e + 1 for e in output_edges[1:-1])), strict=True))
+    return {
+        "node_class": "n1",
+        "entries": [
+            {
+                "prompt_bucket": [p_lo[p], p],
+                "output_bucket": [o_lo[o], o],
+                "concurrency": c,
+                "service_ms_p95": ms,
+            }
+            for (p, o), ms in p95.items()
+            for c in (1, 4)
+        ],
+    }
+
+
+def test_a_corner_whose_cell_does_not_fit_is_not_admitted() -> None:
+    """The audit probe. Each axis on its own reaches 512 and 128, but the (512, 128) cell
+    is 5000 ms against a 1000 ms ceiling. Two rectangles fit and neither holds the other:
+    (128, 128) and (512, 64). The larger area wins (D1)."""
+    snapshot = _grid({(128, 64): 500.0, (128, 128): 900.0, (512, 64): 900.0, (512, 128): 5000.0})
+    limit = admissible.node_limit_from_snapshot(snapshot, 1000)
+    assert (limit["max_prompt"], limit["max_output"]) == (512, 64)
+    assert limit["tie_break"] == "area"
+    assert limit["worst_p95_ms"] == pytest.approx(5000.0)
+
+
+def test_the_tie_break_is_reported() -> None:
+    # Two maximal rectangles of equal area: the larger prompt wins.
+    square = _grid(
+        {(64, 64): 100.0, (64, 128): 100.0, (128, 64): 100.0, (128, 128): 5000.0},
+        prompt_edges=(1, 64, 128),
+        output_edges=(1, 64, 128),
+    )
+    limit = admissible.node_limit_from_snapshot(square, 1000)
+    assert (limit["max_prompt"], limit["max_output"]) == (128, 64)
+    assert limit["tie_break"] == "prompt"
+
+    # One maximal rectangle: nothing to break.
+    whole = _grid({(128, 64): 500.0, (128, 128): 900.0, (512, 64): 900.0, (512, 128): 950.0})
+    limit = admissible.node_limit_from_snapshot(whole, 1000)
+    assert (limit["max_prompt"], limit["max_output"]) == (512, 128)
+    assert limit["tie_break"] is None
+
+    # And a snapshot where nothing fits reports no rectangle at all.
+    nothing = admissible.node_limit_from_snapshot(_grid({(128, 64): 5000.0}), 1000)
+    assert (nothing["max_prompt"], nothing["max_output"], nothing["tie_break"]) == (0, 0, None)
+
+
+def test_a_corner_nobody_measured_is_not_admitted_on_its_neighbours() -> None:
+    """(512, 64) was never measured. Its neighbours fitting is no evidence about it, so the
+    rectangle it would close is not admitted."""
+    snapshot = _grid({(128, 64): 500.0, (128, 128): 600.0, (512, 128): 5000.0})
+    limit = admissible.node_limit_from_snapshot(snapshot, 1000)
+    assert (limit["max_prompt"], limit["max_output"]) == (128, 128)
+    assert limit["tie_break"] is None
 
 
 def test_cli_refuses_to_assume_an_admissible_set(tmp_path) -> None:

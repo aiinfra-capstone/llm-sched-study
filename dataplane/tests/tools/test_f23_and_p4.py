@@ -286,6 +286,21 @@ def test_every_run_within_tolerance_passes(campaign, tools, tmp_path, capsys) ->
     assert all("--deterministic" in c[-1] for c in sim_args)
 
 
+def test_the_mixed_message_names_the_tolerance_passed(campaign, tools, tmp_path, capsys) -> None:
+    tools.scale["t_wjsq_s0_u30_r2"] = 1.2
+    assert _p4(campaign, tmp_path / "sims", "--tolerance", "10") == 2
+    out = capsys.readouterr().out
+    assert "some runs outside ±10%" in out
+    assert "±25%" not in out
+
+
+def test_p4_stochastic_drops_the_deterministic_flag(campaign, tools, tmp_path) -> None:
+    assert _p4(campaign, tmp_path / "sims", "--stochastic") == 0
+    sim_args = [c for c in tools.calls if "exec:java" in " ".join(c)]
+    assert len(sim_args) == 4
+    assert not any("--deterministic" in c[-1].split() for c in sim_args)
+
+
 def test_a_run_outside_tolerance_is_mixed_and_names_its_errors(
     campaign, tools, tmp_path, capsys
 ) -> None:
@@ -340,18 +355,29 @@ def test_a_bad_manifest_or_a_missing_trace_is_an_error(tmp_path, tools, capsys) 
     (root / "t_wjsq_s0_u30_r1").mkdir()
     (root / "t_wjsq_s0_u30_r1" / "manifest.json").write_text("{not json")
 
-    assert _p4(root, tmp_path / "sims", "--keep-going") == 0
+    assert _p4(root, tmp_path / "sims", "--keep-going") == 1
     out = capsys.readouterr().out
     assert "FAIL: trace not found" in out
     assert "FAIL: could not read manifest" in out
-    assert "0/2 runs compared" in out
+    assert "0/2 runs compared: 0 pass, 0 outside tolerance, 2 errors" in out
+    assert "P4 FAILED" in out
 
-    assert _p4(root, tmp_path / "sims2") == 0
+    assert _p4(root, tmp_path / "sims2") == 1
     assert "Stopped early" in capsys.readouterr().out
 
-    # A fixed --trace replaces the one each manifest names.
-    assert _p4(root, tmp_path / "sims3", "--trace", str(trace), "--keep-going") == 0
-    assert "1/2 runs compared: 1 pass" in capsys.readouterr().out
+    # A fixed --trace replaces the one each manifest names. The bad manifest is still an
+    # error, so one run compared out of two is not a pass.
+    assert _p4(root, tmp_path / "sims3", "--trace", str(trace), "--keep-going") == 1
+    assert "1/2 runs compared: 1 pass, 0 outside tolerance, 1 errors" in capsys.readouterr().out
+
+
+def test_a_missing_trace_is_an_error(tmp_path, tools, capsys) -> None:
+    _hw_run(tmp_path / "hw", tools, "t_jsq_s0_u30_r1", "jsq", "u30", tmp_path / "gone.jsonl")
+    assert _p4(tmp_path / "hw", tmp_path / "sims") == 1
+    out = capsys.readouterr().out
+    assert "FAIL: trace not found" in out
+    assert "0/1 runs compared: 0 pass, 0 outside tolerance, 1 errors" in out
+    assert "P4 PASSED" not in out
 
 
 def test_a_single_run_directory_is_its_own_campaign(tmp_path, tools, capsys) -> None:
@@ -421,6 +447,14 @@ def test_contrasts_are_not_checked_over_comparison_errors(
     tools.sim_fails.add("t_jsq_s0_u30_r1")
     assert _p4(campaign, tmp_path / "sims", "--contrasts", "--keep-going") == 1
     assert not [c for c in tools.calls if "contrast_check" in " ".join(c)]
+
+    # Nor over a run that never reached SimApp.
+    tools.sim_fails.clear()
+    (campaign / "t_zz_bad").mkdir()
+    (campaign / "t_zz_bad" / "manifest.json").write_text("{not json")
+    assert _p4(campaign, tmp_path / "sims2", "--contrasts", "--keep-going") == 1
+    steps = [c for c in tools.calls if "exec:java" not in " ".join(c)]
+    assert not [c for c in steps if "runset" in " ".join(c) or "contrast_check" in " ".join(c)]
 
 
 def test_a_manifest_that_cannot_be_staged_fails_that_run(tmp_path) -> None:
@@ -522,9 +556,10 @@ def test_a_bad_manifest_stops_the_campaign_without_keep_going(tmp_path, tools, c
     (tmp_path / "hw" / "t_a" / "manifest.json").write_text("{not json")
     (tmp_path / "hw" / "t_b").mkdir()
     (tmp_path / "hw" / "t_b" / "manifest.json").write_text("{not json either")
-    assert _p4(tmp_path / "hw", tmp_path / "sims") == 0
+    assert _p4(tmp_path / "hw", tmp_path / "sims") == 1
     out = capsys.readouterr().out
     assert out.count("could not read manifest") == 1
+    assert "0/2 runs compared: 0 pass, 0 outside tolerance, 1 errors" in out
     assert "Stopped early (1 failures)" in out
 
 

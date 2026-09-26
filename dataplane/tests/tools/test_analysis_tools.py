@@ -130,12 +130,13 @@ def test_tau_interval_main_reads_a_calibration_run(tmp_path, capsys) -> None:
 # ------------------------------------------------------------------------- cell_intervals
 
 
-def _grid_run(path, cells: dict[tuple[int, int, int], list[tuple[float, float, float, int]]]):
-    """Observations for a calibration grid. Each sample is (service, prefill, decode) ms and tokens."""
+def _grid_run(path, cells: dict[tuple[int, int, int], list[tuple]]):
+    """Observations for a calibration grid. Each sample is (service, prefill, decode) ms and
+    tokens, and optionally the occupancy the sample was served at."""
     path.mkdir()
     lines = []
     for (p, o, c), samples in cells.items():
-        for service, prefill, decode, toks in samples:
+        for service, prefill, decode, toks, *occupancy in samples:
             lines.append(
                 {
                     "segment": "grid",
@@ -147,6 +148,7 @@ def _grid_run(path, cells: dict[tuple[int, int, int], list[tuple[float, float, f
                     "prefill_ns": prefill * 1e6,
                     "decode_ns": decode * 1e6,
                     "output_tokens": toks,
+                    **({"occupancy_mean": occupancy[0]} if occupancy else {}),
                 }
             )
     lines.append({"segment": "sustained", "status": "ok"})
@@ -162,7 +164,8 @@ def test_a_batch_of_four_is_resampled_whole(tmp_path) -> None:
         tmp_path / "g",
         {(128, 64, 4): [(100.0, 10.0, 90.0, 64)] * 4 + [(200.0, 20.0, 180.0, 64)] * 4},
     )
-    cell = cell_intervals.grid(run)[(128, 64, 4)]
+    cells, _ = cell_intervals.grid(run)
+    cell = cells[(128, 64, 4)]
     assert cell.shape == (2, 4, 4)
     means = cell_intervals.draw_means(cell, np.random.default_rng(0), 500)[:, 0]
     assert set(np.round(means, 6)) <= {100.0, 150.0, 200.0}
@@ -170,7 +173,37 @@ def test_a_batch_of_four_is_resampled_whole(tmp_path) -> None:
 
 def test_a_partial_batch_at_the_end_is_dropped(tmp_path) -> None:
     run = _grid_run(tmp_path / "g", {(128, 64, 4): [(100.0, 10.0, 90.0, 64)] * 6})
-    assert cell_intervals.grid(run)[(128, 64, 4)].shape == (1, 4, 4)
+    cells, removed = cell_intervals.grid(run)
+    assert cells[(128, 64, 4)].shape == (1, 4, 4)
+    # The partial batch is the reshape's doing, not the occupancy filter's.
+    assert removed[(128, 64, 4)] == {"batches": 0, "samples": 0}
+
+
+def test_grid_drops_a_batch_served_below_its_concurrency(tmp_path) -> None:
+    """The cost model fits only samples served at the concurrency their cell claims. A
+    batch with one sample that ran beside fewer requests is not a batch of four, so the
+    whole batch goes, and the count of what went is reported."""
+    drained = [(100.0, 10.0, 90.0, 64, 4.0)] * 3 + [(60.0, 6.0, 54.0, 64, 2.5)]
+    steady = [(200.0, 20.0, 180.0, 64, 4.0)] * 4
+    run = _grid_run(tmp_path / "g", {(128, 64, 4): drained + steady})
+    cells, removed = cell_intervals.grid(run)
+    assert cells[(128, 64, 4)].shape == (1, 4, 4)
+    assert set(cells[(128, 64, 4)][:, :, 0].ravel()) == {200.0}
+    assert removed[(128, 64, 4)] == {"batches": 1, "samples": 4}
+
+
+def test_grid_removes_nothing_from_a_clean_run(tmp_path) -> None:
+    run = _grid_run(
+        tmp_path / "g",
+        {
+            (128, 64, 1): [(100.0, 10.0, 90.0, 64, 1.0)] * 3,
+            (128, 64, 4): [(200.0, 20.0, 180.0, 64, 3.97)] * 8,
+            (512, 64, 4): [(300.0, 30.0, 270.0, 64)] * 4,  # logged before occupancy existed
+        },
+    )
+    cells, removed = cell_intervals.grid(run)
+    assert [cells[k].shape[0] for k in sorted(cells)] == [3, 2, 1]
+    assert removed == {k: {"batches": 0, "samples": 0} for k in cells}
 
 
 def test_nearest_is_the_smallest_cell_that_covers_the_bucket() -> None:
@@ -211,6 +244,7 @@ def test_deterministic_cells_give_zero_width_intervals(tmp_path, capsys) -> None
         assert c["R_service"]["value"] == 2.0 and c["R_service"]["ci95"] == [2.0, 2.0]
         assert c["R_prefill"]["value"] == 8.0 and c["R_prefill"]["ci95"] == [8.0, 8.0]
         assert c["R_decode"]["ci95"][0] == c["R_decode"]["ci95"][1] == 1.2
+    assert report["removed_by_occupancy"] == {"fast": {}, "slow": {}}
     assert json.loads(capsys.readouterr().out) == report
     assert cell_intervals.main([*argv, "--draws", "10"]) == 0
 

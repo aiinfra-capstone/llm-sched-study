@@ -73,6 +73,9 @@ class CellError:
     observed_p50_ms: float
     observed_p95_ms: float
     predicted_ms: float
+    # The snapshot that priced this cell. One node recalibrated between runs is two cells.
+    snapshot_id: str = ""
+    tolerance: float = F23_TOLERANCE
 
     @property
     def relative_error(self) -> float:
@@ -99,7 +102,7 @@ class CellError:
 
     @property
     def within(self) -> bool:
-        return abs(self.relative_error) <= F23_TOLERANCE
+        return abs(self.relative_error) <= self.tolerance
 
 
 @dataclass(frozen=True)
@@ -177,6 +180,7 @@ def observations(run_dir: str | Path) -> list[dict[str, Any]]:
     run_dir = Path(run_dir)
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
     warmup_s = float(manifest.get("warmup_s", 0.0))
+    run_id = manifest.get("run_id", run_dir.name)
 
     warm = {
         c["req_id"]
@@ -191,6 +195,7 @@ def observations(run_dir: str | Path) -> list[dict[str, Any]]:
                 continue
             rows.append(
                 {
+                    "run_id": run_id,
                     "node_id": w["node_id"],
                     "prompt_len": int(w["prompt_tokens"]),
                     "output_len": int(w["output_tokens"]),
@@ -202,21 +207,31 @@ def observations(run_dir: str | Path) -> list[dict[str, Any]]:
 
 
 def cells(
-    rows: list[dict[str, Any]], snapshots: dict[str, dict[str, Any]]
+    rows: list[dict[str, Any]],
+    snapshots: dict[tuple[str, str], dict[str, Any]],
+    *,
+    tolerance: float = F23_TOLERANCE,
 ) -> tuple[list[CellError], list[tuple[str, int, int, int]]]:
     """Group the observations into calibrated cells and price each one.
 
-    `snapshots` maps node_id to the C-3 document that node was deployed under, because a
-    heterogeneous pool has a different cost model per node class and averaging their
-    errors together would report a number describing neither.
+    `snapshots` maps (run_id, node_id) to the C-3 document that node was deployed under in
+    that run. Per node, because a heterogeneous pool has a different cost model per node
+    class and averaging their errors together would report a number describing neither.
+    Per run, because a node recalibrated between two runs was served by two models, and
+    each run has to be priced by the one it actually ran under. Cells are grouped by the
+    snapshot that priced them, so runs under one snapshot still pool their requests.
     """
-    grouped: dict[tuple[str, tuple[int, int], tuple[int, int], int], list[float]] = {}
+    grouped: dict[tuple[str, str, tuple[int, int], tuple[int, int], int], list[float]] = {}
+    by_id: dict[str, dict[str, Any]] = {}
     for row in rows:
-        snapshot = snapshots[row["node_id"]]
+        snapshot = snapshots[(row["run_id"], row["node_id"])]
+        snapshot_id = snapshot.get("snapshot_id", "")
+        by_id[snapshot_id] = snapshot
         p_buckets = [tuple(e["prompt_bucket"]) for e in snapshot["entries"]]
         o_buckets = [tuple(e["output_bucket"]) for e in snapshot["entries"]]
         key = (
             row["node_id"],
+            snapshot_id,
             cm.assign_bucket(row["prompt_len"], p_buckets),
             cm.assign_bucket(row["output_len"], o_buckets),
             row["concurrency"],
@@ -225,8 +240,8 @@ def cells(
 
     errors: list[CellError] = []
     uncalibrated: list[tuple[str, int, int, int]] = []
-    for (node_id, p_bucket, o_bucket, concurrency), values in sorted(grouped.items()):
-        snapshot = snapshots[node_id]
+    for (node_id, snapshot_id, p_bucket, o_bucket, concurrency), values in sorted(grouped.items()):
+        snapshot = by_id[snapshot_id]
         measured = {
             e["concurrency"]
             for e in snapshot["entries"]
@@ -245,6 +260,8 @@ def cells(
                 observed_p50_ms=percentile(values, 0.50),
                 observed_p95_ms=percentile(values, 0.95),
                 predicted_ms=cm.predict_service_ms(snapshot, p_bucket[0], o_bucket[0], concurrency),
+                snapshot_id=snapshot_id,
+                tolerance=tolerance,
             )
         )
     return errors, uncalibrated
@@ -266,13 +283,13 @@ def check(
     """
     index = runset.snapshot_index() if index is None else index
     rows: list[dict[str, Any]] = []
-    snapshots: dict[str, dict[str, Any]] = {}
+    snapshots: dict[tuple[str, str], dict[str, Any]] = {}
     for run_dir in runset.discover(root):
         manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
         run_rows = observations(run_dir)
-        for node_id in {r["node_id"] for r in run_rows}:
+        for run_id, node_id in {(r["run_id"], r["node_id"]) for r in run_rows}:
             if snapshot is not None:
-                snapshots[node_id] = snapshot
+                snapshots[(run_id, node_id)] = snapshot
                 continue
             named = manifest.get("cost_model_snapshots", {}).get(node_id)
             if named is None:
@@ -286,10 +303,10 @@ def check(
                     f"{run_dir.name}: node {node_id!r} names snapshot {named!r}, which is "
                     "not committed under contracts/cost_models/"
                 )
-            snapshots[node_id] = index[named]
+            snapshots[(run_id, node_id)] = index[named]
         rows += run_rows
 
-    errors, uncalibrated = cells(rows, snapshots)
+    errors, uncalibrated = cells(rows, snapshots, tolerance=tolerance)
     return CostCheck(errors=errors, uncalibrated=uncalibrated, tolerance=tolerance)
 
 
@@ -320,7 +337,7 @@ def main(argv: list[str] | None = None) -> int:
         f"{'error':>8} {'on p50':>8}"
     )
     for e in result.errors:
-        flag = "" if abs(e.relative_error) <= args.tolerance else "  <-- outside"
+        flag = "" if e.within else "  <-- outside"
         print(
             f"{e.node_id:>12} {list(e.prompt_bucket)!s:>10} {list(e.output_bucket)!s:>10} "
             f"{e.concurrency:>2} {e.n:>5} {e.observed_mean_ms:>9.1f} {e.observed_p50_ms:>9.1f} "

@@ -188,6 +188,7 @@ def test_error_is_signed_against_the_prediction(index):
     """A hardware time of twice the prediction is +100%, not -50%."""
     rows = [
         {
+            "run_id": "r1",
             "node_id": "n1",
             "prompt_len": 100,
             "output_len": 32,
@@ -195,7 +196,7 @@ def test_error_is_signed_against_the_prediction(index):
             "service_ms": 2000.0,
         }
     ]
-    errors, _ = costcheck.cells(rows, {"n1": index["cm_test"]})
+    errors, _ = costcheck.cells(rows, {("r1", "n1"): index["cm_test"]})
     assert errors[0].predicted_ms == pytest.approx(1000.0)
     assert errors[0].relative_error == pytest.approx(1.0)
     assert not errors[0].within
@@ -204,6 +205,7 @@ def test_error_is_signed_against_the_prediction(index):
 def test_a_cell_inside_tolerance_passes(index):
     rows = [
         {
+            "run_id": "r1",
             "node_id": "n1",
             "prompt_len": 100,
             "output_len": 32,
@@ -211,7 +213,7 @@ def test_a_cell_inside_tolerance_passes(index):
             "service_ms": 1100.0,
         }
     ]
-    errors, uncalibrated = costcheck.cells(rows, {"n1": index["cm_test"]})
+    errors, uncalibrated = costcheck.cells(rows, {("r1", "n1"): index["cm_test"]})
     assert errors[0].within
     assert uncalibrated == []
 
@@ -226,6 +228,7 @@ def test_an_unmeasured_concurrency_is_reported_not_hidden(index):
     """
     rows = [
         {
+            "run_id": "r1",
             "node_id": "n1",
             "prompt_len": 100,
             "output_len": 32,
@@ -233,7 +236,7 @@ def test_an_unmeasured_concurrency_is_reported_not_hidden(index):
             "service_ms": 1500.0,
         }
     ]
-    errors, uncalibrated = costcheck.cells(rows, {"n1": index["cm_test"]})
+    errors, uncalibrated = costcheck.cells(rows, {("r1", "n1"): index["cm_test"]})
     assert len(uncalibrated) == 1
     assert uncalibrated[0][0] == "n1"
     assert uncalibrated[0][3] == 1
@@ -243,10 +246,17 @@ def test_an_unmeasured_concurrency_is_reported_not_hidden(index):
 
 def test_percentiles_are_reported_alongside_the_mean(index):
     rows = [
-        {"node_id": "n1", "prompt_len": 100, "output_len": 32, "concurrency": 1, "service_ms": ms}
+        {
+            "run_id": "r1",
+            "node_id": "n1",
+            "prompt_len": 100,
+            "output_len": 32,
+            "concurrency": 1,
+            "service_ms": ms,
+        }
         for ms in (900.0, 1000.0, 1100.0, 5000.0)
     ]
-    errors, _ = costcheck.cells(rows, {"n1": index["cm_test"]})
+    errors, _ = costcheck.cells(rows, {("r1", "n1"): index["cm_test"]})
     cell = errors[0]
     assert cell.n == 4
     assert cell.observed_p50_ms == pytest.approx(1000.0)
@@ -263,6 +273,7 @@ def test_each_node_is_scored_against_its_own_model(index):
     slow = _snapshot("cm_slow", mean_ms=2000.0)
     rows = [
         {
+            "run_id": "r1",
             "node_id": "n1",
             "prompt_len": 100,
             "output_len": 32,
@@ -270,6 +281,7 @@ def test_each_node_is_scored_against_its_own_model(index):
             "service_ms": 1000.0,
         },
         {
+            "run_id": "r1",
             "node_id": "n2",
             "prompt_len": 100,
             "output_len": 32,
@@ -277,7 +289,7 @@ def test_each_node_is_scored_against_its_own_model(index):
             "service_ms": 2000.0,
         },
     ]
-    errors, _ = costcheck.cells(rows, {"n1": index["cm_test"], "n2": slow})
+    errors, _ = costcheck.cells(rows, {("r1", "n1"): index["cm_test"], ("r1", "n2"): slow})
     assert {e.node_id: round(e.relative_error, 6) for e in errors} == {"n1": 0.0, "n2": 0.0}
 
 
@@ -405,10 +417,17 @@ def test_percentiles_match_the_load_band(tmp_path, index):
 
     values = [3.0, 1.0, 4.0, 1.0, 5.0, 9.0, 2.0, 6.0]
     rows = [
-        {"node_id": "n1", "prompt_len": 100, "output_len": 32, "concurrency": 1, "service_ms": v}
+        {
+            "run_id": "r1",
+            "node_id": "n1",
+            "prompt_len": 100,
+            "output_len": 32,
+            "concurrency": 1,
+            "service_ms": v,
+        }
         for v in values
     ]
-    errors, _ = costcheck.cells(rows, {"n1": index["cm_test"]})
+    errors, _ = costcheck.cells(rows, {("r1", "n1"): index["cm_test"]})
     assert errors[0].observed_p50_ms == loadband._percentile(values, 0.50)
     assert errors[0].observed_p95_ms == loadband._percentile(values, 0.95)
 
@@ -456,3 +475,34 @@ def test_cli_tolerance_is_configurable(tmp_path, monkeypatch):
     _make_run(tmp_path, requests=[(1.0, 0, "ok"), (1100.0, 0, "ok")])
     assert costcheck.main([str(tmp_path)]) == 0
     assert costcheck.main([str(tmp_path), "--tolerance", "0.05"]) == 1
+
+
+def test_each_run_is_priced_by_its_own_snapshot(tmp_path) -> None:
+    """One node, recalibrated between two runs. Each run was served by the snapshot its own
+    manifest names, so each is priced by that one, not by whichever run was read last."""
+    index = {
+        "cm_old": _snapshot("cm_old", mean_ms=1000.0),
+        "cm_new": _snapshot("cm_new", mean_ms=500.0),
+    }
+    _make_run(tmp_path, "r1", snapshot_id="cm_old", requests=[(1.0, 0, "ok"), (1000.0, 0, "ok")])
+    _make_run(tmp_path, "r2", snapshot_id="cm_new", requests=[(1.0, 0, "ok"), (500.0, 0, "ok")])
+    result = costcheck.check(tmp_path, index=index)
+    by_snapshot = {e.snapshot_id: e for e in result.errors}
+    assert set(by_snapshot) == {"cm_old", "cm_new"}
+    assert by_snapshot["cm_old"].predicted_ms == pytest.approx(1000.0)
+    assert by_snapshot["cm_new"].predicted_ms == pytest.approx(500.0)
+    assert all(e.relative_error == pytest.approx(0.0) for e in result.errors)
+    assert {r["run_id"] for r in costcheck.observations(tmp_path / "r1")} == {"r1"}
+
+
+def test_within_uses_the_tolerance_passed_to_check(tmp_path, index) -> None:
+    """A 40% error is outside the F-23 default and inside a 0.5 tolerance. `within` has to
+    agree with the tolerance the verdict was asked for."""
+    _make_run(tmp_path, requests=[(1.0, 0, "ok"), (1400.0, 0, "ok")])
+    loose = costcheck.check(tmp_path, index=index, tolerance=0.5)
+    (cell,) = loose.errors
+    assert cell.relative_error == pytest.approx(0.4)
+    assert cell.tolerance == 0.5 and cell.within
+    assert not any("outside tolerance" in line for line in loose.summary())
+    (strict,) = costcheck.check(tmp_path, index=index).errors
+    assert not strict.within

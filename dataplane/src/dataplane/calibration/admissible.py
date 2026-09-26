@@ -101,38 +101,65 @@ def summary(envelope: dict[str, Any]) -> str:
 def node_limit_from_snapshot(snapshot: dict[str, Any], ceiling_ms: int) -> dict[str, Any]:
     """Turn a C-3 snapshot into the flat envelope `determine` consumes.
 
-    The widest bucket pair whose p95 fits under the ceiling **at every calibrated
-    concurrency**. "At every concurrency" is the strict reading and the right one: a bucket
-    that fits at concurrency 1 and blows the ceiling at concurrency 4 is not admissible,
-    because the scheduler will absolutely put four requests on that node under load — that
-    is what the load band is.
+    The envelope is a rectangle, prompt <= P and output <= O, and a rectangle is admitted
+    only if its corner cell (P, O) was measured and fits, and no measured cell inside it
+    fails. Taking each axis's widest fitting bucket on its own is not enough: two cells can
+    each fit while the cell at their corner does not, and that corner is exactly the
+    request the trace would then send.
+
+    A cell fits when its p95 is under the ceiling **at every calibrated concurrency**. "At
+    every concurrency" is the strict reading and the right one: a bucket that fits at
+    concurrency 1 and blows the ceiling at concurrency 4 is not admissible, because the
+    scheduler will absolutely put four requests on that node under load — that is what the
+    load band is.
 
     p95 rather than the mean, because a bucket whose mean fits and whose p95 does not will
     time out one request in twenty, and those timeouts land in the tail statistics the
     study is about.
+
+    Several rectangles can be maximal, none holding another. The one with the largest area
+    `P * O` wins, then the larger prompt, and `tie_break` says which rule decided it:
+    "area", "prompt", or None when only one rectangle was maximal.
     """
-    fits: list[tuple[int, int]] = []
     worst = 0.0
     limiting_conc = 0
     by_bucket: dict[tuple[int, int], list[dict[str, Any]]] = {}
     for e in snapshot["entries"]:
         by_bucket.setdefault((e["prompt_bucket"][1], e["output_bucket"][1]), []).append(e)
 
+    fits: dict[tuple[int, int], bool] = {}
     for (p_hi, o_hi), entries in by_bucket.items():
         worst_here = max(entries, key=lambda e: e["service_ms_p95"])
-        if worst_here["service_ms_p95"] <= ceiling_ms:
-            fits.append((p_hi, o_hi))
-        elif worst_here["service_ms_p95"] > worst:
+        fits[(p_hi, o_hi)] = worst_here["service_ms_p95"] <= ceiling_ms
+        if not fits[(p_hi, o_hi)] and worst_here["service_ms_p95"] > worst:
             worst = worst_here["service_ms_p95"]
             limiting_conc = worst_here["concurrency"]
 
+    admitted = [
+        (p, o)
+        for (p, o), ok in fits.items()
+        if ok and all(fit for (q, r), fit in fits.items() if q <= p and r <= o)
+    ]
+    maximal = [
+        (p, o)
+        for p, o in admitted
+        if not any((q, r) != (p, o) and q >= p and r >= o for q, r in admitted)
+    ]
+    ranked = sorted(maximal, key=lambda c: (c[0] * c[1], c[0]), reverse=True)
+    best = ranked[0] if ranked else (0, 0)
+    tie_break: str | None = None
+    if len(ranked) > 1:
+        runner_up = ranked[1]
+        tie_break = "area" if best[0] * best[1] > runner_up[0] * runner_up[1] else "prompt"
+
     return {
         "node_class": snapshot["node_class"],
-        "max_prompt": max((p for p, _ in fits), default=0),
-        "max_output": max((o for _, o in fits), default=0),
+        "max_prompt": best[0],
+        "max_output": best[1],
         "timeout_ceiling_ms": ceiling_ms,
         "limiting_concurrency": limiting_conc,
         "worst_p95_ms": worst,
+        "tie_break": tie_break,
     }
 
 
@@ -381,6 +408,10 @@ def pool_envelope(run_dirs: list[Path], *, timeout_ceiling_ms: int | None = None
             )
         snapshot = series[-1]
         ceiling = int(snapshot["admissibility"]["timeout_ceiling_ms"])
+        # An override can only tighten. A node calibrated at a 60 s ceiling has no evidence
+        # about a longer one: its slowest requests timed out and were never fitted.
+        if timeout_ceiling_ms is not None:
+            ceiling = min(ceiling, timeout_ceiling_ms)
         envelopes.append(node_limit_from_snapshot(snapshot, ceiling))
 
         observations = load_observations(run_dir)

@@ -77,18 +77,68 @@ def test_a_growing_queue_is_saturated_even_when_its_p50_looks_fine() -> None:
     assert fast_growing.climbing and fast_growing.saturated
 
 
-def test_a_pool_that_retires_less_than_it_was_offered_is_saturated(caplog) -> None:
-    """The direct reading, and the one the first hardware sweep needed. At 1.80 req/s against
-    a pool that retires 1.65 the backlog builds slowly enough that the trend test misses it
-    inside a two-minute run, while the shortfall is plain."""
-    # 60 requests offered at 2.0/s but spread over 40 s of completions: 1.5/s retired.
+def test_a_pool_that_retires_less_than_it_was_offered_is_saturated() -> None:
+    """The direct reading: over the window the requests arrived in, fewer finished than
+    arrived. A latency that is high from the start and grows less than its own median is
+    what the trend reading calls stable."""
+    # 60 requests arriving at 2.0/s over 29.5 s; latency 10 s rising to 25 s, so only the
+    # first 26 finish inside the arrival window.
     lagging = loadband.point_from_run(
-        _manifest("mid", 2.0), _records(60, span_s=40.0, base_ms=200.0, growth_ms=120.0)
+        _manifest("mid", 2.0), _records(60, span_s=29.5, base_ms=10_000.0, growth_ms=15_000.0)
     )
     assert not lagging.climbing  # the trend alone would have called this stable
     assert lagging.short
     assert lagging.saturated
-    assert lagging.achieved_rps == pytest.approx(1.5, rel=0.05)
+    assert lagging.offered_rps == pytest.approx(60 / 29.5)
+    assert lagging.achieved_rps == pytest.approx(26 / 29.5)
+
+
+def test_a_long_drain_does_not_make_a_run_short() -> None:
+    """A stable run whose last request is slow finishes late. Counting that drain into the
+    rate would credit the pool with less than it retired while requests were arriving."""
+    records = _records(60, span_s=59.0)
+    records[-1]["e2e_duration_ns"] = 60_000 * 10**6
+    point = loadband.point_from_run(_manifest("light", 1.0), records)
+    assert point.achieved_rps == pytest.approx(59 / 59.0)
+    assert not point.short
+
+
+def test_offered_rate_is_the_realised_arrival_rate() -> None:
+    """The manifest's lambda is what was asked for. The shortfall is read against what
+    arrived, so a trace that happened to draw fewer arrivals does not read as a shortfall."""
+    point = loadband.point_from_run(_manifest("mid", 4.0), _records(60, span_s=59.0))
+    assert point.lambda_rps == 4.0
+    assert point.offered_rps == pytest.approx(60 / 59.0)
+    assert point.n_arrivals == 60
+    assert not point.short
+    assert point.to_dict()["offered_rps"] == round(60 / 59.0, 4)
+
+
+def test_an_mmpp_run_is_labelled_with_its_mean_rate() -> None:
+    """The quiet rate of a bursty trace is not the load it offered. The dwell-weighted mean
+    is, scaled by the run's compression."""
+    manifest = _manifest("mid", 0.5)
+    manifest["config"] |= {
+        "rate_scale": 2.0,
+        "arrival": {
+            "process": "mmpp",
+            "lambda_base": 0.5,
+            "burst_lambda": 2.0,
+            "quiet_mean_s": 10.0,
+            "burst_mean_s": 5.0,
+        },
+    }
+    point = loadband.point_from_run(manifest, _records(60, span_s=59.0))
+    assert point.lambda_rps == pytest.approx((0.5 * 10 + 2.0 * 5) / 15 * 2.0)
+
+
+def test_the_shortfall_threshold_tightens_with_run_length() -> None:
+    """Three standard deviations of a Poisson count, as a fraction of the count."""
+    assert loadband.shortfall_threshold(100) == pytest.approx(0.7)
+    assert loadband.shortfall_threshold(900) == pytest.approx(0.9)
+    assert loadband.shortfall_threshold(100) < loadband.shortfall_threshold(400)
+    assert loadband.shortfall_threshold(4) == 0.0
+    assert loadband.shortfall_threshold(0) == 0.0
 
 
 def test_warmup_is_excluded_on_the_trace_timeline_not_the_wall_clock() -> None:
@@ -205,7 +255,7 @@ def test_cli_writes_the_characterization_and_exits_non_zero_when_unidentified(tm
     assert written["identified"] is True
     assert [p["name"] for p in written["points"]] == ["light", "mid", "over"]
     assert written["points"][-1]["saturated"] is True
-    assert written["points"][-1]["short"] is True
+    assert written["points"][-1]["climbing"] is True
     assert written["reference_p99_ms"] > 0
 
     thin = tmp_path / "thin_only"
@@ -234,3 +284,18 @@ def test_the_degenerate_windows_have_no_trend_and_no_rate() -> None:
         )
         == 0.0
     )
+
+
+def test_the_offered_rate_needs_a_window_and_the_console_names_a_shortfall(
+    tmp_path, capsys
+) -> None:
+    assert loadband._offered_rps([]) == 0.0
+    assert loadband._offered_rps([{"actual_send_offset_s": 2.0}] * 3) == 0.0
+
+    d = tmp_path / "anchor_lag"
+    d.mkdir()
+    (d / "manifest.json").write_text(json.dumps(_manifest("lag", 2.0, run_id="anchor_lag")))
+    rows = _records(60, span_s=29.5, base_ms=10_000.0, growth_ms=15_000.0)
+    (d / "client_anchor_lag.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    loadband.main([str(tmp_path)])
+    assert "retired only 0.88/s of 2.03/s arrived" in capsys.readouterr().out

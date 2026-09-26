@@ -193,3 +193,36 @@ def test_the_markdown_says_when_the_headline_could_not_be_decided(tmp_path) -> N
     md = cs.markdown(summary)
     assert f"Headline (analysis-plan 6.1): not decided, undefined: no valid run for {ARM}." in md
     assert "Headline (analysis-plan 6.1): **" not in md
+
+
+# ------------------------------------------------------------------ what the set describes
+
+
+def test_r_headline_comes_from_the_rows(tmp_path) -> None:
+    """The R a summary quotes is the R of the runs it summarises, not of whichever row
+    happened to come first. With two R values in one set there is no one R to quote."""
+    one = frame(cell_rows("jsq", _noise(30, 1), R=3.0), cell_rows("wjsq", _noise(30, 2), R=3.0))
+    s = cs.summarise(one, 50, 1, manifests_for(tmp_path / "one", one))
+    assert s["R_headline"] == 3.0
+    assert "R_values" not in s
+
+    two = frame(cell_rows("jsq", _noise(30, 1), R=3.0), cell_rows("wjsq", _noise(30, 2), R=1.5))
+    s = cs.summarise(two, 50, 1, manifests_for(tmp_path / "two", two))
+    assert s["R_headline"] is None
+    assert s["R_values"] == [1.5, 3.0]
+
+
+def test_two_traces_from_one_seed_are_not_independent_arrivals(tmp_path) -> None:
+    """A trace's hash also covers the generator commit, so one seed regenerated at a later
+    commit hashes differently while drawing the same arrivals."""
+    from support import run_id, write_manifest
+
+    data = frame(
+        cell_rows("jsq", _noise(30, 1), repeat=1), cell_rows("jsq", _noise(30, 2), repeat=2)
+    )
+    assert data["trace_sha256"].nunique() == 2
+    for r in (1, 2):
+        write_manifest(tmp_path, run_id("jsq", repeat=r), policy="jsq", gen_seed=11)
+    s = cs.summarise(data, 50, 1, tmp_path / "runset.parquet")
+    assert s["arrivals_independent"] is False
+    assert s["gen_seeds"] == [11]

@@ -293,6 +293,41 @@ def test_seeds_and_trace_hashes_say_whether_repeats_were_independent(tmp_path) -
     assert s["scheduler_seeds"] == [101, 102]
 
 
+def test_an_empty_cell_raises_no_runtime_warning(tmp_path) -> None:
+    """A run with no phase times has no TTFT or TPOT, and a flat latency series has no lag-1
+    autocorrelation. Those are NaN on purpose and must not arrive as "Mean of empty slice"."""
+    import warnings
+
+    data = frame(
+        *(
+            cell_rows(p, _flat(v), prefill_ms=math.nan, decode_ms=math.nan)
+            for p, v in {"round_robin": 200, "static_weighted": 100, "jsq": 100, "wjsq": 90}.items()
+        ),
+        cell_rows("threshold", _flat(150, 2)),
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        pt = cs.summarise(data, 50, 1, manifests_for(tmp_path, data))["points"][0]
+    jsq = pt["policies"]["jsq"]
+    assert jsq["lag1_autocorrelation"] is None
+    assert jsq["ttft_mean"]["value"] is None
+
+
+def test_one_arrival_path_and_one_scheduler_seed_are_flagged(tmp_path) -> None:
+    """The first pair's shape, built here: every repeat replayed one trace with one scheduler
+    seed, so repeats sample hardware jitter and nothing else, and the summary says so."""
+    from support import write_manifest
+
+    data = frame(cell_rows("jsq", _flat(100), repeat=1), cell_rows("jsq", _flat(100), repeat=2))
+    data["trace_sha256"] = "a" * 64
+    for r in (1, 2):
+        write_manifest(tmp_path, run_id("jsq", repeat=r), policy="jsq", gen_seed=7, seed=42)
+    s = cs.summarise(data, 50, 1, tmp_path / "runset.parquet")
+    assert s["arrivals_independent"] is False
+    assert s["scheduler_seed_varied"] is False
+    assert s["gen_seeds"] == [7] and s["scheduler_seeds"] == [42]
+
+
 # -------------------------------------------------------------- the committed campaign
 
 MPR2 = REPO_ROOT / "runs" / "exp" / "mpr2_1650ti_3050"
@@ -301,7 +336,10 @@ MPR2 = REPO_ROOT / "runs" / "exp" / "mpr2_1650ti_3050"
 @pytest.fixture(scope="module")
 def mpr2_summary() -> dict:
     if not (MPR2 / "runset.parquet").is_file():
-        pytest.skip(f"{MPR2}/runset.parquet is gitignored and not on this machine")
+        pytest.skip(
+            f"lab-machine data check: {MPR2}/runset.parquet is gitignored and not on this "
+            "machine; test_one_arrival_path_and_one_scheduler_seed_are_flagged covers the rule"
+        )
     return cs.summarise(
         pd.read_parquet(MPR2 / "runset.parquet"), 100, 20260915, MPR2 / "runset.parquet"
     )

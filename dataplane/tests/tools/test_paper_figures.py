@@ -83,6 +83,28 @@ def saved(monkeypatch):
     return figures
 
 
+RHO = {"summarisation": 13.76, "anchor": 3.0, "balanced": 2.0, "generation": 0.5}
+
+
+def _report(rho: dict[str, float]) -> dict:
+    """A phase_ratio.py report with one profile per shape, named as the tool names them."""
+    return {
+        "fast": {"node_class": "rtx3050_ngl99", "snapshot_id": "cm_fast"},
+        "slow": {"node_class": "gtx1650ti_ngl99", "snapshot_id": "cm_slow"},
+        "concurrency": 1,
+        "profiles": [
+            {
+                "profile": f"trace_{name}_1b",
+                "mean_rho": value,
+                "R_service": 2.0,
+                "R_prefill": 9.0,
+                "R_decode": 1.2,
+            }
+            for name, value in rho.items()
+        ],
+    }
+
+
 def _texts(fig) -> str:
     parts = [t.get_text() for t in fig.texts]
     if fig._suptitle is not None:
@@ -115,7 +137,7 @@ def test_an_undefined_calibration_gain_is_marked_nd(tmp_path, saved) -> None:
         "summarisation": _summary(lambdas=(1.0, 3.0)),
         "not_a_shape": _summary(),
     }
-    path = paper_figures.calibration_gain_by_shape(campaigns, tmp_path)
+    path = paper_figures.calibration_gain_by_shape(campaigns, tmp_path, RHO)
     assert path.name == "calibration_gain_by_shape.png"
     text = _texts(saved[-1])
     assert "n/d" in text
@@ -125,7 +147,7 @@ def test_an_undefined_calibration_gain_is_marked_nd(tmp_path, saved) -> None:
 
 
 def test_calibration_gain_needs_two_shapes(tmp_path) -> None:
-    assert paper_figures.calibration_gain_by_shape({"anchor": _summary()}, tmp_path) is None
+    assert paper_figures.calibration_gain_by_shape({"anchor": _summary()}, tmp_path, RHO) is None
 
 
 def test_main_draws_every_figure_and_prints_their_paths(tmp_path, capsys) -> None:
@@ -136,27 +158,8 @@ def test_main_draws_every_figure_and_prints_their_paths(tmp_path, capsys) -> Non
         p = tmp_path / f"{name}.json"
         p.write_text(json.dumps(s))
         args += ["--campaign", f"{name}={p}"]
-    profiles = [
-        {
-            "profile": f"trace_{n}_1b",
-            "mean_rho": rho,
-            "R_service": 2.0,
-            "R_prefill": 9.0,
-            "R_decode": 1.2,
-        }
-        for n, rho in (("summarisation", 13.76), ("generation", 0.5))
-    ]
     ratio = tmp_path / "ratio.json"
-    ratio.write_text(
-        json.dumps(
-            {
-                "fast": {"node_class": "rtx3050_ngl99", "snapshot_id": "cm_fast"},
-                "slow": {"node_class": "gtx1650ti_ngl99", "snapshot_id": "cm_slow"},
-                "concurrency": 1,
-                "profiles": profiles,
-            }
-        )
-    )
+    ratio.write_text(json.dumps(_report(RHO)))
     out = tmp_path / "figs"
     assert paper_figures.main([*args, "--phase-ratio", str(ratio), "--out", str(out)]) == 0
     names = sorted(p.name for p in out.iterdir())
@@ -180,3 +183,37 @@ def test_main_with_one_campaign_and_no_phase_report(tmp_path, capsys) -> None:
     assert paper_figures.main(["--campaign", f"anchor={p}", "--out", str(tmp_path / "f")]) == 0
     assert "calibration_gain_by_shape" not in capsys.readouterr().out
     assert paper_figures.main(["--out", str(tmp_path / "empty")]) == 0
+
+
+def test_the_phase_ratio_axis_says_slow_over_fast(tmp_path, saved) -> None:
+    """phase_ratio.py divides the slow node's time by the fast node's, so a bar above 1 is
+    how many times slower the slow node is."""
+    paper_figures.phase_ratio(_report(RHO), tmp_path)
+    (ax,) = saved[-1].axes
+    assert ax.get_ylabel() == "slow node time over fast node time"
+    assert "gtx1650ti over rtx3050" in ax.get_title()
+
+
+def test_rho_is_read_from_the_phase_ratio_report(tmp_path, saved) -> None:
+    """rho is a property of the trace, measured by phase_ratio.py. A constant copied into
+    this file goes stale the day a profile changes."""
+    assert paper_figures.shape_rho(_report(RHO)) == RHO
+    campaigns = {"generation": _summary(), "balanced": _summary()}
+    for rho in (RHO, {**RHO, "balanced": 4.5}):
+        paper_figures.calibration_gain_by_shape(
+            campaigns, tmp_path, paper_figures.shape_rho(_report(rho))
+        )
+        ticks = [t.get_text() for t in saved[-1].axes[0].get_xticklabels()]
+        assert ticks == ["generation\nrho 0.5", f"balanced\nrho {rho['balanced']:g}"]
+    assert not hasattr(paper_figures, "SHAPE_RHO")
+
+
+def test_the_h1_figure_raises_no_legend_warning(tmp_path) -> None:
+    """With every point transient nothing is drawn, and a legend over no artists is a
+    warning that says nothing a reader can use."""
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        paper_figures.h1_interaction({"anchor": _summary(steady=False)}, tmp_path)
+        paper_figures.latency_by_policy("empty", {"vehicle": ["hardware"], "points": []}, tmp_path)

@@ -36,7 +36,22 @@ POLICY_STYLE = {
     "wjsq": ("#2ca02c", "s", "-"),
     "threshold": ("#9467bd", "^", ":"),
 }
-SHAPE_RHO = {"summarisation": 13.76, "anchor": 3.0, "balanced": 2.0, "generation": 0.5}
+
+
+def shape_name(profile: str) -> str:
+    """`trace_summarisation_1b` -> `summarisation`, the label a campaign is given."""
+    return profile.replace("trace_", "").replace("_1b", "")
+
+
+def shape_rho(report: dict) -> dict[str, float]:
+    """Mean prompt-to-output ratio per workload shape, as phase_ratio.py measured it."""
+    return {shape_name(p["profile"]): float(p["mean_rho"]) for p in report["profiles"]}
+
+
+def legend(ax, **kwargs) -> None:
+    """A legend when something was drawn. Over no artists it is a warning and an empty box."""
+    if ax.get_legend_handles_labels()[0]:
+        ax.legend(**kwargs)
 
 
 def footer(fig, labels: list[str], vehicles: set[str]) -> None:
@@ -76,7 +91,7 @@ def latency_by_policy(label: str, summary: dict, out: Path) -> Path:
         ax.set_xlabel("offered load (req/s)")
         ax.grid(alpha=0.3)
     axes[0].set_ylabel("ms")
-    axes[0].legend(fontsize=8)
+    legend(axes[0], fontsize=8)
     fig.suptitle(f"Latency by policy, {label} trace (95% bootstrap intervals)")
     footer(fig, [label], set(summary["vehicle"]))
     fig.tight_layout(rect=(0, 0.03, 1, 1))
@@ -125,7 +140,7 @@ def h1_interaction(campaigns: dict[str, dict], out: Path) -> Path:
         ax.set_xlabel("offered load (req/s)")
         ax.set_ylabel(unit)
         ax.grid(alpha=0.3)
-    axes[0].legend(fontsize=8)
+    legend(axes[0], fontsize=8)
     fig.suptitle(
         "H1 at steady-state points only. Above 0, calibration buys less once queue depth is known."
         + (
@@ -144,17 +159,20 @@ def h1_interaction(campaigns: dict[str, dict], out: Path) -> Path:
     return path
 
 
-def calibration_gain_by_shape(campaigns: dict[str, dict], out: Path) -> Path | None:
+def calibration_gain_by_shape(
+    campaigns: dict[str, dict], out: Path, rho: dict[str, float]
+) -> Path | None:
     """What calibration buys each router on each workload, as a ratio and in ms.
 
     A bar is drawn only where both of the router's cells are steady. The ratio panel is the
     one to read across workloads: calibrated latency over uncalibrated latency, so 0.8 means
-    calibration removed 20% of the latency, whatever the latency was.
+    calibration removed 20% of the latency, whatever the latency was. `rho` orders the shapes
+    and labels them, and comes from the phase-ratio report (`shape_rho`).
     """
-    shapes = [lbl for lbl in campaigns if lbl in SHAPE_RHO]
+    shapes = [lbl for lbl in campaigns if lbl in rho]
     if len(shapes) < 2:
         return None
-    shapes.sort(key=lambda lbl: SHAPE_RHO[lbl])
+    shapes.sort(key=lambda lbl: rho[lbl])
     lambdas = sorted(
         {
             pt["lambda_rps"]
@@ -226,11 +244,11 @@ def calibration_gain_by_shape(campaigns: dict[str, dict], out: Path) -> Path | N
                 ax.set_ylim(0, 1.1)
             else:
                 ax.axhline(0, color="black", linewidth=0.8)
-            ax.set_xticks(range(len(shapes)), [f"{s}\nrho {SHAPE_RHO[s]:g}" for s in shapes])
+            ax.set_xticks(range(len(shapes)), [f"{s}\nrho {rho[s]:g}" for s in shapes])
             ax.set_title(f"{lam:g} req/s", fontsize=10)
             ax.set_ylabel(ylabel, fontsize=8)
             ax.grid(alpha=0.3, axis="y")
-    axes[0][0].legend(fontsize=8)
+    legend(axes[0][0], fontsize=8)
     fig.suptitle(
         "What calibration buys, by workload shape. n/d: a cell of that router was transient or"
         " saturated. Load in req/s is not matched across shapes.",
@@ -259,7 +277,7 @@ def routing_share(label: str, summary: dict, out: Path) -> Path:
     ax.set_xlabel("offered load (req/s)")
     ax.set_ylabel(f"share of requests to {summary['fast_node']}")
     ax.set_ylim(0, 1.3)
-    ax.legend(fontsize=7, ncol=3, loc="upper center")
+    legend(ax, fontsize=7, ncol=3, loc="upper center")
     ax.grid(alpha=0.3, axis="y")
     ax.set_title(f"Where each policy sends work, {label} trace")
     footer(fig, [label], set(summary["vehicle"]))
@@ -287,21 +305,19 @@ def phase_ratio(report: dict, out: Path) -> Path:
         )
     ax.set_xticks(
         range(len(profiles)),
-        [
-            f"{p['profile'].replace('trace_', '').replace('_1b', '')}\nrho {p['mean_rho']:g}"
-            for p in profiles
-        ],
+        [f"{shape_name(p['profile'])}\nrho {p['mean_rho']:g}" for p in profiles],
     )
     ax.axhline(1, color="black", linewidth=0.8)
     ax.set_yscale("log")
-    ax.set_ylabel("fast node over slow node")
-    ax.legend(fontsize=8, loc="upper left")
+    # phase_ratio.py divides the slow node's time by the fast node's.
+    ax.set_ylabel("slow node time over fast node time")
+    legend(ax, fontsize=8, loc="upper left")
     ax.set_ylim(0.9, 30)
     ax.grid(alpha=0.3, axis="y")
     fast = report["fast"]["node_class"].split("_")[0]
     slow = report["slow"]["node_class"].split("_")[0]
     ax.set_title(
-        f"R seen by each workload: {fast} over {slow}, concurrency {report['concurrency']}"
+        f"R seen by each workload: {slow} over {fast}, concurrency {report['concurrency']}"
     )
     fig.text(
         0.01,
@@ -330,17 +346,20 @@ def main(argv: list[str] | None = None) -> int:
     for spec in args.campaign:
         label, _, path = spec.partition("=")
         campaigns[label] = json.loads(Path(path).read_text())
+    report = json.loads(args.phase_ratio.read_text()) if args.phase_ratio else None
     written = []
     for label, summary in campaigns.items():
         written.append(latency_by_policy(label, summary, args.out))
         written.append(routing_share(label, summary, args.out))
     if campaigns:
         written.append(h1_interaction(campaigns, args.out))
-        gain = calibration_gain_by_shape(campaigns, args.out)
+        # The shapes are placed by their measured rho, so without the report there is no
+        # axis to put them on and the figure is not drawn.
+        gain = calibration_gain_by_shape(campaigns, args.out, shape_rho(report)) if report else None
         if gain:
             written.append(gain)
-    if args.phase_ratio:
-        written.append(phase_ratio(json.loads(args.phase_ratio.read_text()), args.out))
+    if report:
+        written.append(phase_ratio(report, args.out))
     for p in written:
         print(p)
     return 0

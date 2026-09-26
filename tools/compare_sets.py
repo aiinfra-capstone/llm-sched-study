@@ -37,7 +37,7 @@ Usage:
       --set generation=runs/exp/matched_1650ti_3050/runset.parquet#generation \\
       --set balanced=runs/exp/matched_1650ti_3050/runset.parquet#balanced \\
       --set summarisation=runs/exp/matched_1650ti_3050/runset.parquet#summarisation \\
-      --point slow70 --ordered --out runs/exp/compare_shapes_slow70
+      --point slow70 --ordered decreasing --out runs/exp/compare_shapes_slow70
 """
 
 from __future__ import annotations
@@ -46,6 +46,7 @@ import argparse
 import itertools
 import json
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
 import pandas as pd
@@ -176,6 +177,37 @@ def measure(
     return out, ratio_draws
 
 
+def ordering(
+    sets: list[str],
+    values: list[float | None],
+    pairs: list[dict],
+    direction: Literal["increasing", "decreasing"],
+) -> dict:
+    """Whether the ratio moves along the named sets in the direction the hypothesis states.
+
+    Monotone only in that direction: values that fall across sets the hypothesis says should
+    rise are the opposite result. A set with no defined ratio makes the ordering undefined,
+    which is reported as not monotone. The extremes are the first and last set named.
+    """
+    defined = all(v is not None for v in values)
+    steps = list(itertools.pairwise(values)) if defined else []
+    if direction == "increasing":
+        monotone = defined and all(x <= y for x, y in steps)
+    else:
+        monotone = defined and all(x >= y for x, y in steps)
+    extremes = next(
+        (p for p in pairs if p["from"] == sets[0] and p["to"] == sets[-1]),
+        None,
+    )
+    return {
+        "order": list(sets),
+        "direction": direction,
+        "values": list(values),
+        "monotone": monotone,
+        "extremes_separated": bool(extremes and extremes.get("separated")),
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument(
@@ -192,8 +224,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     ap.add_argument(
         "--ordered",
-        action="store_true",
-        help="the sets are given in the order the hypothesis predicts; test that order",
+        choices=("increasing", "decreasing"),
+        help="the sets are given in the order the hypothesis predicts, and the ratio moves "
+        "in this direction along it; test that order. Stated before the data, so a result "
+        "in the other direction is not reported as monotone",
     )
     ap.add_argument("--draws", type=int, default=2000)
     ap.add_argument("--seed", type=int, default=20260915)
@@ -236,28 +270,14 @@ def main(argv: list[str] | None = None) -> int:
             )
         pairs.append(entry)
 
-    ordering = None
+    ordering_report = None
     if args.ordered and len(measured) >= 2:
-        values = [m["mean_ratio"] if d is not None else None for m, d in measured]
-        defined = all(v is not None for v in values)
-        extremes = next(
-            (
-                p
-                for p in pairs
-                if p["from"] == measured[0][0]["set"] and p["to"] == measured[-1][0]["set"]
-            ),
-            None,
+        ordering_report = ordering(
+            [m["set"] for m, _ in measured],
+            [m["mean_ratio"] if d is not None else None for m, d in measured],
+            pairs,
+            args.ordered,
         )
-        ordering = {
-            "order": [m["set"] for m, _ in measured],
-            "values": values,
-            "monotone": defined
-            and (
-                all(x >= y for x, y in itertools.pairwise(values))
-                or all(x <= y for x, y in itertools.pairwise(values))
-            ),
-            "extremes_separated": bool(extremes and extremes.get("separated")),
-        }
 
     report = {
         "contrast": f"{arm} over {ref}, mean end-to-end latency",
@@ -266,7 +286,7 @@ def main(argv: list[str] | None = None) -> int:
         "bootstrap": {"draws": args.draws, "seed": args.seed},
         "sets": [m for m, _ in measured],
         "pairs": pairs,
-        "ordering": ordering,
+        "ordering": ordering_report,
     }
 
     lines = [
@@ -303,13 +323,14 @@ def main(argv: list[str] | None = None) -> int:
                 f"[{p['difference_ci95'][0]:+.3f}, {p['difference_ci95'][1]:+.3f}] | "
                 f"{'yes' if p['separated'] else 'no'} |"
             )
-    if ordering:
+    if ordering_report:
         lines += [
             "",
             (
-                f"Ordering {' -> '.join(ordering['order'])}: monotone "
-                f"{'yes' if ordering['monotone'] else 'no'}, extremes separated "
-                f"{'yes' if ordering['extremes_separated'] else 'no'}."
+                f"Ordering {' -> '.join(ordering_report['order'])} "
+                f"({ordering_report['direction']}): monotone "
+                f"{'yes' if ordering_report['monotone'] else 'no'}, extremes separated "
+                f"{'yes' if ordering_report['extremes_separated'] else 'no'}."
             ),
         ]
     text = "\n".join(lines)

@@ -304,7 +304,7 @@ def test_ordered_reports_a_monotone_run_with_separated_extremes(tmp_path) -> Non
     }
     out = tmp_path / "ordered"
     argv = [arg for label, path in sets.items() for arg in ("--set", f"{label}={path}")]
-    assert _main([*argv, "--point", "u30", "--ordered", "--out", str(out)]) == 0
+    assert _main([*argv, "--point", "u30", "--ordered", "decreasing", "--out", str(out)]) == 0
 
     ordering = json.loads(out.with_suffix(".json").read_text())["ordering"]
     assert ordering["order"] == ["generation", "balanced", "summarisation"]
@@ -312,8 +312,8 @@ def test_ordered_reports_a_monotone_run_with_separated_extremes(tmp_path) -> Non
     assert ordering["monotone"] is True
     assert ordering["extremes_separated"] is True
     assert (
-        "Ordering generation -> balanced -> summarisation: monotone yes, extremes separated yes."
-        in out.with_suffix(".md").read_text()
+        "Ordering generation -> balanced -> summarisation (decreasing): monotone yes, "
+        "extremes separated yes." in out.with_suffix(".md").read_text()
     )
 
 
@@ -324,15 +324,64 @@ def test_ordered_says_no_when_the_middle_set_breaks_the_run(tmp_path, capsys) ->
         "summarisation": _write(tmp_path, "sum", *_runs("", jsq=1000.0, wjsq=850.0, seed=21)),
     }
     argv = [arg for label, path in sets.items() for arg in ("--set", f"{label}={path}")]
-    assert _main([*argv, "--point", "u30", "--ordered"]) == 0
+    assert _main([*argv, "--point", "u30", "--ordered", "decreasing"]) == 0
     assert "monotone no, extremes separated yes" in capsys.readouterr().out
 
 
 def test_ordered_with_an_undefined_set_is_neither_monotone_nor_separated(tmp_path, capsys) -> None:
     good = _write(tmp_path, "good", *_runs("", seed=22))
     empty = _write(tmp_path, "empty", *_runs("", point="u40", seed=23))
-    assert _main(["--set", f"a={good}", "--set", f"b={empty}", "--point", "u30", "--ordered"]) == 0
+    argv = ["--set", f"a={good}", "--set", f"b={empty}", "--point", "u30"]
+    assert _main([*argv, "--ordered", "increasing"]) == 0
     assert "monotone no, extremes separated no" in capsys.readouterr().out
+
+
+def _shapes(tmp_path, wjsq: tuple[float, float, float]) -> list[str]:
+    names = ("generation", "balanced", "summarisation")
+    argv = []
+    for k, (name, arm) in enumerate(zip(names, wjsq, strict=True)):
+        path = _write(tmp_path, name, *_runs("", jsq=1000.0, wjsq=arm, seed=40 + k))
+        argv += ["--set", f"{name}={path}"]
+    return argv
+
+
+def test_a_reversed_ordering_is_not_monotone(tmp_path, capsys) -> None:
+    """The hypothesis states a direction before the data. Values that rise across sets the
+    hypothesis says should fall are the opposite result, not a monotone one."""
+    argv = _shapes(tmp_path, (700.0, 850.0, 980.0))  # the ratio rises
+    out = tmp_path / "reversed"
+    assert _main([*argv, "--point", "u30", "--ordered", "decreasing", "--out", str(out)]) == 0
+    ordering = json.loads(out.with_suffix(".json").read_text())["ordering"]
+    assert ordering["direction"] == "decreasing"
+    assert ordering["monotone"] is False
+    assert "monotone no" in capsys.readouterr().out
+
+
+def test_the_ordering_direction_must_be_stated(tmp_path, capsys) -> None:
+    argv = _shapes(tmp_path, (980.0, 850.0, 700.0))
+    with pytest.raises(SystemExit) as exc:
+        _main([*argv, "--point", "u30", "--ordered"])
+    assert exc.value.code == 2
+    with pytest.raises(SystemExit):
+        _main([*argv, "--point", "u30", "--ordered", "sideways"])
+
+
+def test_an_ordering_in_the_stated_direction_is_monotone(tmp_path) -> None:
+    falling = _shapes(tmp_path / "f", (700.0, 850.0, 980.0))
+    rising = _shapes(tmp_path / "r", (980.0, 850.0, 700.0))
+    for argv, direction in ((falling, "increasing"), (rising, "decreasing")):
+        out = tmp_path / direction
+        assert _main([*argv, "--point", "u30", "--ordered", direction, "--out", str(out)]) == 0
+        ordering = json.loads(out.with_suffix(".json").read_text())["ordering"]
+        assert ordering["direction"] == direction
+        assert ordering["monotone"] is True
+    assert compare_sets.ordering(["a", "b"], [1.0, None], [], "increasing") == {
+        "order": ["a", "b"],
+        "direction": "increasing",
+        "values": [1.0, None],
+        "monotone": False,
+        "extremes_separated": False,
+    }
 
 
 def test_the_contrast_and_staleness_can_be_named(tmp_path, capsys) -> None:

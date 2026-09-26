@@ -10,6 +10,12 @@ Resampling is by batch: consecutive grid samples of one cell at concurrency c ar
 at a time, in the order the calibration logged them, and whole groups are drawn. At c = 1
 that is the ordinary bootstrap.
 
+A batch is counted at concurrency c only if it ran at c. The cost model fits only samples
+served at the concurrency their cell claims (`cost_model.steady_samples`), and the same rule
+is applied here: a batch holding any sample whose logged `occupancy_mean` fell below
+c - OCCUPANCY_TOLERANCE is dropped whole, and the report says how many batches and samples
+each cell lost. A sample logged before occupancy was recorded is kept, as the fit keeps it.
+
 It reports, per node class: capability (output tok/s of service at the lowest cell and
 c = 1, as com.sched.core.Capability) and, for each trace profile, R on service, prefill and
 decode at every concurrency the grid covers, weighted by the profile's bucket mix. The
@@ -30,14 +36,24 @@ import json
 from pathlib import Path
 
 import numpy as np
+from dataplane.calibration.cost_model import OCCUPANCY_TOLERANCE
 from pool_load import bucket_mix
 
 PHASES = ("service", "prefill", "decode")
 
 
-def grid(run_dir: Path) -> dict[tuple[int, int, int], np.ndarray]:
-    """(prompt_len, output_len, c) -> array (groups, c, 4) of service, prefill, decode, tokens."""
-    cells: dict[tuple[int, int, int], list] = {}
+Key = tuple[int, int, int]
+
+
+def grid(run_dir: Path) -> tuple[dict[Key, np.ndarray], dict[Key, dict[str, int]]]:
+    """(cells, removed).
+
+    cells: (prompt_len, output_len, c) -> array (groups, c, 4) of service, prefill, decode,
+    tokens, holding only the batches that ran at c. removed: the same keys -> how many
+    batches, and the samples in them, the occupancy filter dropped.
+    """
+    cells: dict[Key, list] = {}
+    steady: dict[Key, list[bool]] = {}
     for line in (run_dir / "observations.jsonl").read_text().splitlines():
         o = json.loads(line)
         if o.get("segment") != "grid" or o.get("status") != "ok":
@@ -46,12 +62,20 @@ def grid(run_dir: Path) -> dict[tuple[int, int, int], np.ndarray]:
         cells.setdefault(key, []).append(
             [o["service_ns"] / 1e6, o["prefill_ns"] / 1e6, o["decode_ns"] / 1e6, o["output_tokens"]]
         )
-    out = {}
+        occupancy = o.get("occupancy_mean")
+        steady.setdefault(key, []).append(
+            occupancy is None or occupancy >= o["concurrency"] - OCCUPANCY_TOLERANCE
+        )
+    out: dict[Key, np.ndarray] = {}
+    removed: dict[Key, dict[str, int]] = {}
     for (p, o, c), rows in cells.items():
-        a = np.asarray(rows)
-        k = len(a) // c
-        out[(p, o, c)] = a[: k * c].reshape(k, c, 4)
-    return out
+        k = len(rows) // c
+        batches = np.asarray(rows)[: k * c].reshape(k, c, 4)
+        kept = np.asarray(steady[(p, o, c)][: k * c], dtype=bool).reshape(k, c).all(axis=1)
+        out[(p, o, c)] = batches[kept]
+        dropped = int((~kept).sum())
+        removed[(p, o, c)] = {"batches": dropped, "samples": dropped * c}
+    return out, removed
 
 
 def draw_means(cell: np.ndarray, rng: np.random.Generator, draws: int) -> np.ndarray:
@@ -84,7 +108,9 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     rng = np.random.default_rng(args.seed)
 
-    g = {"fast": grid(args.fast), "slow": grid(args.slow)}
+    g, removed = {}, {}
+    for side, path in (("fast", args.fast), ("slow", args.slow)):
+        g[side], removed[side] = grid(path)
     boot = {
         side: {k: draw_means(v, rng, args.draws) for k, v in cells.items()}
         for side, cells in g.items()
@@ -98,6 +124,11 @@ def main(argv: list[str] | None = None) -> int:
         "fast": str(args.fast),
         "slow": str(args.slow),
         "draws": args.draws,
+        # Only cells that lost something, named as p<prompt>_o<output>_c<concurrency>.
+        "removed_by_occupancy": {
+            side: {f"p{p}_o{o}_c{c}": n for (p, o, c), n in sorted(cells.items()) if n["batches"]}
+            for side, cells in removed.items()
+        },
         "capability": {},
     }
     for side in ("fast", "slow"):

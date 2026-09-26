@@ -37,8 +37,8 @@ path and one routing random stream.
 last third of its measured arrivals is at least 10% above the first third's and the 95%
 interval of that ratio excludes 1. Transient cells are reported with their numbers and
 excluded from every contrast: no H1 interaction and no calibration gain is computed at a
-point where any of the four 2x2 cells is transient. evidence.md section 6 already rules
-that transient percentiles are not quoted beside steady-state ones.
+point where any of the four 2x2 cells is transient, and transient percentiles are not
+quoted beside steady-state ones.
 
 **Primary statistic.** For H1 the primary statistic is the interaction on the log of mean
 end-to-end latency, `log(wjsq/jsq) - log(static_weighted/round_robin)`, at steady-state
@@ -195,7 +195,28 @@ def block_positions(rng: np.random.Generator, draws: int, n: int, block: int) ->
 
 
 def percentile_rows(a: np.ndarray, q: float) -> np.ndarray:
-    return np.nanpercentile(a, q, axis=1)
+    """Per-row percentile over the values present. A row with none is NaN, said quietly: a
+    run with no phase times has no TTFT, which is not a numerical accident to warn about."""
+    out = np.full(a.shape[0], np.nan)
+    present = ~np.isnan(a).all(axis=1)
+    if present.any():
+        out[present] = np.nanpercentile(a[present], q, axis=1)
+    return out
+
+
+def mean_rows(a: np.ndarray) -> np.ndarray:
+    """Per-row mean over the values present, NaN for a row with none, without a warning."""
+    counts = (~np.isnan(a)).sum(axis=1)
+    out = np.full(a.shape[0], np.nan)
+    np.divide(np.nansum(a, axis=1), counts, out=out, where=counts > 0)
+    return out
+
+
+def mean_present(a: np.ndarray | list[float]) -> float:
+    """The mean of the values present, NaN when there are none, without a warning."""
+    a = np.asarray(a, dtype=float)
+    present = a[~np.isnan(a)]
+    return float(present.mean()) if present.size else float("nan")
 
 
 def interval(draws: np.ndarray) -> list[float]:
@@ -351,21 +372,19 @@ def cell_draws(
         for p, c in cells.items():
             e2e = gather(c.e2e, reps, pos)
             sl = slice(done, done + b)
-            mean = np.nanmean(e2e, axis=1)
+            mean = mean_rows(e2e)
             out[p]["mean"][sl] = mean
             out[p]["log_mean"][sl] = np.log(mean)
             out[p]["p50"][sl] = percentile_rows(e2e, 50)
             out[p]["p95"][sl] = percentile_rows(e2e, 95)
             out[p]["p99"][sl] = percentile_rows(e2e, 99)
             ttft = gather(c.ttft, reps, pos)
-            out[p]["ttft_mean"][sl] = np.nanmean(ttft, axis=1)
+            out[p]["ttft_mean"][sl] = mean_rows(ttft)
             out[p]["ttft_p95"][sl] = percentile_rows(ttft, 95)
-            out[p]["tpot_mean"][sl] = np.nanmean(gather(c.tpot, reps, pos), axis=1)
+            out[p]["tpot_mean"][sl] = mean_rows(gather(c.tpot, reps, pos))
             for k in SLO_SCALES:
-                out[p][f"slo_e2e_{k:g}x"][sl] = np.nanmean(gather(c.slo_e2e[k], reps, pos), axis=1)
-                out[p][f"slo_ttft_{k:g}x"][sl] = np.nanmean(
-                    gather(c.slo_ttft[k], reps, pos), axis=1
-                )
+                out[p][f"slo_e2e_{k:g}x"][sl] = mean_rows(gather(c.slo_e2e[k], reps, pos))
+                out[p][f"slo_ttft_{k:g}x"][sl] = mean_rows(gather(c.slo_ttft[k], reps, pos))
         done += b
     return out
 
@@ -387,15 +406,15 @@ def point_values(c: Cell) -> dict[str, float]:
     }
     v["log_mean"] = math.log(v["mean"])
     for k in SLO_SCALES:
-        v[f"slo_e2e_{k:g}x"] = float(np.nanmean(c.slo_e2e[k]))
-        v[f"slo_ttft_{k:g}x"] = float(np.nanmean(c.slo_ttft[k]))
+        v[f"slo_e2e_{k:g}x"] = mean_present(c.slo_e2e[k])
+        v[f"slo_ttft_{k:g}x"] = mean_present(c.slo_ttft[k])
     return v
 
 
 def third_ratio(c: Cell) -> float:
     n = c.e2e.shape[1]
     third = n // 3
-    return float(np.nanmean(c.e2e[:, n - third :]) / np.nanmean(c.e2e[:, :third]))
+    return mean_present(c.e2e[:, n - third :]) / mean_present(c.e2e[:, :third])
 
 
 def paired(
@@ -623,17 +642,17 @@ def climb(c: Cell, block: int, n_boot: int, rng: np.random.Generator) -> dict:
     n = c.e2e.shape[1]
     third = n // 3
     first, last = c.e2e[:, :third], c.e2e[:, n - third :]
-    value = float(np.nanmean(last) / np.nanmean(first))
+    value = mean_present(last) / mean_present(first)
     blk = max(1, min(block, third // 3))
     reps = rng.integers(0, len(c.repeats), size=(n_boot, len(c.repeats)))
-    lo_draw = np.nanmean(gather(first, reps, block_positions(rng, n_boot, third, blk)), axis=1)
-    hi_draw = np.nanmean(gather(last, reps, block_positions(rng, n_boot, third, blk)), axis=1)
+    lo_draw = mean_rows(gather(first, reps, block_positions(rng, n_boot, third, blk)))
+    hi_draw = mean_rows(gather(last, reps, block_positions(rng, n_boot, third, blk)))
     ci = interval(hi_draw / lo_draw)
     transient = value >= CLIMB_RATIO and ci[0] > 1.0
     return {
         "last_over_first_third": r4(value),
         "ci95": [r4(x) for x in ci],
-        "rise_ms": r1(float(np.nanmean(last) - np.nanmean(first))),
+        "rise_ms": r1(mean_present(last) - mean_present(first)),
         "transient": bool(transient),
     }
 
@@ -926,7 +945,7 @@ def summarise(frame: pd.DataFrame, n_boot: int, seed: int, runset_path: Path | N
                 "share_to_fast_node": round(float((g["chosen_node"] == fast).mean()), 3),
                 "queue_wait_ms_mean_reference_only": round(float(g["queue_wait_ms"].mean()), 1),
                 "lag1_autocorrelation": r4(
-                    float(np.nanmean([lag1(c.e2e[i]) for i in range(len(c.repeats))]))
+                    mean_present([lag1(c.e2e[i]) for i in range(len(c.repeats))])
                 ),
                 "tau_int_requests": r4(taus[p]),
                 "steady_state": gate,
@@ -1084,12 +1103,15 @@ def summarise(frame: pd.DataFrame, n_boot: int, seed: int, runset_path: Path | N
     for pt in points:
         pt.pop("_queue_aware")
 
-    first = frame.iloc[0]
+    # The R of the runs summarised. With more than one there is no single R to quote, and
+    # the values are listed instead of the first row's standing in for all of them.
+    r_values = sorted({round(float(r), 3) for r in frame["R"].dropna()})
     several = len(trends) > 1
     return {
         "run_ids": sorted(frame["run_id"].unique().tolist()),
         "vehicle": sorted(frame["vehicle"].unique().tolist()),
-        "R_headline": round(float(first["R"]), 3),
+        "R_headline": r_values[0] if len(r_values) == 1 else None,
+        **({} if len(r_values) == 1 else {"R_values": r_values}),
         "trace_sha256": sorted(traces),
         "gen_seeds": sorted(s for s in gen_seeds if s is not None),
         "capability_arms": sorted({a for a in arms.values() if a}),
@@ -1097,7 +1119,10 @@ def summarise(frame: pd.DataFrame, n_boot: int, seed: int, runset_path: Path | N
             {m["config"].get("capability_mode", "service") for m in mans.values()}
         ),
         "scheduler_seeds": sorted(s for s in sched_seeds if s is not None),
-        "arrivals_independent": len(traces) > 1,
+        # Distinct seeds, not distinct hashes: a trace's hash also covers the generator
+        # commit, so one seed regenerated at a later commit hashes differently while drawing
+        # the same arrivals.
+        "arrivals_independent": len(gen_seeds - {None}) > 1,
         "scheduler_seed_varied": len(sched_seeds - {None}) > 1,
         "fast_node": fast,
         "primary_statistic": "H1 interaction on log mean end-to-end latency, steady-state points",

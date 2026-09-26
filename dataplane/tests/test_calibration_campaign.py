@@ -143,6 +143,36 @@ def test_every_prompt_in_a_cell_is_distinct() -> None:
     assert camp._prompt_pool(seed=8, point=point, count=6, vocab_size=1000) != pool
 
 
+def test_each_cell_draws_its_own_prompts() -> None:
+    """Two cells sharing a prompt length must not replay one stream, or the second cell
+    starts on prompts the engine has already seen."""
+    a = camp._prompt_pool(seed=7, point=camp.GridPoint(64, 32, 1), count=4, vocab_size=1000)
+    b = camp._prompt_pool(seed=7, point=camp.GridPoint(64, 100, 1), count=4, vocab_size=1000)
+    c = camp._prompt_pool(seed=7, point=camp.GridPoint(64, 32, 2), count=4, vocab_size=1000)
+    assert not {tuple(p) for p in a} & {tuple(p) for p in b}
+    assert not {tuple(p) for p in a} & {tuple(p) for p in c}
+    again = camp._prompt_pool(seed=7, point=camp.GridPoint(64, 32, 1), count=4, vocab_size=1000)
+    assert again == a
+
+
+def test_measured_at_unix_is_the_start_of_measurement(monkeypatch) -> None:
+    """The snapshot describes the node from the first request on, so it is stamped when
+    measurement began, not when the fit finished. Every request here moves the wall clock
+    on by 100 s, so the two stamps are far apart."""
+    now = [1_788_000_000.0]
+
+    class Ticking(FakeEngine):
+        async def complete(self, prompt: list[int], output_len: int) -> ServiceResult:
+            now[0] += 100.0
+            return await super().complete(prompt, output_len)
+
+    monkeypatch.setattr(camp.time, "time", lambda: now[0])
+    result = asyncio.run(camp.run_campaign(Ticking(), _config()))
+    assert now[0] > 1_788_000_000 + 100
+    assert result.snapshots[0]["measured_at_unix"] == 1_788_000_000
+    assert result.report["run_id"].endswith("_1788000000")
+
+
 def test_a_campaign_produces_a_time_ordered_snapshot_series() -> None:
     """C-3's least obvious requirement: without a real history, Aditya has to synthesize
     age by perturbing parameters, and H3 becomes a study of his perturbation model."""

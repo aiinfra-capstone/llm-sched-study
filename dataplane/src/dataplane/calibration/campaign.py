@@ -191,13 +191,18 @@ def _observe(point: GridPoint, completion: ServiceResult, t_end_ns: int) -> cm.O
 def _prompt_pool(seed: int, point: GridPoint, count: int, vocab_size: int) -> list[list[int]]:
     """Distinct prompts, materialized up front, deterministic from the campaign seed.
 
+    Each cell has its own stream, keyed by (seed, prompt_len, output_len, concurrency).
+    Keyed by the seed alone, two cells with one prompt length would replay the same prompts,
+    and the second would start on prompts the engine had already seen.
+
     Distinct rather than one prompt reused: identical token ids would let any prefix
     reuse the engine still does show up as a speedup that the pool will never see on a
     real trace. `cache_prompt` is already false in the adapter; this is the second lock on
     the same door, because a cost model inflated by cache hits is the kind of error that
     makes everything downstream look fine and be wrong.
     """
-    streams = np.random.SeedSequence(seed).spawn(count)
+    key = (seed, point.prompt_len, point.output_len, point.concurrency)
+    streams = np.random.SeedSequence(key).spawn(count)
     return [
         materialize(int(s.generate_state(1, dtype=np.uint32)[0]), point.prompt_len, vocab_size)
         for s in streams
@@ -362,6 +367,7 @@ def _merge_cell(
 async def run_campaign(adapter: LlamaCppAdapter, config: CampaignConfig) -> CampaignResult:
     """Grid pass, then the sustained segment, then the fits. One node class per call."""
     result = CampaignResult()
+    started_unix = int(time.time())
     points = grid(config)
 
     for point in points:
@@ -407,7 +413,7 @@ async def run_campaign(adapter: LlamaCppAdapter, config: CampaignConfig) -> Camp
     )
 
     result.failures = _failure_counts(result.observations + result.sustained)
-    _finish(result, config)
+    _finish(result, config, started_unix)
     return result
 
 
@@ -442,7 +448,7 @@ def _steady_counts(observations: list[cm.Observation]) -> dict[str, str]:
     }
 
 
-def _finish(result: CampaignResult, config: CampaignConfig) -> None:
+def _finish(result: CampaignResult, config: CampaignConfig, started_unix: int) -> None:
     """Fit the table, then tau, then the snapshot series. Order matters.
 
     sigma is a residual of the fitted table (F-22), so the table has to exist before the
@@ -452,7 +458,9 @@ def _finish(result: CampaignResult, config: CampaignConfig) -> None:
     spread across the whole grid rather than the error around the scheduler's actual
     prediction.
     """
-    measured_at = int(time.time())
+    # Stamped when measurement began: the snapshot describes the node from the first
+    # request on, and a stamp taken after the fit would date it by the campaign's length.
+    measured_at = started_unix
     run_id = f"cal_{config.node_class}_{measured_at}"
     every = {
         "node_class": config.node_class,
@@ -471,6 +479,8 @@ def _finish(result: CampaignResult, config: CampaignConfig) -> None:
             "sigma": 0.0,
             "autocorr_time_s": 1.0,
             "fit_r2": 0.0,
+            "tau_resolved": False,
+            "tau_censored": False,
         },
         **every,
     )
@@ -533,14 +543,7 @@ def _finish(result: CampaignResult, config: CampaignConfig) -> None:
         return
 
     final = cm.build_snapshot(
-        all_obs,
-        stochastic={
-            "model": "lognormal_multiplier",
-            "sigma": round(sigma, 5),
-            "autocorr_time_s": round(stationarity.fit.tau_s, 4),
-            "fit_r2": round(stationarity.fit.fit_r2, 4),
-        },
-        **every,
+        all_obs, stochastic=cm.stochastic_block(stationarity.to_dict()), **every
     )
     result.snapshots = [final] + snapshot_series(
         final,

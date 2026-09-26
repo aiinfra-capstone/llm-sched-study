@@ -72,6 +72,7 @@ __all__ = [
     "predict_service_ms",
     "residuals",
     "snapshot_id",
+    "stochastic_block",
 ]
 
 SCHEMA_VERSION = 1
@@ -185,6 +186,29 @@ def at_stated_concurrency(obs: list[Observation]) -> list[Observation]:
     return steady_samples(obs) or obs
 
 
+# What C-3's `stochastic` block carries, read from `StationarityReport.to_dict()`. The two
+# flags say whether `autocorr_time_s` is a measurement at all: a censored fit reports the
+# resolution floor, and without the flags a reader cannot tell that from a tau.
+TAU_FLAGS = ("tau_resolved", "tau_censored")
+
+
+def stochastic_block(report: dict[str, Any]) -> dict[str, Any]:
+    """C-3's `stochastic` block from a stationarity report.
+
+    The simulator draws i.i.d. lognormal noise from `sigma` and does not read
+    `autocorr_time_s`. tau is reported for characterisation (K6), and only means anything
+    when `tau_resolved` is true.
+    """
+    return {
+        "model": "lognormal_multiplier",
+        "sigma": report["sigma"],
+        "autocorr_time_s": report["autocorr_time_s"],
+        "fit_r2": report["fit_r2"],
+        "tau_resolved": bool(report["tau_resolved"]),
+        "tau_censored": bool(report["tau_censored"]),
+    }
+
+
 def _cell_entry(
     obs: list[Observation], prompt_bucket: tuple[int, int], output_bucket: tuple[int, int]
 ) -> dict[str, Any]:
@@ -192,7 +216,7 @@ def _cell_entry(
     service_ms = np.array([o.service_ms for o in obs], dtype=np.float64)
     tok_s = [o.decode_tokens_per_s for o in obs]
     measured = [t for t in tok_s if t is not None]
-    return {
+    entry = {
         "prompt_bucket": [prompt_bucket[0], prompt_bucket[1]],
         "output_bucket": [output_bucket[0], output_bucket[1]],
         "concurrency": obs[0].concurrency,
@@ -204,6 +228,18 @@ def _cell_entry(
         "tokens_per_s": round(float(np.median(measured)), 4) if measured else 0.0,
         "n_samples": len(obs),
     }
+    # The phase split, as backfill_phase_split writes it: each phase's share of the timed
+    # samples' service time, applied to this cell's mean. With every sample timed that is
+    # the plain mean of each phase. A cell with no timed sample gets no split, not a zero.
+    timed = [o for o in obs if o.prefill_ns is not None and o.decode_ns is not None]
+    timed_service = sum(o.service_ns for o in timed)
+    if timed_service > 0:
+        mean_ms = entry["service_ms_mean"]
+        prefill_share = sum(o.prefill_ns or 0 for o in timed) / timed_service
+        decode_share = sum(o.decode_ns or 0 for o in timed) / timed_service
+        entry["prefill_ms_mean"] = round(prefill_share * mean_ms, 3)
+        entry["decode_ms_mean"] = round(decode_share * mean_ms, 3)
+    return entry
 
 
 def build_snapshot(
@@ -234,6 +270,12 @@ def build_snapshot(
     the grid. Samples recorded before `occupancy_mean` existed are all kept, so an older
     calibration re-fits exactly as it did when it was measured.
     """
+    for flag in TAU_FLAGS:
+        if flag not in stochastic:
+            raise ValueError(
+                f"stochastic block for {node_class} has no {flag}: without it a tau at the "
+                "resolution floor reads as a measurement"
+            )
     ok = [o for o in observations if o.status == "ok"]
     if not ok:
         raise ValueError(
@@ -518,13 +560,18 @@ def example_inputs(*, engine: str = "llamacpp") -> dict[str, Any]:
             "prefix_caching": False,
             "engine_config": {"ngl": 20, "threads": 6, "parallel": 4},
         },
-        "admissibility": {"max_prompt": 2048, "max_output": 256, "timeout_ceiling_ms": 60000},
+        # The top edges of the buckets the samples above reach: prompts to 256 fall in the
+        # (129, 512) bucket and outputs of 48 in (1, 64). A wider block would promise
+        # service times for lengths nothing here measured.
+        "admissibility": {"max_prompt": 512, "max_output": 64, "timeout_ceiling_ms": 60000},
         "calibration_run_ids": ["cal_0001"],
         "stochastic": {
             "model": "lognormal_multiplier",
             "sigma": 0.113,
             "autocorr_time_s": 42.0,
             "fit_r2": 0.87,
+            "tau_resolved": True,
+            "tau_censored": False,
         },
         "measured_at_unix": 1788077068,
     }

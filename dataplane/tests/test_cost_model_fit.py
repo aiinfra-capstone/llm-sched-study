@@ -39,6 +39,8 @@ _STOCHASTIC = {
     "sigma": 0.11,
     "autocorr_time_s": 42.0,
     "fit_r2": 0.87,
+    "tau_resolved": True,
+    "tau_censored": False,
 }
 
 
@@ -207,3 +209,78 @@ def test_residuals_are_measured_against_the_prediction_the_scheduler_would_make(
 
     assert obs_ms == pytest.approx([900.0, 1100.0])  # the oom is not a residual
     assert pred_ms == pytest.approx([1000.0, 1000.0])
+
+
+# --------------------------------------------------------------------------------------
+# The stochastic block says whether tau is a measurement
+# --------------------------------------------------------------------------------------
+
+
+def _report(**over) -> dict:
+    """The keys of `StationarityReport.to_dict()` that the stochastic block reads."""
+    return {
+        "node_class": "x",
+        "sigma": 0.021,
+        "autocorr_time_s": 5.0,
+        "fit_r2": 0.0,
+        "tau_resolved": False,
+        "tau_censored": True,
+        "resolution_floor_s": 2.5,
+    } | over
+
+
+def test_a_censored_report_gives_tau_censored_true() -> None:
+    """A tau at the 5 s floor is the floor, not a measurement. The block carries the flags
+    so nothing downstream can read it as a tau."""
+    block = cm.stochastic_block(_report())
+    assert block == {
+        "model": "lognormal_multiplier",
+        "sigma": 0.021,
+        "autocorr_time_s": 5.0,
+        "fit_r2": 0.0,
+        "tau_resolved": False,
+        "tau_censored": True,
+    }
+    resolved = cm.stochastic_block(_report(tau_resolved=True, tau_censored=False))
+    assert resolved["tau_resolved"] is True and resolved["tau_censored"] is False
+
+
+def test_build_snapshot_refuses_a_stochastic_block_without_tau_flags() -> None:
+    obs = [_obs(t=i) for i in range(4)]
+    for missing in ("tau_resolved", "tau_censored"):
+        block = {k: v for k, v in _STOCHASTIC.items() if k != missing}
+        with pytest.raises(ValueError, match=missing):
+            _fit(obs, stochastic=block)
+
+
+# --------------------------------------------------------------------------------------
+# The phase split is written by the fitter, not only by the backfill
+# --------------------------------------------------------------------------------------
+
+
+def test_every_entry_carries_prefill_and_decode_means() -> None:
+    timed = [_obs(service_ms=1000.0 + 100 * i, t=i) for i in range(4)]
+    snapshot = _fit(timed)
+    (entry,) = snapshot["entries"]
+    assert entry["prefill_ms_mean"] == pytest.approx(
+        sum(0.2 * (1000 + 100 * i) for i in range(4)) / 4
+    )
+    assert entry["decode_ms_mean"] == pytest.approx(
+        sum(0.8 * (1000 + 100 * i) for i in range(4)) / 4
+    )
+
+    # A cell whose samples carry no timings gets no split, as backfill_phase_split leaves
+    # an unmatched entry: absent, never zero.
+    untimed = [
+        cm.Observation(
+            prompt_len=256,
+            output_len=48,
+            concurrency=1,
+            service_ns=1_000_000_000,
+            output_tokens=48,
+            t_end_ns=i,
+        )
+        for i in range(3)
+    ]
+    (bare,) = _fit(untimed)["entries"]
+    assert "prefill_ms_mean" not in bare and "decode_ms_mean" not in bare

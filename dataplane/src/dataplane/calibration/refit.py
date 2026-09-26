@@ -30,6 +30,7 @@ warmups were logged has none to count, and its refit says so with
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -139,7 +140,7 @@ def refit_run(run_dir: Path, out_root: Path) -> Path:
     # is not newer than the newest in its class, so a refit stamped with the source run's
     # time would tie with the snapshot it replaces and could never be promoted over it.
     # `refit_of` keeps the link back to when the engine actually ran.
-    campaign._finish(result, config)
+    campaign._finish(result, config, int(time.time()))
     result.report["refit_of"] = source.get("run_id", run_dir.name)
     result.report["refit_source_dir"] = str(run_dir)
 

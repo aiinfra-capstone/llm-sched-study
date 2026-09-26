@@ -65,7 +65,7 @@ def _snapshot(observations: list[cm.Observation]) -> dict:
         provenance={"engine": "llamacpp"},
         admissibility={"max_prompt": 512, "max_output": 128},
         calibration_run_ids=["cal_x"],
-        stochastic={"form": "lognormal"},
+        stochastic={"form": "lognormal", "tau_resolved": False, "tau_censored": False},
         measured_at_unix=1_789_000_000,
     )
 

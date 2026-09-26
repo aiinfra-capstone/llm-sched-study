@@ -381,7 +381,53 @@ def test_a_directory_that_is_not_a_calibration_run_is_refused(
 # ----------------------------------------------------------------- the run that needs it
 
 
-@pytest.mark.skipif(not G2_1650TI.is_dir(), reason="the G2 1650 Ti calibration is gitignored")
+def test_refitting_changes_only_cells_above_one_slot(refit, tmp_path, monkeypatch) -> None:
+    """The same claim as the G2 data check below, on a run built here so it runs anywhere.
+    The old fit took every sample; the refit keeps only the steady ones. At one slot nobody
+    shares the engine, so those cells, and the capability read from them, do not move. Above
+    one slot the last sample of a cell ran beside fewer requests, and the cell loses it."""
+    import sys
+
+    sys.path.insert(0, str(REPO_ROOT / "tools"))
+    import pool_load
+
+    run_dir, _, _ = _online(tmp_path, monkeypatch)
+    promoted = _snapshots(run_dir)[0]
+    grid, sustained, _ = refit.load_observations(run_dir / "observations.jsonl")
+    config = camp.CampaignConfig.from_dict(
+        json.loads((run_dir / "campaign.json").read_text())["config"]
+    )
+    # How a run recorded before the occupancy filter was fitted: every sample, drained ones too.
+    old = cm.build_snapshot(
+        grid + sustained,
+        node_class=config.node_class,
+        prompt_edges=config.prompt_edges,
+        output_edges=config.output_edges,
+        provenance=config.provenance,
+        admissibility=config.admissibility,
+        calibration_run_ids=promoted["calibration_run_ids"],
+        stochastic=promoted["stochastic"],
+        measured_at_unix=promoted["measured_at_unix"],
+    )
+    monkeypatch.setattr(time, "time", lambda: float(T1))
+    new = _snapshots(refit.refit_run(run_dir, tmp_path / "refit"))[0]
+
+    key = lambda e: (tuple(e["prompt_bucket"]), tuple(e["output_bucket"]), e["concurrency"])
+    old_cells = {key(e): e for e in old["entries"]}
+    new_cells = {key(e): e for e in new["entries"]}
+    assert set(new_cells) == set(old_cells)
+    for k, e in new_cells.items():
+        if k[2] == 1:
+            assert e == old_cells[k], k
+    assert any(e["n_samples"] < old_cells[k]["n_samples"] for k, e in new_cells.items() if k[2] > 1)
+    assert pool_load.capability(new) == pool_load.capability(old)
+
+
+@pytest.mark.skipif(
+    not G2_1650TI.is_dir(),
+    reason="lab-machine data check: the G2 1650 Ti calibration is gitignored and only on the "
+    "lab machine; test_refitting_changes_only_cells_above_one_slot covers the rule anywhere",
+)
 def test_refitting_the_g2_1650ti_run_changes_only_cells_above_one_slot(
     refit, tmp_path, monkeypatch
 ) -> None:
@@ -397,20 +443,16 @@ def test_refitting_the_g2_1650ti_run_changes_only_cells_above_one_slot(
 
     key = lambda e: (tuple(e["prompt_bucket"]), tuple(e["output_bucket"]), e["concurrency"])
     # The promoted snapshots carry the phase split `backfill_phase_split.py` added at
-    # promotion, which a fit does not write; promotion adds it to the refit the same way.
-    fitted = lambda e: {
-        k: v for k, v in e.items() if k not in ("prefill_ms_mean", "decode_ms_mean")
-    }
-    old_cells = {key(e): fitted(e) for e in old["entries"]}
-    new_cells = {key(e): fitted(e) for e in new["entries"]}
+    # promotion. The fit now writes the same split itself, so at one slot the whole cell,
+    # split included, comes out as promoted.
+    old_cells = {key(e): e for e in old["entries"]}
+    new_cells = {key(e): e for e in new["entries"]}
     assert set(new_cells) == set(old_cells)
     for k, e in new_cells.items():
         if k[2] == 1:
             assert e == old_cells[k], k
         assert e["n_samples"] >= 1
-    assert pool_load.capability(new) == pool_load.capability(
-        {**old, "entries": [fitted(e) for e in old["entries"]]}
-    )
+    assert pool_load.capability(new) == pool_load.capability(old)
     kept = json.loads((out / "campaign.json").read_text())["grid_samples_at_stated_concurrency"]
     drained = {c: v for c, v in kept.items() if int(v.split("/")[0]) < int(v.split("/")[1])}
     assert drained, "no cell above one slot kept fewer samples than it had"

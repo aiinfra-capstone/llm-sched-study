@@ -10,10 +10,13 @@ import com.sched.core.models.CostModelParser;
 import com.sched.core.models.CostModelSnapshot;
 
 import java.io.IOException;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.stream.Stream;
 
@@ -30,11 +33,11 @@ import org.junit.jupiter.api.io.TempDir;
  * on the same entry point, {@link SimApp#main}, from a trace and a manifest built here.
  *
  * <p>The pool is built from committed C-3 snapshots copied into the test's own cost-model
- * directory, rather than read from {@code contracts/cost_models} in place. A calibration
- * promoted tomorrow changes which snapshot is newest for a class, and SimApp resolves a
- * node to the newest of its class; a test that let that happen would be asserting
- * yesterday's pool on tomorrow's numbers. Which snapshot is used does not matter here, so
- * the test takes the first of each class by name and copies it.
+ * directory, rather than read from {@code contracts/cost_models} in place. SimApp loads the
+ * snapshot the manifest names in {@code cost_model_snapshots} (F-21), so the manifest here
+ * names the copies, and a snapshot added to or removed from {@code contracts/cost_models}
+ * later does not change the pool this test runs. Which snapshot is used does not matter
+ * here, so the test takes the first of each class by name and copies it.
  */
 class SimDeterminismTest {
     private static final ObjectMapper MAPPER = new ObjectMapper();
@@ -164,6 +167,7 @@ class SimDeterminismTest {
                   "vehicle": "sim",
                   "config": {"seed": 20260918, "rate_scale": 1.0},
                   "trace_path": "%s",
+                  "trace_sha256": "%s",
                   "policy": "%s",
                   "lambda": 2.85,
                   "staleness_s": 0.0,
@@ -178,8 +182,19 @@ class SimDeterminismTest {
                      "engine_config": {"parallel": 4, "ngl": 99, "threads": 6}}
                   ]
                 }
-                """.formatted(trace.toString().replace("\\", "\\\\"), policy, pool.slowId(), pool.fastId());
+                """.formatted(trace.toString().replace("\\", "\\\\"), sha256(trace), policy,
+                        pool.slowId(), pool.fastId());
         Files.writeString(path, json);
         return path;
+    }
+
+    /** SimApp replays a trace only when its SHA-256 is the one the manifest names. */
+    private static String sha256(Path file) throws IOException {
+        try {
+            return HexFormat.of().formatHex(
+                    MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(file)));
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
     }
 }

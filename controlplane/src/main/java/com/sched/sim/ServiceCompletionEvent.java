@@ -41,9 +41,11 @@ public class ServiceCompletionEvent extends SimulationEvent {
     public void execute() {
         server.complete(scheduledTimeNs, des, sampler, store, veil, logger, runId);
 
+        // A simulated completion updates state inside this same event, so there is no lag
+        // to observe: 0 is exact here, not an unmeasured value (0.4).
         if (logger != null) {
             logger.logRecord(new CompletionObservedRecord(
-                    "completion_observed", runId, request.req().reqId(), server.getNodeId(), "completion_rpc", 0L));
+                    "completion_observed", runId, request.req().reqId(), server.getNodeId(), "sim_completion", 0L));
         }
 
         long queueWaitNs = startNs - request.admitNs();

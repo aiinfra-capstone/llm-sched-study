@@ -60,6 +60,17 @@ public class LiveSchedulerApp {
         double stalenessS = manifest.stalenessS() != null ? manifest.stalenessS() : 0.0;
         long stalenessNs = (long)(stalenessS * 1_000_000_000L);
         
+        // The seed is part of what the run was, so it comes from the manifest or the run does
+        // not start. A default here made every seedless campaign share one tie-break stream
+        // without the manifest saying so (3.2).
+        Object seedValue = manifest.config() != null ? manifest.config().get("seed") : null;
+        if (!(seedValue instanceof Number seedNumber)) {
+            System.err.println("Manifest " + manifestPath + " has no config.seed; refusing to start");
+            System.exit(2);
+            return;
+        }
+        int rngSeed = seedNumber.intValue();
+
         Clock sysClock = () -> System.nanoTime();
         InMemoryStateStore store = new InMemoryStateStore();
         StalenessVeil veil = new StalenessVeil(stalenessNs, sysClock);
@@ -109,31 +120,40 @@ public class LiveSchedulerApp {
         // directory rather than in whatever directory the process happened to start in.
         DecisionLogger logger = new DecisionLogger(logDir, runId);
 
-        int rngSeed = 42;
-        if (manifest.config() != null && manifest.config().containsKey("seed")) {
-            rngSeed = ((Number) manifest.config().get("seed")).intValue();
-        }
 
         // Build worker channels: --worker node_id=host:port
         Map<String, io.grpc.ManagedChannel> workerChannels = new HashMap<>();
         Map<String, Integer> workerCapacity = new HashMap<>();
         for (String w : workerArgs) {
+            // A malformed endpoint refuses the run (3.7). Skipping it left a pool node the
+            // policy could choose but no channel could reach, and every dispatch to it failed.
             String[] parts = w.split("=", 2);
-            if (parts.length != 2) {
+            int colon = parts.length == 2 ? parts[1].lastIndexOf(':') : -1;
+            if (parts.length != 2 || parts[0].isEmpty() || colon <= 0) {
                 System.err.println("Invalid --worker arg, expected node_id=host:port: " + w);
-                continue;
+                System.exit(2);
+                return;
             }
             String nodeId = parts[0];
-            String target = parts[1];
-            String host;
+            String host = parts[1].substring(0, colon);
             int wport;
-            int colon = target.lastIndexOf(':');
-            if (colon < 0) {
-                host = target;
-                wport = 50061;
-            } else {
-                host = target.substring(0, colon);
-                wport = Integer.parseInt(target.substring(colon + 1));
+            try {
+                wport = Integer.parseInt(parts[1].substring(colon + 1));
+            } catch (NumberFormatException e) {
+                wport = -1;
+            }
+            if (wport <= 0 || wport > 65535) {
+                System.err.println("Invalid port in --worker arg: " + w);
+                System.exit(2);
+                return;
+            }
+            boolean inPool = manifest.nodes().stream()
+                    .anyMatch(n -> n.nodeId().equals(nodeId) && "pool".equals(n.role()));
+            if (!inPool || workerChannels.containsKey(nodeId)) {
+                System.err.println("--worker " + nodeId + " is "
+                    + (inPool ? "given twice" : "not a pool node in the manifest"));
+                System.exit(2);
+                return;
             }
             io.grpc.ManagedChannel ch = io.grpc.ManagedChannelBuilder.forAddress(host, wport).usePlaintext().build();
             workerChannels.put(nodeId, ch);
@@ -153,6 +173,27 @@ public class LiveSchedulerApp {
             System.out.println("No --worker endpoints given; scheduler will log decisions but not forward Execute (fixture mode)");
         }
 
+        // Announce the run to every worker before the first dispatch (3.7), so each opens
+        // this run's log and drops whatever the previous run left running, rather than doing
+        // it on the first Execute. A worker that cannot be told refuses the run.
+        com.sched.v1.BeginRun begin = com.sched.v1.BeginRun.newBuilder()
+                .setRunId(runId)
+                .setConfigHash(manifest.configHash() != null ? manifest.configHash() : "")
+                .setTraceSha256(manifest.traceSha256() != null ? manifest.traceSha256() : "")
+                .build();
+        for (Map.Entry<String, io.grpc.ManagedChannel> e : workerChannels.entrySet()) {
+            try {
+                com.sched.v1.WorkerGrpc.newBlockingStub(e.getValue())
+                        .withDeadlineAfter(10, java.util.concurrent.TimeUnit.SECONDS)
+                        .begin(begin);
+            } catch (io.grpc.StatusRuntimeException ex) {
+                System.err.println("BeginRun to " + e.getKey() + " failed: " + ex.getStatus());
+                for (io.grpc.ManagedChannel ch : workerChannels.values()) ch.shutdownNow();
+                System.exit(1);
+                return;
+            }
+        }
+
         SchedulerGrpcService service = new SchedulerGrpcService(
                 store, veil, filter, policy, logger, runId, manifest.policy(), stalenessS, rngSeed, workerChannels, workerCapacity);
 
@@ -166,6 +207,7 @@ public class LiveSchedulerApp {
             System.out.println("Shutting down scheduler");
             server.shutdown();
             for (io.grpc.ManagedChannel ch : workerChannels.values()) ch.shutdown();
+            service.writeHeartbeatSummaries("shutdown");
             logger.close();
         }));
         server.awaitTermination();

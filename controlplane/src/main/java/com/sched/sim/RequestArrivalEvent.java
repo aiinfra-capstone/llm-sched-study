@@ -99,12 +99,16 @@ public class RequestArrivalEvent extends SimulationEvent {
                 server.admit(traceReq, scheduledTimeNs, des, sampler, store, veil, logger, runId);
             }
         } else {
+            // No admissible node: the same C-4 record the live client writes when the
+            // scheduler refuses a dispatch (replay.py), so a drop reads alike in both vehicles.
+            // The refusal is immediate in simulated time, so e2e is 0 and no token came back.
+            des.recordDrop(traceReq.arrivalOffsetS());
             ClientLogger clientLogger = des.getClientLogger();
             if (clientLogger != null) {
                 long e2e = scheduledTimeNs - (long)(traceReq.arrivalOffsetS() * 1_000_000_000L);
                 clientLogger.logRecord(new ClientLogger.ClientRecord(
-                    runId, traceReq.reqId(), traceReq.arrivalOffsetS(), traceReq.arrivalOffsetS(), 0.0, e2e, "dropped",
-                    traceReq.outputLen(), null, null, 0L
+                    runId, traceReq.reqId(), traceReq.arrivalOffsetS(), traceReq.arrivalOffsetS(), 0.0, e2e,
+                    "engine_error", 0, "", "", 0L
                 ));
             }
         }

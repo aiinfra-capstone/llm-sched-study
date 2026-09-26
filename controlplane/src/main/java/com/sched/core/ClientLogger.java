@@ -6,19 +6,23 @@ import java.io.FileWriter;
 import java.io.PrintWriter;
 import java.io.IOException;
 import java.io.File;
+import java.io.UncheckedIOException;
+import com.fasterxml.jackson.core.JsonProcessingException;
 
 public class ClientLogger implements AutoCloseable {
     private final PrintWriter pw;
+    private final File file;
     private final ObjectMapper mapper = new ObjectMapper();
 
+    /** @throws UncheckedIOException when the log file cannot be opened (3.6). */
     public ClientLogger(String outputDir, String runId) {
+        File dir = new File(outputDir);
+        if (!dir.exists()) dir.mkdirs();
+        this.file = new File(dir, "client_" + runId + ".jsonl");
         try {
-            File dir = new File(outputDir);
-            if (!dir.exists()) dir.mkdirs();
-            File f = new File(dir, "client_" + runId + ".jsonl");
-            this.pw = new PrintWriter(new FileWriter(f, false)); // false = overwrite
+            this.pw = new PrintWriter(new FileWriter(file, false)); // false = overwrite
         } catch (IOException e) {
-            throw new RuntimeException(e);
+            throw new UncheckedIOException("cannot open the client log " + file, e);
         }
     }
 
@@ -37,12 +41,13 @@ public class ClientLogger implements AutoCloseable {
     ) {}
 
     public void logRecord(ClientRecord record) {
+        String line;
         try {
-            pw.println(mapper.writeValueAsString(record));
-            pw.flush();
-        } catch (Exception e) {
-            e.printStackTrace();
+            line = mapper.writeValueAsString(record);
+        } catch (JsonProcessingException e) {
+            throw new UncheckedIOException(e);
         }
+        DecisionLogger.writeLine(pw, line, file);
     }
 
     public void close() {

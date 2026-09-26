@@ -62,7 +62,7 @@ public class SimApp {
             }
             Map<String, String> resolvedSnapshots = new HashMap<>(manifest.costModelSnapshots());
 
-            List<TraceRequest> rawReqs = TraceParser.parse(trc);
+            List<TraceRequest> rawReqs = TraceParser.parseVerified(trc, manifest.traceSha256());
 
             // §5: anchors reach operating points by dividing offsets by rate_scale (1.15 for light)
             double rsTmp = 1.0;
@@ -89,11 +89,14 @@ public class SimApp {
             StalenessVeil vl = new StalenessVeil(stalenessNs, clk);
             AdmissionFilter flt = new AdmissionFilter(admBounds);
             
-            // Seed config and RNG (issue #21 item 1: separate streams per purpose)
-            int rngSeed = 42;
-            if (manifest.config() != null && manifest.config().containsKey("seed")) {
-                rngSeed = ((Number) manifest.config().get("seed")).intValue();
+            // Seed config and RNG (issue #21 item 1: separate streams per purpose). The seed
+            // is required: a default made a replay of a seedless run use a stream the hardware
+            // manifest never recorded (3.2).
+            Object seedValue = manifest.config() != null ? manifest.config().get("seed") : null;
+            if (!(seedValue instanceof Number seedNumber)) {
+                throw new IllegalArgumentException("manifest " + manifestPath + " has no config.seed");
             }
+            int rngSeed = seedNumber.intValue();
             Random policyRng = new Random(rngSeed);
             // Per-node service noise streams so policy contrasts use common
             // random numbers (two SimApp runs with same seed and different
@@ -193,57 +196,70 @@ public class SimApp {
             wLog.close();
             cLog.close();
 
-            // Emit sim manifest (vehicle: simulator, own run_id/git_shas/validity, no inherited hardware ids)
-            try {
-                String simSha = getGitSha();
-                Map<String, String> newGitShas = new HashMap<>();
-                if (manifest.gitShas() != null) newGitShas.putAll(manifest.gitShas());
-                // sim describe the sim vehicle; fallback to current sha
-                newGitShas.put("sim", simSha);
-                newGitShas.putIfAbsent("worker", simSha);
-                newGitShas.putIfAbsent("scheduler", simSha);
-                newGitShas.putIfAbsent("harness", simSha);
+            // The sim manifest (3.2). Validity is what this run did: a request no node could
+            // admit is a drop, counted over the measurement window as the replay counts it.
+            // Send lag, engine restarts and co-location are 0 by construction in the DES, and
+            // an uncalibrated shape never reaches here because SimNodeServer throws on it.
+            // There are no heartbeats, so heartbeat_gaps is null and named as unmeasured.
+            double warmupS = manifest.warmupS() != null ? manifest.warmupS() : 0.0;
+            int dropped = des.droppedFrom(warmupS);
+            Map<String, Object> validity = new java.util.LinkedHashMap<>();
+            validity.put("max_send_lag_ms", 0.0);
+            validity.put("send_lag_violations", 0);
+            validity.put("dropped_requests", dropped);
+            validity.put("heartbeat_gaps", null);
+            validity.put("engine_restarts", 0);
+            validity.put("valid", dropped == 0);
+            validity.put("colocated_nodes", 0);
+            validity.put("unmeasured", List.of("heartbeat_gaps"));
 
-                Map<String, Object> newValidity = new HashMap<>();
-                newValidity.put("max_send_lag_ms", 0.0);
-                newValidity.put("send_lag_violations", 0);
-                newValidity.put("dropped_requests", 0);
-                newValidity.put("heartbeat_gaps", 0);
-                newValidity.put("engine_restarts", 0);
-                newValidity.put("valid", true);
-                newValidity.put("colocated_nodes", 0);
-
-                Manifest simManifest = new Manifest(
-                    rId,
-                    System.currentTimeMillis() / 1000L,
-                    "simulator",
-                    manifest.configHash(),
-                    manifest.config(),
-                    manifest.tracePath(),
-                    manifest.traceSha256(),
-                    manifest.policy(),
-                    manifest.lambdaValue(),
-                    manifest.stalenessS(),
-                    manifest.warmupS(),
-                    manifest.durationS(),
-                    resolvedSnapshots,
-                    manifest.nodes(),
-                    newGitShas,
-                    newValidity,
-                    null,
-                    manifest.transportOverhead()
-                );
-                ObjectMapper mapper = new ObjectMapper();
-                mapper.setSerializationInclusion(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL);
-                mapper.writerWithDefaultPrettyPrinter().writeValue(new File(dir, "manifest.json"), simManifest);
-            } catch (Exception me) {
-                System.err.println("Failed to write sim manifest: " + me.getMessage());
-                me.printStackTrace();
-                // fallback: write original without extra keys via NON_NULL mapper
-                ObjectMapper mapper = new ObjectMapper();
-                mapper.setSerializationInclusion(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL);
-                mapper.writeValue(new File(dir, "manifest.json"), manifest);
+            // Every component that produced this run is this checkout: the scheduler core and
+            // the simulator ran, and no worker or harness did. The hardware run's own shas stay
+            // in its manifest, which this run_id names.
+            String sha = gitOutput("rev-parse", "HEAD");
+            if (sha == null || !sha.matches("[0-9a-f]{40}")) {
+                System.err.println("Warning: git rev-parse HEAD failed, recording the simulator sha as sim-unknown");
+                sha = "sim-unknown";
             }
+            Map<String, String> gitShas = new java.util.LinkedHashMap<>();
+            for (String c : List.of("worker", "scheduler", "harness", "sim")) gitShas.put(c, sha);
+
+            Manifest simManifest = new Manifest(
+                rId,
+                System.currentTimeMillis() / 1000L,
+                "simulator",
+                manifest.configHash(),
+                manifest.config(),
+                manifest.tracePath(),
+                manifest.traceSha256(),
+                manifest.policy(),
+                manifest.lambdaValue(),
+                manifest.stalenessS(),
+                manifest.warmupS(),
+                manifest.durationS(),
+                resolvedSnapshots,
+                manifest.nodes(),
+                gitShas,
+                validity,
+                null,
+                manifest.transportOverhead()
+            );
+            ObjectMapper mapper = new ObjectMapper();
+            mapper.setSerializationInclusion(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> out = mapper.convertValue(simManifest, java.util.LinkedHashMap.class);
+            // convertValue drops the null heartbeat_gaps with the other nulls; it is a value here.
+            out.put("validity", validity);
+            String porcelain = gitOutput("status", "--porcelain");
+            if (porcelain != null) {
+                Map<String, Boolean> dirty = new java.util.LinkedHashMap<>();
+                for (String c : gitShas.keySet()) dirty.put(c, !porcelain.isEmpty());
+                out.put("git_dirty", dirty);
+            }
+            // Written with a mapper that keeps nulls: NON_NULL drops null map values too, and
+            // C-6 requires the heartbeat_gaps key. convertValue has already dropped every other
+            // null, so this one is the only null the file carries.
+            writeAtomically(new ObjectMapper(), new File(dir, "manifest.json"), out);
 
         } catch (Exception e) {
             System.err.println("Error during simulation: " + e.getMessage());
@@ -256,16 +272,34 @@ public class SimApp {
         }
     }
 
-    private static String getGitSha() {
+    /**
+     * Write through a temporary file and a rename, so a failure leaves no manifest at all
+     * rather than a partial one. The caller's catch then exits non-zero. Copying the hardware
+     * manifest here, as a fallback once did, made a failed replay look like a hardware run.
+     */
+    private static void writeAtomically(ObjectMapper mapper, File target, Object value)
+            throws java.io.IOException {
+        File tmp = new File(target.getParentFile(), target.getName() + ".tmp");
         try {
-            Process p = new ProcessBuilder("git", "rev-parse", "HEAD").redirectErrorStream(true).start();
+            mapper.writerWithDefaultPrettyPrinter().writeValue(tmp, value);
+            java.nio.file.Files.move(tmp.toPath(), target.toPath(),
+                    java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        } finally {
+            java.nio.file.Files.deleteIfExists(tmp.toPath());
+        }
+    }
+
+    /** Trimmed stdout of a git command, or null when git is missing or fails. */
+    private static String gitOutput(String... args) {
+        try {
+            List<String> cmd = new java.util.ArrayList<>(List.of("git"));
+            cmd.addAll(List.of(args));
+            Process p = new ProcessBuilder(cmd).start();
             String out = new String(p.getInputStream().readAllBytes()).trim();
-            p.waitFor();
-            if (out.matches("[0-9a-f]{7,40}")) return out.substring(0, 7);
-        } catch (Exception ignored) {}
-        // The sha stamps which simulator produced the run, so a run carrying the fallback
-        // cannot be traced back to code. Say so where the operator will see it.
-        System.err.println("Warning: git rev-parse HEAD failed, recording the simulator sha as sim-unknown");
-        return "sim-unknown";
+            return p.waitFor() == 0 ? out : null;
+        } catch (Exception e) {
+            return null;
+        }
     }
 }

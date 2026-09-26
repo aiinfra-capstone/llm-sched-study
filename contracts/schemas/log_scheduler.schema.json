@@ -2,8 +2,9 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/aiinfra-capstone/llm-sched-study/contracts/schemas/log_scheduler.schema.json",
   "title": "C-4 — scheduler_{run_id}.jsonl (Aditya, B)",
-  "description": "Two record types, discriminated by `type`.\n\nThe `candidates` array is F-3 in full. It is what lets you compute routing-error rate post hoc — for each dispatch, whether an alternative node would have finished materially sooner — and, critically, whether the error came from a BAD POLICY or a STALE ESTIMATE. Without estimate_age_ms per candidate, H3 is unanalysable.",
-  "oneOf": [{ "$ref": "#/$defs/decision" }, { "$ref": "#/$defs/completion_observed" }],
+  "description": "Three record types, discriminated by `type`.\n\nThe `candidates` array is F-3 in full. It is what lets you compute routing-error rate post hoc — for each dispatch, whether an alternative node would have finished materially sooner — and, critically, whether the error came from a BAD POLICY or a STALE ESTIMATE. Without estimate_age_ms per candidate, H3 is unanalysable.",
+  "oneOf": [{ "$ref": "#/$defs/decision" }, { "$ref": "#/$defs/completion_observed" },
+            { "$ref": "#/$defs/heartbeat_summary" }],
   "$defs": {
     "decision": {
       "type": "object",
@@ -55,9 +56,28 @@
         "run_id": { "type": "string" },
         "req_id": { "type": "string" },
         "node_id": { "type": "string" },
-        "source": { "enum": ["completion_rpc", "heartbeat"] },
-        "observed_lag_ns": { "type": "integer",
-          "description": "Residual staleness floor. Measure and report it as a floor on achievable estimate freshness (§2 note 1)." }
+        "source": { "enum": ["completion_rpc", "heartbeat", "sim_completion"],
+          "description": "`completion_rpc`: a worker's ReportCompletion call on the live scheduler. `sim_completion`: a completion event inside the simulator. `heartbeat`: a completion learned from a heartbeat (no writer today)." },
+        "observed_lag_ns": { "type": "integer", "minimum": 0,
+          "description": "Residual staleness floor (§2 note 1). Live: the time from the completion RPC reaching the scheduler to the state update it causes, on the scheduler's clock, including any wait for a dispatch holding the state lock. The worker-to-scheduler transit is not in it, because the Completion carries no finish time on a clock both hosts share. Simulator: 0 by construction, since a simulated completion updates state in the same event. The two are not the same kind of number and are not compared." }
+      }
+    },
+    "heartbeat_summary": {
+      "type": "object",
+      "description": "One node's heartbeat sequence as the scheduler saw it (0.2). The first beat from a node sets the baseline, since the worker's emitter outlives each run's scheduler. A node that sent no beat has no record.",
+      "required": ["type", "run_id", "node_id", "last_seq", "missed_beats", "seq_regressions", "at"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "heartbeat_summary" },
+        "run_id": { "type": "string" },
+        "node_id": { "type": "string" },
+        "last_seq": { "type": "integer", "minimum": 0 },
+        "missed_beats": { "type": "integer", "minimum": 0,
+          "description": "Sum of (seq - last - 1) over every forward jump in seq." },
+        "seq_regressions": { "type": "integer", "minimum": 0,
+          "description": "Beats whose seq was at or below the last one: the worker's emitter restarted." },
+        "at": { "enum": ["end_run", "shutdown"],
+          "description": "When the record was written. The live scheduler has no EndRun of its own and writes at shutdown." }
       }
     }
   }

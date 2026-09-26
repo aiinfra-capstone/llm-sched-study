@@ -5,6 +5,16 @@ import com.sched.core.models.CostModelSnapshot.CostEntry;
 import java.util.Map;
 import java.util.Random;
 
+/**
+ * Service times for the simulator, drawn from the C-3 cost model.
+ *
+ * <p>The noise model is i.i.d. (0.3): one lognormal multiplier per request,
+ * {@code exp(sigma * Z - sigma^2 / 2)} with Z standard normal, so its mean is 1, and sigma
+ * from the snapshot's {@code stochastic.sigma}. Draws are independent across requests.
+ * There is no autocorrelation: {@code stochastic.autocorr_time_s} is deliberately not read.
+ * K6 found no drift the instrument could resolve on any class in the pool, so an i.i.d.
+ * model is what was measured. With {@code --deterministic} the multiplier is 1.
+ */
 public class ServiceSampler {
     private final Map<String, CostModelSnapshot> snaps;
     private final Random rng;
@@ -35,27 +45,7 @@ public class ServiceSampler {
     public double getMeanMs(String nId, int pLen, int oLen, int conc) {
         CostModelSnapshot snap = snaps.get(nId);
         if (snap == null) return -1;
-        java.util.List<CostEntry> candidates = new java.util.ArrayList<>();
-        for (CostEntry e : snap.entries()) {
-            if (pLen >= e.promptBucket().get(0) && pLen <= e.promptBucket().get(1) &&
-                    oLen >= e.outputBucket().get(0) && oLen <= e.outputBucket().get(1)) {
-                candidates.add(e);
-            }
-        }
-        if (candidates.isEmpty()) return -1;
-        candidates.sort(java.util.Comparator.comparingInt(CostEntry::concurrency));
-        for (CostEntry e : candidates) if (e.concurrency() == conc) return e.serviceMsMean();
-        if (conc <= candidates.get(0).concurrency()) return candidates.get(0).serviceMsMean();
-        if (conc >= candidates.get(candidates.size() - 1).concurrency()) return candidates.get(candidates.size() - 1).serviceMsMean();
-        CostEntry lower = null, upper = null;
-        for (int i = 0; i < candidates.size() - 1; i++) {
-            if (candidates.get(i).concurrency() < conc && conc < candidates.get(i + 1).concurrency()) {
-                lower = candidates.get(i); upper = candidates.get(i + 1); break;
-            }
-        }
-        if (lower == null || upper == null) return candidates.get(0).serviceMsMean();
-        double fraction = (double)(conc - lower.concurrency()) / (double)(upper.concurrency() - lower.concurrency());
-        return lower.serviceMsMean() + fraction * (upper.serviceMsMean() - lower.serviceMsMean());
+        return snap.meanServiceMs(pLen, oLen, conc);
     }
 
     /**

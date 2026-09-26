@@ -38,15 +38,22 @@ public final class Policies {
             case "wjsq"            -> new WJSQ();
             case "threshold"       -> new Threshold(thresholdT, rrCounter);
             case "ect"             -> {
-                String mode = ECT.MODE_KNOWN;
-                int prior = 16;
-                if (config != null) {
-                    if (config.get("ect_mode") instanceof String s) mode = s;
-                    else if (config.get("p6_mode") instanceof String s) mode = s;
-                    if (config.get("output_len_prior") instanceof Number n) prior = n.intValue();
-                    else if (config.get("ect_prior_output_len") instanceof Number n) prior = n.intValue();
+                // Stated in the run's config, never defaulted here (3.5). The older key names
+                // are still read so a manifest recorded under them replays as it ran.
+                Map<String, Object> c = config != null ? config : Map.of();
+                Object mode = c.containsKey("ect_mode") ? c.get("ect_mode") : c.get("p6_mode");
+                Object prior = c.containsKey("output_len_prior")
+                        ? c.get("output_len_prior") : c.get("ect_prior_output_len");
+                if (!(mode instanceof String m)) {
+                    throw new IllegalArgumentException(
+                        "policy 'ect' needs config.ect_mode ('known' or 'unknown'), got " + mode);
                 }
-                yield new ECT(snaps, capacities, mode, prior);
+                if (prior != null && !(prior instanceof Number)) {
+                    throw new IllegalArgumentException(
+                        "config.output_len_prior must be a number, got " + prior);
+                }
+                yield new ECT(snaps, capacities, m,
+                        prior == null ? null : ((Number) prior).intValue());
             }
             default -> throw new IllegalArgumentException(
                 "policy '" + name + "' is not one of the eight C-6 names: round_robin, "

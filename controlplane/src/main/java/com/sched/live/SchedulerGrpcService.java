@@ -17,6 +17,7 @@ import com.sched.core.interfaces.StateStore.NodeView;
 import com.sched.core.models.SchedulerLogRecords.Candidate;
 import com.sched.core.models.SchedulerLogRecords.DecisionRecord;
 import com.sched.core.models.SchedulerLogRecords.CompletionObservedRecord;
+import com.sched.core.models.SchedulerLogRecords.HeartbeatSummaryRecord;
 import java.util.List;
 import java.util.Optional;
 import java.util.Random;
@@ -38,7 +39,15 @@ public class SchedulerGrpcService extends SchedulerGrpc.SchedulerImplBase {
     private final double stalenessParamS;
     private final java.util.Map<String, io.grpc.ManagedChannel> workerChannels;
     private final java.util.Map<String, Integer> workerCapacity;
-    private final java.util.Map<String, AtomicLong> inflight;
+
+    /**
+     * Per node: {last seq, missed beats, seq regressions}, in arrival order of the beats.
+     * The first beat from a node sets the baseline and counts nothing, because the worker's
+     * emitter lives across runs while each run gets its own scheduler, so the first seq this
+     * process sees is rarely 1. Guarded by itself, not by {@link #stateLock}: counting beats
+     * never touches queue state.
+     */
+    private final java.util.Map<String, long[]> heartbeatSeq = new java.util.TreeMap<>();
 
     /**
      * Guards every read and write of queue state: a dispatch's read, decision and admission,
@@ -94,10 +103,6 @@ public class SchedulerGrpcService extends SchedulerGrpc.SchedulerImplBase {
         this.stalenessParamS = stalenessParamS;
         this.workerChannels = workerChannels != null ? new java.util.HashMap<>(workerChannels) : new java.util.HashMap<>();
         this.workerCapacity = workerCapacity != null ? new java.util.HashMap<>(workerCapacity) : new java.util.HashMap<>();
-        this.inflight = new java.util.HashMap<>();
-        for (String n : this.workerChannels.keySet()) {
-            this.inflight.put(n, new AtomicLong(0));
-        }
     }
 
     @Override
@@ -105,6 +110,7 @@ public class SchedulerGrpcService extends SchedulerGrpc.SchedulerImplBase {
         return new StreamObserver<Heartbeat>() {
             @Override
             public void onNext(Heartbeat beat) {
+                countSeq(beat.getNodeId(), beat.getSeq());
                 // Capability stays on the C-3 measurement the scheduler was seeded with.
                 // The heartbeat refreshes queue depth and inflight only. Taking the live
                 // throughput EWMA here would weight static_weighted and wjsq by a live
@@ -144,6 +150,36 @@ public class SchedulerGrpcService extends SchedulerGrpc.SchedulerImplBase {
                 responseObserver.onCompleted();
             }
         };
+    }
+
+    private void countSeq(String nodeId, long seq) {
+        synchronized (heartbeatSeq) {
+            long[] t = heartbeatSeq.get(nodeId);
+            if (t == null) {
+                heartbeatSeq.put(nodeId, new long[] {seq, 0L, 0L});
+                return;
+            }
+            if (seq > t[0] + 1) t[1] += seq - t[0] - 1;
+            else if (seq <= t[0]) t[2] += 1;
+            t[0] = seq;
+        }
+    }
+
+    /**
+     * Write one {@code heartbeat_summary} record per node that sent a beat, to the scheduler
+     * log. The live scheduler has no EndRun of its own, so LiveSchedulerApp calls this from
+     * its shutdown hook with {@code at = "shutdown"}; the harness stops it with SIGTERM.
+     * A node that never sent a beat has no record, and the harness reads that as unmeasured.
+     */
+    public void writeHeartbeatSummaries(String at) {
+        if (logger == null) return;
+        synchronized (heartbeatSeq) {
+            for (java.util.Map.Entry<String, long[]> e : heartbeatSeq.entrySet()) {
+                long[] t = e.getValue();
+                logger.logRecord(new HeartbeatSummaryRecord(
+                        "heartbeat_summary", runId, e.getKey(), t[0], t[1], t[2], at));
+            }
+        }
     }
 
     @Override
@@ -272,7 +308,6 @@ public class SchedulerGrpcService extends SchedulerGrpc.SchedulerImplBase {
         // heartbeat, up to a second old at staleness 0, while the DES pushes every admission
         // to both (SimNodeServer.updateStore).
         veil.updateNode(view);
-        if (inflight.containsKey(nodeId)) inflight.get(nodeId).incrementAndGet();
         return true;
     }
 
@@ -286,9 +321,6 @@ public class SchedulerGrpcService extends SchedulerGrpc.SchedulerImplBase {
         NodeView done = store.complete(nodeId, reqId, cap);
         if (done == null) return;
         veil.updateNode(done);
-        if (inflight.containsKey(nodeId)) {
-            inflight.get(nodeId).updateAndGet(v -> Math.max(0, v - 1));
-        }
     }
 
     @Override
@@ -297,6 +329,7 @@ public class SchedulerGrpcService extends SchedulerGrpc.SchedulerImplBase {
         // scheduler learns about completions only at the next heartbeat tick,
         // which is a second, uncontrolled staleness source sitting alongside
         // the one H3 injects on purpose.
+        long receivedNs = System.nanoTime();
         String nodeId = req.getNodeId();
         // A request from an earlier run can still finish after this scheduler has started
         // on the next one, since every run gets its own scheduler process. Its completion
@@ -310,12 +343,19 @@ public class SchedulerGrpcService extends SchedulerGrpc.SchedulerImplBase {
             responseObserver.onCompleted();
             return;
         }
+        long appliedNs;
         synchronized (stateLock) {
             completeLocked(nodeId, req.getReqId());
+            appliedNs = System.nanoTime();
         }
+        // The lag this scheduler can observe on its own clock: from the completion reaching
+        // it to the state update the policy will read, including any wait for a dispatch
+        // holding the lock (3.1). The worker-to-scheduler transit is not in it, since the
+        // Completion carries no finish time on a clock both hosts share.
         if (logger != null) {
             logger.logRecord(new CompletionObservedRecord(
-                    "completion_observed", runId, req.getReqId(), nodeId, "completion_rpc", 0L));
+                    "completion_observed", runId, req.getReqId(), nodeId, "completion_rpc",
+                    appliedNs - receivedNs));
         }
         responseObserver.onNext(ExecuteAck.newBuilder().setReqId(req.getReqId()).setQueued(false).build());
         responseObserver.onCompleted();

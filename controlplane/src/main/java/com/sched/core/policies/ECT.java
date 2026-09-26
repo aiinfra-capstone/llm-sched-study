@@ -1,7 +1,5 @@
 package com.sched.core.policies;
 
-import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -30,8 +28,12 @@ import com.sched.v1.DispatchRequest;
  * inflight+1, clamped to the grid). When the node has a free slot the request starts now
  * and completes in {@code service}. When it is full ({@code inflight >= capacity}) the
  * request queues behind {@code queueDepth} and drains at {@code capacity}-parallel rate:
- * {@code service + (queueDepth+1)*service/capacity}. Capacity defaults to 4 (every
- * measured run uses {@code --parallel 4}) when the launcher did not provide it.
+ * {@code service + (queueDepth+1)*service/capacity}, where capacity is the node's slot
+ * count from the manifest. A priced node without one is refused at construction.
+ *
+ * <p>Nothing about the model is defaulted. The mode ({@code known} or {@code unknown}) comes
+ * from the run's config, and in {@code unknown} mode so does the output-length prior, so a
+ * manifest always states what ECT assumed.
  *
  * <p>Missing cell falls back to {@code (pending+1) * output_len / capability}, in
  * milliseconds, so an incomplete grid degrades to the scalar estimate rather than refusing
@@ -46,15 +48,33 @@ public class ECT implements Policy {
     private final String mode;
     private final int priorOutputLen;
 
-    public ECT(Map<String, CostModelSnapshot> snaps, Map<String, Integer> capacities) {
-        this(snaps, capacities, MODE_KNOWN, 16);
-    }
-
-    public ECT(Map<String, CostModelSnapshot> snaps, Map<String, Integer> capacities, String mode, int priorOutputLen) {
+    /**
+     * @param mode {@link #MODE_KNOWN} or {@link #MODE_UNKNOWN}; anything else is refused
+     * @param priorOutputLen the output length assumed in unknown mode, or null in known mode
+     * @throws IllegalArgumentException when the mode is not one of the two, unknown mode has
+     *     no positive prior, or a node with a snapshot has no positive capacity
+     */
+    public ECT(Map<String, CostModelSnapshot> snaps, Map<String, Integer> capacities, String mode,
+            Integer priorOutputLen) {
         this.snaps = snaps != null ? snaps : Map.of();
         this.capacities = capacities != null ? capacities : Map.of();
-        this.mode = MODE_UNKNOWN.equalsIgnoreCase(mode) ? MODE_UNKNOWN : MODE_KNOWN;
-        this.priorOutputLen = priorOutputLen > 0 ? priorOutputLen : 16;
+        if (!MODE_KNOWN.equals(mode) && !MODE_UNKNOWN.equals(mode)) {
+            throw new IllegalArgumentException(
+                "ect_mode must be '" + MODE_KNOWN + "' or '" + MODE_UNKNOWN + "', got " + mode);
+        }
+        this.mode = mode;
+        if (MODE_UNKNOWN.equals(mode) && (priorOutputLen == null || priorOutputLen <= 0)) {
+            throw new IllegalArgumentException(
+                "ect_mode 'unknown' needs a positive output_len_prior, got " + priorOutputLen);
+        }
+        this.priorOutputLen = priorOutputLen != null ? priorOutputLen : 0;
+        for (String nodeId : this.snaps.keySet()) {
+            Integer cap = this.capacities.get(nodeId);
+            if (cap == null || cap <= 0) {
+                throw new IllegalArgumentException(
+                    "ECT prices " + nodeId + " but has no slot count for it (capacity " + cap + ")");
+            }
+        }
     }
 
     @Override
@@ -76,8 +96,7 @@ public class ECT implements Policy {
 
     double predictedMs(NodeView n, int promptLen, int outputLen) {
         CostModelSnapshot snap = snaps.get(n.nodeId());
-        int cap = Math.max(1, capacities.getOrDefault(n.nodeId(), 4));
-        double service = meanMs(snap, promptLen, outputLen, n.inflight() + 1);
+        double service = snap == null ? -1 : snap.meanServiceMs(promptLen, outputLen, n.inflight() + 1);
         if (service < 0) {
             // A predicted completion in milliseconds, like every other score this policy
             // returns: the request waits out everything on the node and then decodes its own
@@ -88,39 +107,10 @@ public class ECT implements Policy {
             double capability = Math.max(n.capabilityTokS(), 0.001);
             return (pending + 1.0) * Math.max(outputLen, 1) / capability * 1000.0;
         }
+        int cap = capacities.get(n.nodeId());
         if (n.inflight() < cap) {
             return service;
         }
         return service + (n.queueDepth() + 1) * service / cap;
-    }
-
-    static double meanMs(CostModelSnapshot snap, int pLen, int oLen, int conc) {
-        if (snap == null) return -1;
-        List<CostModelSnapshot.CostEntry> candidates = new ArrayList<>();
-        for (CostModelSnapshot.CostEntry e : snap.entries()) {
-            if (pLen >= e.promptBucket().get(0) && pLen <= e.promptBucket().get(1)
-                    && oLen >= e.outputBucket().get(0) && oLen <= e.outputBucket().get(1)) {
-                candidates.add(e);
-            }
-        }
-        if (candidates.isEmpty()) return -1;
-        candidates.sort(Comparator.comparingInt(CostModelSnapshot.CostEntry::concurrency));
-        for (CostModelSnapshot.CostEntry e : candidates) {
-            if (e.concurrency() == conc) return e.serviceMsMean();
-        }
-        if (conc <= candidates.get(0).concurrency()) return candidates.get(0).serviceMsMean();
-        if (conc >= candidates.get(candidates.size() - 1).concurrency())
-            return candidates.get(candidates.size() - 1).serviceMsMean();
-        CostModelSnapshot.CostEntry lower = null, upper = null;
-        for (int i = 0; i < candidates.size() - 1; i++) {
-            if (candidates.get(i).concurrency() < conc && conc < candidates.get(i + 1).concurrency()) {
-                lower = candidates.get(i);
-                upper = candidates.get(i + 1);
-                break;
-            }
-        }
-        if (lower == null || upper == null) return candidates.get(0).serviceMsMean();
-        double f = (double) (conc - lower.concurrency()) / (double) (upper.concurrency() - lower.concurrency());
-        return lower.serviceMsMean() + f * (upper.serviceMsMean() - lower.serviceMsMean());
     }
 }

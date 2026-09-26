@@ -11,7 +11,6 @@ import com.sched.core.interfaces.StateStore.NodeView;
 import com.sched.v1.DispatchRequest;
 import java.util.List;
 import java.util.Random;
-import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -26,7 +25,7 @@ class StaticWeightedWRRTest {
     @Test
     @DisplayName("traffic splits in proportion to capability, deterministically")
     void shareIsProportional() {
-        StaticWeightedWRR policy = new StaticWeightedWRR(new AtomicInteger(0));
+        StaticWeightedWRR policy = new StaticWeightedWRR();
         List<NodeView> nodes = List.of(node("slow", 0, 0, 10.0), node("fast", 0, 0, 90.0));
 
         int fast = 0;
@@ -41,8 +40,8 @@ class StaticWeightedWRRTest {
     @DisplayName("two instances from the same start produce the same sequence")
     void sequenceIsReproducible() {
         List<NodeView> nodes = List.of(node("slow", 0, 0, 10.0), node("fast", 0, 0, 90.0));
-        StaticWeightedWRR first = new StaticWeightedWRR(new AtomicInteger(0));
-        StaticWeightedWRR second = new StaticWeightedWRR(new AtomicInteger(0));
+        StaticWeightedWRR first = new StaticWeightedWRR();
+        StaticWeightedWRR second = new StaticWeightedWRR();
 
         for (int i = 0; i < 50; i++) {
             String a = first.choose(ANY, nodes, 0L, new Random(999)).chosen().orElseThrow();
@@ -54,7 +53,7 @@ class StaticWeightedWRRTest {
     @Test
     @DisplayName("the score is capability, queue ignored")
     void scoreIsCapability() {
-        StaticWeightedWRR policy = new StaticWeightedWRR(new AtomicInteger(0));
+        StaticWeightedWRR policy = new StaticWeightedWRR();
         Policy.Choice choice = policy.choose(
                 ANY, List.of(node("a", 500, 500, 42.0)), 0L, new Random(1));
 
@@ -64,7 +63,7 @@ class StaticWeightedWRRTest {
     @Test
     @DisplayName("a deterministic choice reports no draw")
     void noDrawIsReported() {
-        StaticWeightedWRR policy = new StaticWeightedWRR(new AtomicInteger(0));
+        StaticWeightedWRR policy = new StaticWeightedWRR();
         List<NodeView> nodes = List.of(node("slow", 0, 0, 10.0), node("fast", 0, 0, 90.0));
         assertNull(policy.choose(ANY, nodes, 0L, new Random(1)).tieBreakDraw());
     }
@@ -72,7 +71,7 @@ class StaticWeightedWRRTest {
     @Test
     @DisplayName("a pool that reports no capability at all still dispatches")
     void fallsBackWhenAllCapabilitiesAreZero() {
-        StaticWeightedWRR policy = new StaticWeightedWRR(new AtomicInteger(0));
+        StaticWeightedWRR policy = new StaticWeightedWRR();
         List<NodeView> nodes = List.of(node("a", 0, 0, 0.0), node("b", 0, 0, 0.0));
 
         Policy.Choice choice = policy.choose(ANY, nodes, 0L, new Random(1));
@@ -82,7 +81,7 @@ class StaticWeightedWRRTest {
     @Test
     @DisplayName("an empty admissible set chooses nothing")
     void emptyAdmissibleSetYieldsNoChoice() {
-        assertFalse(new StaticWeightedWRR(new AtomicInteger(0))
+        assertFalse(new StaticWeightedWRR()
                 .choose(ANY, List.of(), 0L, new Random(1)).chosen().isPresent());
     }
 }

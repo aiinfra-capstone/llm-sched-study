@@ -3,9 +3,11 @@ package com.sched.core.policies;
 import static com.sched.Fixtures.node;
 import static com.sched.Fixtures.snapshot;
 import static com.sched.Fixtures.splitCell;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.sched.core.models.CostModelSnapshot;
@@ -361,5 +363,33 @@ class ECTTest {
         double expectedMs = (pending + 1.0) * Math.max(outputLen, 1) / Math.max(capability, 0.001) * 1000.0;
         assertEquals(expectedMs, actualScore, 1e-6,
                 "fallback score must be (pending+1)*outputLen/capability*1000 ms exactly");
+    }
+
+    @Test
+    @DisplayName("nothing is defaulted: a bad mode, a missing prior or a missing slot count is refused")
+    void refusesWhatItOnceDefaulted() {
+        // J12. Each of these used to become known mode, a prior of 16 or a capacity of 4
+        // without a word, so a manifest could name one model and the run price another.
+        Map<String, CostModelSnapshot> snaps = Map.of("n1", SPLIT_SNAP);
+        Map<String, Integer> caps = Map.of("n1", 4);
+        for (String mode : java.util.Arrays.asList(null, "", "prior", "KNOWN")) {
+            IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                    () -> new ECT(snaps, caps, mode, 16), "mode " + mode);
+            assertTrue(e.getMessage().contains("ect_mode"), e.getMessage());
+        }
+        for (Integer prior : java.util.Arrays.asList(null, 0, -3)) {
+            assertThrows(IllegalArgumentException.class,
+                    () -> new ECT(snaps, caps, ECT.MODE_UNKNOWN, prior), "prior " + prior);
+        }
+        for (Map<String, Integer> noSlots : List.of(Map.<String, Integer>of(), Map.of("n1", 0))) {
+            IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                    () -> new ECT(snaps, noSlots, ECT.MODE_KNOWN, null), "capacities " + noSlots);
+            assertTrue(e.getMessage().contains("n1"), "the message names the node: " + e.getMessage());
+        }
+
+        // Known mode reads each request's own length and needs no prior; a node with no
+        // snapshot is priced by the scalar fallback and needs no slot count.
+        assertDoesNotThrow(() -> new ECT(snaps, caps, ECT.MODE_KNOWN, null));
+        assertDoesNotThrow(() -> new ECT(Map.of(), Map.of(), ECT.MODE_KNOWN, null));
     }
 }

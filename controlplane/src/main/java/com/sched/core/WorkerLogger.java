@@ -6,6 +6,8 @@ import java.io.FileWriter;
 import java.io.PrintWriter;
 import java.io.IOException;
 import java.io.File;
+import java.io.UncheckedIOException;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -37,21 +39,25 @@ public class WorkerLogger implements AutoCloseable {
 
     public void logRecord(WorkerRecord record) {
         PrintWriter pw = writers.computeIfAbsent(record.nodeId(), id -> {
+            File f = fileFor(id);
+            f.getParentFile().mkdirs();
             try {
-                File dir = new File(outputDir);
-                if (!dir.exists()) dir.mkdirs();
-                File f = new File(dir, "worker_" + id + "_" + runId + ".jsonl");
                 return new PrintWriter(new FileWriter(f, false)); // false = overwrite
             } catch (IOException e) {
-                throw new RuntimeException(e);
+                throw new UncheckedIOException("cannot open the worker log " + f, e);
             }
         });
+        String line;
         try {
-            pw.println(mapper.writeValueAsString(record));
-            pw.flush();
-        } catch (Exception e) {
-            e.printStackTrace();
+            line = mapper.writeValueAsString(record);
+        } catch (JsonProcessingException e) {
+            throw new UncheckedIOException(e);
         }
+        DecisionLogger.writeLine(pw, line, fileFor(record.nodeId()));
+    }
+
+    private File fileFor(String nodeId) {
+        return new File(new File(outputDir), "worker_" + nodeId + "_" + runId + ".jsonl");
     }
 
     public void close() {

@@ -12,6 +12,8 @@ public class DiscreteEventSimulator {
     private final Map<String, SimNodeServer> servers = new HashMap<>();
     private WorkerLogger workerLogger;
     private ClientLogger clientLogger;
+    /** Intended send offset, in seconds, of every request no node could admit. */
+    private final java.util.List<Double> droppedOffsetsS = new java.util.ArrayList<>();
 
     public DiscreteEventSimulator(SimClock clock) {
         this.clock = clock;
@@ -52,6 +54,21 @@ public class DiscreteEventSimulator {
             return perNodeTransport.get(nodeId);
         }
         return transportOverhead;
+    }
+
+    /** Called for a request the admission filter left no node for. */
+    public void recordDrop(double intendedOffsetS) {
+        droppedOffsetsS.add(intendedOffsetS);
+    }
+
+    /**
+     * Drops inside the measurement window, the way the replay counts them for hardware: a
+     * request intended at or after {@code warmupS}.
+     */
+    public int droppedFrom(double warmupS) {
+        int n = 0;
+        for (double t : droppedOffsetsS) if (t >= warmupS) n++;
+        return n;
     }
 
     public WorkerLogger getWorkerLogger() { return workerLogger; }

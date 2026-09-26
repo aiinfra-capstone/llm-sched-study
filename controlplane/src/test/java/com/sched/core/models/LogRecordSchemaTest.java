@@ -1,19 +1,20 @@
 package com.sched.core.models;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sched.ContractCheck;
 import com.sched.core.ClientLogger.ClientRecord;
 import com.sched.core.WorkerLogger.WorkerRecord;
 import com.sched.core.models.SchedulerLogRecords.Candidate;
 import com.sched.core.models.SchedulerLogRecords.CompletionObservedRecord;
 import com.sched.core.models.SchedulerLogRecords.DecisionRecord;
+import com.sched.core.models.SchedulerLogRecords.HeartbeatSummaryRecord;
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 import org.junit.jupiter.api.DisplayName;
@@ -33,50 +34,18 @@ import org.junit.jupiter.api.Test;
  */
 class LogRecordSchemaTest {
 
-    private static final ObjectMapper MAPPER = new ObjectMapper();
-
-    private static Path schemas() {
-        Path here = Path.of("").toAbsolutePath();
-        for (Path p = here; p != null; p = p.getParent()) {
-            Path candidate = p.resolve("contracts").resolve("schemas");
-            if (Files.isDirectory(candidate)) return candidate;
-        }
-        throw new IllegalStateException("no contracts/schemas above " + here);
-    }
-
     private static JsonNode schema(String name) throws IOException {
-        return MAPPER.readTree(schemas().resolve(name).toFile());
+        return ContractCheck.schema(name);
     }
 
-    private static Set<String> names(JsonNode arrayOrObject) {
-        Set<String> out = new TreeSet<>();
-        arrayOrObject.fieldNames().forEachRemaining(out::add);
-        return out;
-    }
-
-    private static Set<String> required(JsonNode node) {
-        Set<String> out = new TreeSet<>();
-        node.get("required").forEach(n -> out.add(n.asText()));
-        return out;
-    }
-
-    private static Set<String> emitted(Object record) throws IOException {
-        return names(MAPPER.readTree(MAPPER.writeValueAsString(record)));
-    }
-
-    /** Everything the schema allows, and nothing it does not; every required key present. */
+    /** Keys, types and enum or const values, on the JSON Jackson actually emits (J1). */
     private static void assertConforms(Object record, JsonNode def, String what) throws IOException {
-        Set<String> keys = emitted(record);
-        Set<String> allowed = names(def.get("properties"));
+        ContractCheck.assertConforms(record, def, what);
+    }
 
-        Set<String> extra = new TreeSet<>(keys);
-        extra.removeAll(allowed);
-        assertTrue(extra.isEmpty(),
-                what + " emits " + extra + ", which the schema forbids (additionalProperties: false)");
-
-        Set<String> missing = new TreeSet<>(required(def));
-        missing.removeAll(keys);
-        assertTrue(missing.isEmpty(), what + " is missing required " + missing);
+    private static List<String> problems(Object record, JsonNode def) throws IOException {
+        return ContractCheck.problems(
+                ContractCheck.MAPPER.readTree(ContractCheck.MAPPER.writeValueAsString(record)), def, "record");
     }
 
     @Test
@@ -101,13 +70,41 @@ class LogRecordSchemaTest {
     }
 
     @Test
-    @DisplayName("a completion_observed record matches its schema exactly")
+    @DisplayName("a completion_observed record matches its schema exactly, from either vehicle")
     void completionObservedConforms() throws IOException {
-        CompletionObservedRecord rec =
-                new CompletionObservedRecord("completion_observed", "run1", "r000001", "n1", "sim_event", 0L);
+        JsonNode def = schema("log_scheduler.schema.json").get("$defs").get("completion_observed");
+        for (String source : List.of("completion_rpc", "sim_completion")) {
+            CompletionObservedRecord rec =
+                    new CompletionObservedRecord("completion_observed", "run1", "r000001", "n1", source, 0L);
+            assertConforms(rec, def, "CompletionObservedRecord from " + source);
+        }
+    }
 
-        assertConforms(rec, schema("log_scheduler.schema.json").get("$defs").get("completion_observed"),
-                "CompletionObservedRecord");
+    @Test
+    @DisplayName("a heartbeat_summary record matches its schema exactly, at either point")
+    void heartbeatSummaryConforms() throws IOException {
+        JsonNode def = schema("log_scheduler.schema.json").get("$defs").get("heartbeat_summary");
+        for (String at : List.of("end_run", "shutdown")) {
+            assertConforms(new HeartbeatSummaryRecord("heartbeat_summary", "run1", "n1", 812L, 3L, 0L, at),
+                    def, "HeartbeatSummaryRecord at " + at);
+        }
+        assertFalse(problems(new HeartbeatSummaryRecord("heartbeat_summary", "run1", "n1", 812L, 3L, 0L,
+                "end_of_run"), def).isEmpty(), "an `at` outside the enum");
+    }
+
+    @Test
+    @DisplayName("a value outside a schema enum fails, not only a wrong key")
+    void offEnumValuesAreCaught() throws IOException {
+        // Key names match in every one of these. Before J1 all four passed.
+        JsonNode defs = schema("log_scheduler.schema.json").get("$defs");
+        assertFalse(problems(new CompletionObservedRecord("completion_observed", "run1", "r1", "n1",
+                "sim_event", 0L), defs.get("completion_observed")).isEmpty(), "source sim_event");
+        assertFalse(problems(new CompletionObservedRecord("completion", "run1", "r1", "n1",
+                "completion_rpc", 0L), defs.get("completion_observed")).isEmpty(), "type completion");
+        assertFalse(problems(new DecisionRecord("decision", "run1", "r1", 0L, "least_loaded", 0.0, 1L,
+                "n1", 0.5, List.of()), defs.get("decision")).isEmpty(), "policy least_loaded");
+        assertFalse(problems(new ClientRecord("run1", "r1", 1.5, 1.5, 0.0, 1L, "dropped", 0, null, null, 0L),
+                schema("log_client.schema.json")).isEmpty(), "client status dropped with null nodes");
     }
 
     @Test
@@ -138,6 +135,8 @@ class LogRecordSchemaTest {
         assertEquals("decision", defs.get("decision").get("properties").get("type").get("const").asText());
         assertEquals("completion_observed",
                 defs.get("completion_observed").get("properties").get("type").get("const").asText());
+        assertEquals("heartbeat_summary",
+                defs.get("heartbeat_summary").get("properties").get("type").get("const").asText());
     }
 
     @Test
@@ -152,9 +151,12 @@ class LogRecordSchemaTest {
         assertEquals(Set.of("round_robin", "jsq", "jsq_fastfirst", "static_weighted",
                 "static_weighted_wrr", "wjsq", "threshold", "ect"), allowed);
 
+        // ECT states its mode in the run's config and has no default (3.5); the other seven
+        // ignore the key.
         for (String name : allowed) {
             com.sched.core.policies.Policies.fromName(
-                    name, new java.util.concurrent.atomic.AtomicInteger(0), 1.0);
+                    name, new java.util.concurrent.atomic.AtomicInteger(0), 1.0,
+                    Map.of(), Map.of(), Map.of("ect_mode", "known"));
         }
     }
 
@@ -169,7 +171,7 @@ class LogRecordSchemaTest {
         JsonNode def = schema("log_scheduler.schema.json").get("$defs").get("decision");
         assertConforms(rec, def, "rejected DecisionRecord");
 
-        JsonNode json = MAPPER.readTree(MAPPER.writeValueAsString(rec));
+        JsonNode json = ContractCheck.MAPPER.readTree(ContractCheck.MAPPER.writeValueAsString(rec));
         assertTrue(json.get("chosen_node").isNull());
         assertTrue(json.get("tie_break_draw").isNull());
     }

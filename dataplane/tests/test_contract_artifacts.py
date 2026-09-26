@@ -265,3 +265,73 @@ def test_c5_accepts_null_worker_columns(schema) -> None:
         "is_warmup": False,
     }
     assert_conforms(schema("joined_record"), [row], "C-5 row")
+
+
+# --------------------------------------------------------------------------------------
+# The scheduler records my manifest reads (0.2, 0.4), and the C-3 tau flags (0.3)
+# --------------------------------------------------------------------------------------
+
+
+def test_null_heartbeat_gaps_and_a_heartbeat_summary_record_validate(schema) -> None:
+    """C-6 has to accept the null my harness writes when nobody counted, and the C-4 sample
+    has to carry the record the count is read from, in the shape my reader expects."""
+    from dataplane.harness import manifest as manifest_mod
+
+    man = json.loads((EXAMPLES / "manifest.sample.json").read_text())
+    man["validity"]["heartbeat_gaps"] = None
+    man["validity"]["unmeasured"] = ["heartbeat_gaps"]
+    assert_conforms(schema("manifest"), [man], "manifest")
+
+    records = read_jsonl(EXAMPLES / "scheduler.sample.jsonl")
+    summaries = [r for r in records if r["type"] == "heartbeat_summary"]
+    assert len(summaries) == 1
+    assert_conforms(schema("log_scheduler"), summaries, "heartbeat_summary")
+    assert manifest_mod.heartbeat_gaps_from(records) == summaries[0]["missed_beats"]
+
+
+def test_sim_completion_is_a_valid_source_and_sim_event_is_not(schema) -> None:
+    validator = schema("log_scheduler")
+    records = read_jsonl(EXAMPLES / "scheduler.sample.jsonl")
+    sim = [
+        r for r in records if r["type"] == "completion_observed" and r["source"] == "sim_completion"
+    ]
+    assert sim, "the C-4 sample should carry one simulator completion"
+    assert_conforms(validator, sim, "completion_observed")
+    assert list(validator.iter_errors(sim[0] | {"source": "sim_event"}))
+
+
+def _cost_model_example() -> dict:
+    return json.loads((EXAMPLES / "cost_model.sample.json").read_text())
+
+
+def test_a_snapshot_without_tau_flags_fails_the_schema(tmp_path) -> None:
+    """Without the flags a reader cannot tell a censored tau (the window floor) from a
+    measured one. The same snapshot with both flags passes, so the failure is the flags."""
+    checker = _load_checker()
+    with_flags = _cost_model_example()
+    with_flags["stochastic"] |= {"tau_resolved": True, "tau_censored": False}
+    good = tmp_path / "with_flags.json"
+    good.write_text(json.dumps(with_flags))
+    assert checker.validate_file(good, "cost_model.schema.json") == []
+
+    for flag in ("tau_resolved", "tau_censored"):
+        stripped = json.loads(json.dumps(with_flags))
+        del stripped["stochastic"][flag]
+        bad = tmp_path / f"without_{flag}.json"
+        bad.write_text(json.dumps(stripped))
+        errors = checker.validate_file(bad, "cost_model.schema.json")
+        assert any(flag in e for e in errors), (flag, errors)
+
+
+def test_every_committed_snapshot_carries_the_tau_flags() -> None:
+    snapshots = sorted((CONTRACTS / "cost_models").glob("*/*.json"))
+    assert snapshots, "no committed snapshots under contracts/cost_models"
+    missing = [
+        str(p.relative_to(CONTRACTS))
+        for p in snapshots
+        if not all(
+            isinstance(json.loads(p.read_text())["stochastic"].get(flag), bool)
+            for flag in ("tau_resolved", "tau_censored")
+        )
+    ]
+    assert not missing, f"snapshot(s) without boolean tau flags: {missing}"

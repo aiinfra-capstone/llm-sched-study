@@ -34,7 +34,23 @@ public interface SchedulerLogRecords {
             @JsonProperty("run_id") String runId,
             @JsonProperty("req_id") String reqId,
             @JsonProperty("node_id") String nodeId,
-            @JsonProperty("source") String source, // e.g., "completion_rpc" or "sim_event"
+            @JsonProperty("source") String source, // "completion_rpc" (live) or "sim_completion" (DES)
             @JsonProperty("observed_lag_ns") long observedLagNs) {
+    }
+
+    /**
+     * One node's heartbeat sequence as this scheduler saw it (0.2). {@code missedBeats} sums
+     * {@code seq - last - 1} over every forward jump; {@code seqRegressions} counts beats at or
+     * below the last one, which means the worker's emitter restarted. {@code at} says when it
+     * was written: "end_run" or "shutdown".
+     */
+    record HeartbeatSummaryRecord(
+            @JsonProperty("type") String type, // Always "heartbeat_summary"
+            @JsonProperty("run_id") String runId,
+            @JsonProperty("node_id") String nodeId,
+            @JsonProperty("last_seq") long lastSeq,
+            @JsonProperty("missed_beats") long missedBeats,
+            @JsonProperty("seq_regressions") long seqRegressions,
+            @JsonProperty("at") String at) {
     }
 }

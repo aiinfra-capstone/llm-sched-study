@@ -1,6 +1,8 @@
 package com.sched.core.models;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 
 public record CostModelSnapshot(
@@ -31,7 +33,23 @@ public record CostModelSnapshot(
                         @JsonProperty("prefill_ms_mean") Double prefillMsMean,
                         @JsonProperty("decode_ms_mean") Double decodeMsMean,
                         @JsonProperty("tokens_per_s") double tokensPerS,
-                        @JsonProperty("n_samples") int nSamples) {
+                        @JsonProperty("n_samples") int nSamples,
+                        /**
+                         * C-3 optional (D5): true when no sample was measured at this cell's
+                         * own concurrency and the mean comes from the fallback. Null on a
+                         * snapshot fitted before the flag existed.
+                         */
+                        @JsonProperty("thin") Boolean thin) {
+
+                /** A cell from a snapshot fitted before {@code thin} existed. */
+                public CostEntry(List<Integer> promptBucket, List<Integer> outputBucket,
+                                int concurrency, double serviceMsMean, double serviceMsP50,
+                                double serviceMsP95, Double prefillMsMean, Double decodeMsMean,
+                                double tokensPerS, int nSamples) {
+                        this(promptBucket, outputBucket, concurrency, serviceMsMean, serviceMsP50,
+                                        serviceMsP95, prefillMsMean, decodeMsMean, tokensPerS, nSamples,
+                                        null);
+                }
 
                 /** Whether this cell can say which part of its service time was prefill. */
                 public boolean hasPhaseSplit() {
@@ -39,11 +57,61 @@ public record CostModelSnapshot(
                 }
         }
 
+        /**
+         * The C-3 mean service time for a request of {@code pLen} prompt and {@code oLen}
+         * output tokens at concurrency {@code conc}, or -1 when no cell covers the shapes.
+         *
+         * <p>Exact concurrency when the grid has it, clamped to the grid's ends outside it, and
+         * linear between the two measured concurrencies around it. ECT prices a request and
+         * the simulator draws its service time from this one lookup, so the policy and the
+         * vehicle it runs in cannot disagree about what a cell costs.
+         */
+        public double meanServiceMs(int pLen, int oLen, int conc) {
+                List<CostEntry> candidates = new ArrayList<>();
+                for (CostEntry e : entries) {
+                        if (pLen >= e.promptBucket().get(0) && pLen <= e.promptBucket().get(1)
+                                        && oLen >= e.outputBucket().get(0) && oLen <= e.outputBucket().get(1)) {
+                                candidates.add(e);
+                        }
+                }
+                if (candidates.isEmpty()) return -1;
+                candidates.sort(Comparator.comparingInt(CostEntry::concurrency));
+                for (CostEntry e : candidates) {
+                        if (e.concurrency() == conc) return e.serviceMsMean();
+                }
+                CostEntry first = candidates.get(0);
+                CostEntry last = candidates.get(candidates.size() - 1);
+                if (conc <= first.concurrency()) return first.serviceMsMean();
+                if (conc >= last.concurrency()) return last.serviceMsMean();
+                for (int i = 0; i < candidates.size() - 1; i++) {
+                        CostEntry lower = candidates.get(i);
+                        CostEntry upper = candidates.get(i + 1);
+                        if (lower.concurrency() < conc && conc < upper.concurrency()) {
+                                double f = (double) (conc - lower.concurrency())
+                                                / (double) (upper.concurrency() - lower.concurrency());
+                                return lower.serviceMsMean() + f * (upper.serviceMsMean() - lower.serviceMsMean());
+                        }
+                }
+                return first.serviceMsMean();
+        }
+
         public record Stochastic(
                         @JsonProperty("model") String model,
                         @JsonProperty("sigma") double sigma,
                         @JsonProperty("autocorr_time_s") double autocorrTimeS,
-                        @JsonProperty("fit_r2") double fitR2) {
+                        @JsonProperty("fit_r2") double fitR2,
+                        /**
+                         * Whether {@code autocorr_time_s} is a measurement (resolved) or the
+                         * instrument's floor (censored). The simulator reads neither: its noise
+                         * is i.i.d. per request (0.3). Boxed so an older snapshot still loads.
+                         */
+                        @JsonProperty("tau_resolved") Boolean tauResolved,
+                        @JsonProperty("tau_censored") Boolean tauCensored) {
+
+                /** A stochastic block from a snapshot fitted before the τ flags existed. */
+                public Stochastic(String model, double sigma, double autocorrTimeS, double fitR2) {
+                        this(model, sigma, autocorrTimeS, fitR2, null, null);
+                }
         }
 
         public record Admissibility(

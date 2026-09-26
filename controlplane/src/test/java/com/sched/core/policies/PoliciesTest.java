@@ -28,7 +28,8 @@ class PoliciesTest {
         assertInstanceOf(WJSQ.class, Policies.fromName("wjsq", new AtomicInteger(0), 0.0));
         assertInstanceOf(Threshold.class, Policies.fromName("threshold", new AtomicInteger(0), 10.0));
         assertInstanceOf(ECT.class, Policies.fromName("ect", new AtomicInteger(0), 0.0,
-                java.util.Map.of(), java.util.Map.of()));
+                java.util.Map.of(), java.util.Map.of(),
+                java.util.Map.of("ect_mode", ECT.MODE_KNOWN, "output_len_prior", 16)));
     }
 
     @Test
@@ -61,5 +62,35 @@ class PoliciesTest {
 
         assertEquals(0.0, strict.choose(req, nodes, 0L, new java.util.Random(1)).scores().get("n"), 1e-9);
         assertEquals(1.0, loose.choose(req, nodes, 0L, new java.util.Random(1)).scores().get("n"), 1e-9);
+    }
+
+    @Test
+    @DisplayName("ECT takes its mode and prior from the run's config and refuses without them")
+    void ectStatesItsModelInTheConfig() {
+        // J12, from the config side: the scheduler refuses at startup rather than pricing
+        // with a mode and prior the manifest never recorded.
+        java.util.Map<String, Object> none = java.util.Map.of();
+        for (java.util.Map<String, Object> config : java.util.List.of(
+                none, java.util.Map.<String, Object>of("ect_mode", 1))) {
+            IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                    () -> Policies.fromName("ect", new AtomicInteger(0), 0.0, java.util.Map.of(),
+                            java.util.Map.of(), config), "config " + config);
+            assertTrue(e.getMessage().contains("ect_mode"), e.getMessage());
+        }
+        assertThrows(IllegalArgumentException.class,
+                () -> Policies.fromName("ect", new AtomicInteger(0), 0.0), "no config at all");
+        assertThrows(IllegalArgumentException.class,
+                () -> Policies.fromName("ect", new AtomicInteger(0), 0.0, java.util.Map.of(),
+                        java.util.Map.of(), java.util.Map.of("ect_mode", "unknown")),
+                "unknown mode with no prior");
+        IllegalArgumentException text = assertThrows(IllegalArgumentException.class,
+                () -> Policies.fromName("ect", new AtomicInteger(0), 0.0, java.util.Map.of(),
+                        java.util.Map.of(), java.util.Map.of("ect_mode", "unknown", "output_len_prior", "44")));
+        assertTrue(text.getMessage().contains("must be a number"), text.getMessage());
+
+        // Manifests recorded under the older key names replay as they ran.
+        assertInstanceOf(ECT.class, Policies.fromName("ect", new AtomicInteger(0), 0.0,
+                java.util.Map.of(), java.util.Map.of(),
+                java.util.Map.of("p6_mode", "unknown", "ect_prior_output_len", 44)));
     }
 }

@@ -5,7 +5,6 @@ import java.util.Map;
 import java.util.HashMap;
 import java.util.Optional;
 import java.util.Random;
-import java.util.concurrent.atomic.AtomicInteger;
 import com.sched.core.interfaces.Policy;
 import com.sched.core.interfaces.StateStore.NodeView;
 import com.sched.v1.DispatchRequest;
@@ -14,9 +13,6 @@ public class StaticWeightedWRR implements Policy {
     private final Map<String, Double> current = new HashMap<>();
 
     public StaticWeightedWRR() {
-    }
-
-    public StaticWeightedWRR(AtomicInteger ignored) {
     }
 
     @Override

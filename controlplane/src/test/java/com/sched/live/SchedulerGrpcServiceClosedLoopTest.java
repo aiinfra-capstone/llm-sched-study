@@ -52,7 +52,7 @@ class SchedulerGrpcServiceClosedLoopTest {
     }
 
     @Test
-    void dispatchIncramentsInflightAndQueueSoPolicySeesTheBurst() throws Exception {
+    void dispatchIncrementsInflightAndQueueSoPolicySeesTheBurst() throws Exception {
         File dir = Files.createTempDirectory("scheduler-closed-loop").toFile();
         InMemoryStateStore store = new InMemoryStateStore();
         TestClock clk = new TestClock();
@@ -253,21 +253,12 @@ class SchedulerGrpcServiceClosedLoopTest {
         }
     }
 
-    /** The service's own per-node counter. Nothing reads it back, so the test reads the field. */
-    private static long serviceInflight(SchedulerGrpcService svc, String node) throws Exception {
-        java.lang.reflect.Field f = SchedulerGrpcService.class.getDeclaredField("inflight");
-        f.setAccessible(true);
-        @SuppressWarnings("unchecked")
-        Map<String, AtomicLong> counters = (Map<String, AtomicLong>) f.get(svc);
-        return counters.get(node).get();
-    }
-
     /**
      * A req_id counts once in the pool. A client that retries a dispatch under the same
      * req_id, or two dispatches that share one, must not take a second slot, on the node the
-     * first went to or on any other, and the service's own counter must move only when the
-     * store counted. Before M1 a duplicate on a second node took a slot there that no
-     * completion would ever release, since the completion names the node the first ran on.
+     * first went to or on any other. Before M1 a duplicate on a second node took a slot there
+     * that no completion would ever release, since the completion names the node the first
+     * ran on.
      */
     @Test
     void aDuplicateReqIdTakesNoSecondSlotOnAnyNode() throws Exception {
@@ -302,7 +293,6 @@ class SchedulerGrpcServiceClosedLoopTest {
 
             assertTrue(dispatch(svc, "r-dup").getAccepted());
             assertEquals(1, store.getNode("n1").inflight(), "n1 after the first admit");
-            assertEquals(1L, serviceInflight(svc, "n1"), "service counter for n1 after the first admit");
 
             // Both duplicates are refused by name, and neither reaches a worker: a second
             // Execute would have the worker run a request no slot accounts for.
@@ -322,14 +312,11 @@ class SchedulerGrpcServiceClosedLoopTest {
                 assertEquals(expected, veil.getAllNodes().stream()
                         .filter(v -> v.nodeId().equals(n)).findFirst().orElseThrow().inflight(),
                         n + " as the policy sees it after both duplicates");
-                assertEquals((long) expected, serviceInflight(svc, n),
-                        "service counter for " + n + " after both duplicates");
             }
 
             // The one slot r-dup holds is released by one completion, on the node it ran on.
             complete(svc, "r-dup");
             assertEquals(0, store.getNode("n1").inflight(), "n1 after r-dup finished");
-            assertEquals(0L, serviceInflight(svc, "n1"), "service counter for n1 after r-dup finished");
         } finally {
             chanA.shutdownNow();
             chanB.shutdownNow();

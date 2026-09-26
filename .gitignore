@@ -16,9 +16,10 @@ wheels/
 
 # ---------------------------------------------------------------------------
 # Measurement output. None of this is committed: traces are regenerable from
-# (config, seed) byte-for-byte (C-2), and logs are large and per-run. What IS
-# committed is the run manifest (C-6), which carries the seed, the trace
-# sha256, and the git shas needed to reproduce any of it (F-20).
+# (config, seed) byte-for-byte at the recorded generator sha (C-2), and logs are
+# large and per-run. What IS committed is the run manifest (C-6), which carries the
+# seed, the trace sha256, the generator sha, and the git shas needed to reproduce
+# any of it (F-20).
 # ---------------------------------------------------------------------------
 traces/
 runs/**

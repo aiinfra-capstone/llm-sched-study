@@ -1,9 +1,9 @@
 """F-20 / C-6 — the run manifest.
 
 The manifest is the reproducibility record, and it is the *only* thing about a run that
-is committed: traces regenerate byte-for-byte from (config, seed), logs are large and
-per-run, but the manifest carries the seed, the trace SHA-256, and the git shas needed to
-reproduce any of it.
+is committed: traces regenerate byte-for-byte from (config, seed) at the recorded
+generator sha, logs are large and per-run, but the manifest carries the seed, the trace
+SHA-256, the generator sha, and the git shas needed to reproduce any of it.
 
 It is also where a run is declared invalid. That declaration is made by the harness, from
 measurements, at the end of the run — not by a human reading a plot later and deciding it

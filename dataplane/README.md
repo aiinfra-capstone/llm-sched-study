@@ -17,7 +17,7 @@ uv sync --all-groups
 uv run pytest
 ```
 
-The [root README](../README.md#terms-used-throughout) defines the serving and queueing
+The [root README](../README.md#the-vocabulary-that-matters) defines the serving and queueing
 vocabulary the whole study uses — tokens, prefill and decode, KV cache, `-ngl`, slots,
 percentiles, τ, and the heterogeneity ratio *R*. A handful of terms are specific to this
 half and are worth having up front:
@@ -73,7 +73,7 @@ committed snapshots became readable, and the first thing we did with that was po
 served by missed its own hardware by a request-weighted 127%**. No simulator parameterised
 from that table could have passed F-23, and the failure would have looked like the
 simulator's. The 1B node class has been recalibrated on a grid that lands on the trace's own
-lengths at every concurrency the pool can reach, and now reads **20.8%** — inside the F-23
+lengths at every concurrency the pool can reach, and now reads **21.3%**, inside the F-23
 tolerance. The story, including what it says about batching on this card, is under
 [`costcheck.py`](#costcheckpy--does-the-cost-model-predict-its-own-hardware-f-7).
 
@@ -125,8 +125,8 @@ suite during a run, not only the tests labelled as load measurements.
 Everything else about determinism compares this build against itself — generate twice, get
 the same bytes — which stays true even if the output is wrong, because both sides move
 together. A reference computed once and written down is the only check on a claim about
-*later*, and "the trace regenerates byte-for-byte from (config, seed)" is entirely a claim
-about later. The gap surfaced under mutation testing: swapping `rng_length` and
+*later*, and "the trace regenerates byte-for-byte from (config, seed) at the recorded
+generator sha" is entirely a claim about later. The gap surfaced under mutation testing: swapping `rng_length` and
 `rng_content` in `generate` changed every byte of every trace the harness produces, and the
 whole suite still passed.
 
@@ -349,8 +349,11 @@ config → SeedSequence(seed).spawn(3)
 
 Single-threaded, no I/O in the sampling loop, no wall-clock reads. **Separate streams** so
 that changing the length distribution does not shift the arrival process underneath the
-result. Regenerating with the same seed and parameters produces a **byte-identical file** —
-a test, not an assumption. Float formatting is the usual culprit, so `arrival_offset_s` is
+result. Regenerating with the same seed and parameters, stamped with the same
+`generator_git_sha`, produces a **byte-identical file**. That is a test, not an assumption.
+The sha is inside the hashed header, so the SHA-256 identifies (config, seed, generator
+commit), and `generate(..., generator_git_sha=...)` is how a trace comes back at a later
+commit. Float formatting is the usual culprit, so `arrival_offset_s` is
 fixed at 4 decimal places.
 
 ### `replay.py`
@@ -431,12 +434,12 @@ would read as agreement, and agreement is the one claim nobody made.
 uv sync --all-groups
 
 # F-16 — a trace is a pure function of (config, seed). The printed sha256 is its identity.
-uv run gen-trace configs/smoke.json -o traces/smoke.jsonl
+uv run gen-trace configs/trace_anchor_1b.json -o traces/anchor_1b.jsonl
 
 # --model sets vocab_size and reserved_ids_excluded from the tokenizer table in
 # gen_trace.MODELS. It picks which RUN SET a trace belongs to, not a per-node knob: the
 # model is held constant inside a pool, exactly like the engine and the quant.
-uv run gen-trace configs/smoke.json --model mistral-7b-v03 -o traces/smoke-mistral.jsonl
+uv run gen-trace configs/trace_anchor_1b.json --model mistral-7b-v03 -o traces/anchor_1b-mistral.jsonl
 
 # One live node (F-9/F-10/F-11), against an already-running llama-server.
 uv run worker --node-id gtx1650ti --engine http://127.0.0.1:18080 \
@@ -457,7 +460,7 @@ cd controlplane && mvn -q exec:java -Dexec.mainClass=com.sched.live.LiveSchedule
 # calibration may be run against it.
 
 # F-17 — open-loop replay. Exits non-zero and says why when the run is invalid.
-uv run replay traces/smoke.jsonl \
+uv run replay traces/anchor_1b.jsonl \
   --scheduler 127.0.0.1:50051 --run-id run_0001 --sha256 <printed above> \
   --advertise <this host's LAN address> --nodes nodes.json
 
@@ -467,7 +470,7 @@ uv run r-range    runs/calibration/llama3-8b
 uv run admissible runs/calibration/llama3-8b --out runs/admissible/llama3-8b.json
 uv run anchors    configs/anchors_1b.json
 uv run load-band  runs/anchors --out runs/anchors/load_band.json
-uv run preflight  configs/preflight_lan.json --out runs/preflight.json
+uv run preflight  configs/preflight_lan_3050.json --out runs/preflight.json
 
 # Analysis. Neither needs a node up: both are pure functions of the files a run left behind.
 uv run runset     runs/anchors --out runs/anchors/runset.parquet
@@ -489,24 +492,23 @@ repo rather than from a shell history. Four groups.
 
 **Calibration.** `calibration_1b*.json` and `calibration_8b*.json`, one per node class, plus
 `calibration_smoke.json` for timing a single cell before committing to a full grid.
-`calibration_1b_rtx4070.json` (the RTX 4070 box), `calibration_1b_rtx3050.json` (the RTX 3050
-laptop) and `calibration_1b_cpu.json` (the laptop at `ngl 0`) have grid edges and sampled cells byte-identical to
+`calibration_1b_rtx3050.json` (the RTX 3050 laptop) and `calibration_1b_cpu.json` (the laptop
+at `ngl 0`) have grid edges and sampled cells byte-identical to
 `calibration_1b_anchorgrid.json`. That is deliberate and load-bearing:
 `r_range.synthesizable` refuses to compute a ratio between two classes that share no
 `(prompt_bucket, output_bucket, concurrency)` cell, and mismatched grids already cost this
 study 20% of its ratio once, when the fast node was calibrated at prompt 256 against the
 slow one at 64.
 
-**Pool topology.** `pool_1b.json` is the single-host pool; `pool_1b_lan.json` is the
-two-host pool, the laptop's GTX 1650 Ti and the RTX 4070 box. Both run the same model and
-quant, because F-9 holds those constant across a pool and `launch.build_nodes` refuses
-otherwise; heterogeneity comes from the hardware and from `ngl`, which is F-9a.
-`preflight_lan.json` carries the same two nodes plus the LAN addresses, and
-`hw_mpr2_lan_3050.json` is the MPR-2 campaign over the pair we ran, for `tools/hw_runs.py`. The Crucial X9
-boots whichever second machine we have, so each of these three has a `_3050` twin for the
-Dell RTX 3050 6GB laptop, which joins as hostname `rtx3050` on `.12`. The second node's
-snapshot in both campaigns is a placeholder until that class is calibrated, and the driver
-refuses to start until it is replaced.
+**Pool topology.** `pool_1b.json` is the single-host pool; `pool_1b_lan_3050.json` is the
+two-host pool, the laptop's GTX 1650 Ti and the Dell RTX 3050 6GB laptop, which joins as
+hostname `rtx3050` on `.12`. Both run the same model and quant, because F-9 holds those
+constant across a pool and `launch.build_nodes` refuses otherwise; heterogeneity comes from
+the hardware and from `ngl`, which is F-9a. `preflight_lan_3050.json` carries the same two
+nodes plus the LAN addresses, and `hw_mpr2_lan_3050.json` is the MPR-2 campaign over that
+pair, for `tools/hw_runs.py`. Each campaign names the snapshot every node is served by. The
+configs for the earlier RTX 4070 pool, and the 8B `smoke.json`, are in `configs/archive/` and are
+not used.
 
 **Traces.** `trace_anchor_1b.json` is the F-23 validation trace. The three workload-shape
 profiles are `trace_summarisation_1b.json`, `trace_balanced_1b.json` and
@@ -522,9 +524,10 @@ thing in all three. The construction and its caveat, that the matching holds at 
 [`../docs/results.md`](../docs/results.md).
 
 **Anchors.** `anchors_1b.json` names the trace, its sha256, the pool and the four rate
-scales. A trace's sha256 moves with every commit because `gen_trace` stamps its git sha
-inside the hashed header, so `tools/ensure_trace.py` regenerates and reports rather than
-failing CI on a hash that was always going to drift.
+scales. A trace's sha256 covers the generator's git sha in its header, so a fresh
+generation at a later commit hashes differently. `tools/ensure_trace.py` regenerates at the
+sha the anchor manifests recorded and keeps the file only if it hashes to a value the
+anchors name; on a mismatch it exits 1 and leaves the disk alone.
 
 ## `pipeline/` — F-19, §5.5
 
@@ -547,7 +550,7 @@ demonstrate the thing the band is *defined* by.
 ### `runset.py` — the analysis unit is a set, not a run
 
 `join.py` turns one run directory into one C-5 record set. Nothing this study asks is answered
-by a single run — H1 compares four policies, H2 sweeps *R*, H3 sweeps staleness — so what a
+by a single run (H1 compares four policies, H2 sweeps *R*, the staleness campaign sweeps *s*), so what a
 figure opens is a concatenation of joined runs. Three things only become visible at that
 level, and all three are why this file exists rather than a shell loop over `pipeline`:
 
@@ -615,10 +618,10 @@ nearest-measured-concurrency then prices a two-slot request at the one-slot rate
 is nearer to 1 than to 4.
 
 Recalibrating on a grid whose representative lengths are the trace's own, at every
-concurrency the pool can reach, is what closed it: **127% → 27.5% → 20.8%**, the last step
+concurrency the pool can reach, is what closed it: **127% → 27.5% → 21.3%**, the last step
 coming from a prompt-bucket edge added at 256 so one bucket no longer averaged a fourfold
-prefill range. On medians the error is 9.9%, and the four-slot cells — most of the requests,
-and where the anchors sit under load — land within 2%. That is a limitation as well as a fix:
+prefill range. On medians the error is 11.8%, and the four-slot cells, which hold most of the
+requests and are where the anchors sit under load, land within 6.2%. That is a limitation as well as a fix:
 the model is calibrated for the traces this study replays, and a length between two bucket
 representatives would be priced at its bucket's, not its own.
 
@@ -743,7 +746,8 @@ cannot be non-monotonic.
 deliverable rather than its midpoint, and the title says whether it holds one sign or
 straddles zero. Those are different results and they read alike in a table of numbers.
 
-**H3** is routing error rate against estimate age **divided by τ**. Raw seconds would make
+**H3** is out of paper one (research plan section 5); the figure stays for M12. It is
+routing error rate against estimate age **divided by τ**. Raw seconds would make
 the finding a property of the heartbeat interval configured on the day; divided by the
 measured autocorrelation time it is a property of the process, which is why τ was measured
 in Week 2 rather than assumed. It is a `--tau-s` argument rather than a default, and the

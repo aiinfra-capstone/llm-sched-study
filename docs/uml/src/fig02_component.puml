@@ -20,9 +20,9 @@ package "Client tier" {
 package "Control plane — centralised scheduler (F-12)" {
   [Admission Filter\nF-13 / F-14] as ADM
   [Cost Model\nF-6 / F-7] as CM
-  [Capability View\n+ Staleness Injector · F-8] as CAP
+  [Capability View\n+ Staleness Veil · F-8] as CAP
   [Batch-Aware Router\nF-4 / F-5] as BAR
-  [Dispatch Policy\nfive policies, one interface · F-1 / F-2] as POL
+  [Dispatch Policy\neight policies, one interface · F-1 / F-2] as POL
   [Heartbeat Collector\nF-10] as HB
   [Decision Logger\nF-3] as DLOG
 }

@@ -94,8 +94,8 @@ run with no replay is left unpaired rather than compared with nothing.
 The three bugs closed below were found and fixed on the same day, by tests written
 before the fixes.
 
-Closed on 2026-09-16: `tools/p4_validate.py` is in the omit list beside `sweep.py` and
-`f23_compare.py` until ownership is agreed, and `hw_runs.py` and `campaign_summary.py` are
+Closed on 2026-09-16: `tools/p4_validate.py` went on the omit list beside `sweep.py` and
+`f23_compare.py` until ownership was agreed (all three have left it since, 2026-09-24), and `hw_runs.py` and `campaign_summary.py` are
 back at 100% (the four capability-arm refusals, the placeholder-snapshot refusal, the
 campaign-level capability keys in the manifest, the Sokal sum running to exhaustion, and a
 repeat with no rows at the point's positions).
@@ -121,8 +121,8 @@ every later decision is made on a different state. So it compares the rule inste
 decisions where both vehicles saw the same queue depth, in-flight count, admissibility and
 capability per node, and drew the same tie-break. On the 90 held-out shape runs that is
 19,963 decisions, and the live scheduler and the simulator chose the same node on all of
-them. The tool itself has no tests yet, so it is on the omit list and in section 2 as the
-one open row.
+them. The tool had no tests that day, so it went on the omit list; it has tests and has left
+the list since (the first entry in this section).
 
 Closed on 2026-09-24: the three bugs the new tool tests found. `sweep.py` binds
 `sweep_cfg` on both paths, so a sweep run the way its own usage line shows reaches its

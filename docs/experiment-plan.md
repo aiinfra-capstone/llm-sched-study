@@ -59,9 +59,10 @@ buckets. E2.0 recalibrates that class, and the criterion is rerun from the same 
 afterwards. Promotion now refuses an inverted grid, and a cell is fitted only from the samples
 served at the concurrency it claims.
 
-E0.1 and E0.2 are done (2026-09-16). The tree and this doc set are committed, `p4_validate.py`
-is in the coverage omit list, and `hw_runs.py` and `campaign_summary.py` are back at 100%, so
-G0 and G3 hold. One item found while closing E0.2 moved to `test-plan.md` section 2.
+E0.1 and E0.2 are done (2026-09-16). The tree and this doc set are committed, `hw_runs.py` and
+`campaign_summary.py` are back at 100%, and `p4_validate.py`, which went on the coverage omit
+list that day, has had tests since 2026-09-24, so the omit list holds only generated code. G0
+and G3 hold. One item found while closing E0.2 moved to `test-plan.md` section 2.
 
 ### Block 1: this laptop only, about 3 hours
 
@@ -202,7 +203,7 @@ Append one line per campaign, newest last. Numbers go in `results.md`, not here.
   priced off a calibration the hardware never used. Rerun, the ratios move by 0.002 to 0.013
   and summarisation at 2.385 req/s crosses into the hardware interval, so four of six points
   miss rather than five. G4 stays open and the cause is unchanged. Our test-plan 3.8 work
-  collided in two files and both sets are kept; the Java suite is 177. Three bugs in my tools
+  collided in two files and both sets are kept; the Java suite was 177 then and is 188 now. Three bugs in my tools
   were found by the new tests and fixed the same day (`test-plan.md` section 2), and
   `tools/parity_check.py` closes 3.8's last requirement: 19,963 decisions made on the same
   state in both vehicles, and the same node chosen in every one.

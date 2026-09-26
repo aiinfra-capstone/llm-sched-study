@@ -79,7 +79,10 @@ H3 asks about the age of a throughput estimate against the autocorrelation time 
 throughput. Four things stand between us and an answer, and all four are structural.
 
 1. The simulator draws service times from a static lookup table, so no quantity in it has an
-   autocorrelation time.
+   autocorrelation time. Its noise is one i.i.d. lognormal multiplier per request, and that is
+   a choice the measurement supports: K6 resolves no drift on any class in the pool (both GPU
+   classes are censored at the 5 s window floor, and the RTX 3050 held a CV of 0.009 over 60
+   windows), so an independent draw matches what was measured.
 2. The capability a policy reads in the simulator comes from the same snapshot that generates
    the service times, so calibration error is zero by construction and the mechanism H3 names
    has nothing to act on.

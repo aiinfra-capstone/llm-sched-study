@@ -100,7 +100,7 @@ def inversions(snap: dict[str, Any], tolerance: float = 0.02) -> list[str]:
     Sharing an engine with more requests cannot make a request faster, so a bucket whose
     mean drops from one concurrency to the next is a measurement artefact rather than a
     property of the node. The 2026-09-14 RTX 3050 grid was inverted at concurrency 3 in
-    all six of its buckets, by 15 to 40%, and nothing refused it: it reached the contracts,
+    all six of its buckets, by 10 to 23%, and nothing refused it: it reached the contracts,
     parameterised the simulator, and is why the simulator failed the contrast criterion on
     every held-out shape (`results.md` section 8). The tolerance absorbs sampling noise,
     not a step.

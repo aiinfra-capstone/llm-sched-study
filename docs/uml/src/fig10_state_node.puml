@@ -33,9 +33,9 @@ UNR --> OFF : declared lost;\nin-flight requests retried elsewhere
 note right of SRV
   Observed throughput here is **non-stationary**.
   Its autocorrelation time tau and variance
-  envelope are measured directly (MPR-1) and
-  become the independent variable of H3 rather
-  than an assumption to be swept under the rug.
+  envelope are measured directly (MPR-1, K6).
+  H3, which would use tau as its independent
+  variable, is out of paper one.
 end note
 
 state "Estimate freshness at the scheduler" as EST {
@@ -53,7 +53,8 @@ SRV -[#B45309,dashed]-> EST : heartbeat (F-10) resets age;\ninjected staleness s
 
 note bottom of EST
   This sub-state is scheduler-side, not node-side:
-  it tracks what the scheduler *believes*, which is
-  precisely the quantity H3 manipulates.
+  it tracks what the scheduler *believes*. Injected
+  staleness s is a robustness test of H1 in paper
+  one; H3 is out of paper one.
 end note
 @enduml

@@ -24,7 +24,7 @@ endif
 :read CapabilityView **as of now - s**;
 note right
   s = 0 in the default configuration;
-  s > 0 is the manipulated variable of H3.
+  s > 0 is a robustness test of H1 (H3 is out of paper one).
 end note
 
 :attach live queue depth and\nin-flight composition to each candidate;
@@ -40,6 +40,12 @@ case (WJSQ)
   :minimise queue depth ÷ calibrated capability,\nvia CostModel.expected_service_time();
 case (Threshold T)
   :round-robin over nodes\nwith capability > T;
+case (JSQFastFirst)
+  :pick minimum queue depth,\nties to the fastest node;
+case (StaticWeightedWRR)
+  :smooth weighted round-robin\nby calibrated capability;
+case (ECT)
+  :pick minimum expected\ncompletion time;
 endswitch
 
 :write DecisionRecord —\nqueue depths, capability estimates,\nestimate ages, candidate scores (F-3);

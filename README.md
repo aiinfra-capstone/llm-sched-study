@@ -8,17 +8,18 @@ built it to produce measurements, at the lowest fidelity that still supports the
 
 ## The problem
 
-Four machines of the kind a small lab already owns. A desktop with a discrete GPU, a laptop
-with a weaker one, an older GPU box, a CPU-only machine. All serving one model together.
+Machines of the kind a small lab already owns: laptops and desktops with GPUs of different
+generations, and CPU-only boxes. All serving one model together.
 
 A request arrives. Where does it go?
 
 Two things make this harder than ordinary load balancing.
 
 **The machines differ enormously.** Datacenter hardware generations differ by 2 to 5×.
-Consumer machines differ by 10 to 100×. A request that takes 2 seconds on the fast node can
-take 3 minutes on the slow one, or blow past any sane timeout entirely. That is a
-categorical failure, not a latency tail.
+Consumer machines differ by more. The two laptop GPUs we measured are 1.4 to 4.5× apart on
+service time depending on the workload and the batch, and a CPU-only node running an 8B
+model takes about 8 seconds for a short request. A slow enough node blows past any sane
+timeout entirely. That is a categorical failure, not a latency tail.
 
 **Nobody knows how fast each node really is.** It can be measured, but the measurement
 decays. Serving throughput is non-stationary under sustained load: it drifts with thermal
@@ -115,9 +116,10 @@ rate, not offset.
 request, and asserts its own send-lag per request. A run whose timing drifted is marked
 invalid rather than analysed.
 
-**Byte-identical trace regeneration.** A trace is reproducible from `(config, seed)` and
-identified by its SHA-256, so the same workload replays across every policy and across the
-hardware/simulator boundary.
+**Byte-identical trace regeneration.** A trace's SHA-256 identifies `(config, seed,
+generator commit)`, because the header carries the generator's git sha and the hash covers
+the header. Each manifest records that sha, and regenerating at it gives the same bytes, so
+the same workload replays across every policy and across the hardware/simulator boundary.
 
 ### The pinned engine
 
@@ -127,7 +129,7 @@ hardware/simulator boundary.
 |---|---|
 | Source | [`ggml-org/llama.cpp`](https://github.com/ggml-org/llama.cpp) tag `b10569`, commit `5a32f7b`, plus one patch in [`patches/`](patches) |
 | Model | `Llama-3.2-1B-Instruct` GGUF, `Q4_K_M`, the same bytes on every node |
-| Backends | CUDA and Vulkan, both built from that one commit |
+| Backends | CUDA on both pool nodes. `tools/pool-install.sh` can also build Vulkan or CPU from the same commit |
 | Recorded as | `engine_version: b10569+p1+cuda13.2` |
 
 The patch stops `llama-server` throwing a 500 on the `/completion` path when generation ends
@@ -190,14 +192,13 @@ because a scale correction cannot fix a shape.
 **The heterogeneity ratio is not one number.** Prefill is compute-bound and decode is
 memory-bandwidth-bound, and a machine does not lose those two capabilities at the same rate,
 so how heterogeneous a pool looks depends on the shape of the request. On the only
-same-model pair we currently own, CPU against a partially offloaded GPU, R is 1.75x on
-service time but 1.46x on prefill and 1.83x on decode, and the gap between the two phases
-widens with concurrency. That is what makes this a question about language-model serving
-rather than a queueing question with language models attached, and chasing it is the whole
-of the phase question ([`docs/research-plan.md`](docs/research-plan.md), K1). The magnitude
-here is small because that GPU node is a
-partial offload and because both classes were calibrated at a single grid cell, so the
-prompt-to-output ratio never varied. Varying it is the experiment.
+pair we measured, the RTX 3050 over the GTX 1650 Ti, R on service time at one slot is 1.38x
+on a generation-heavy workload and 2.56x on summarisation, and 2.2x to 4.5x at four slots,
+while prefill alone is 8.7x to 11x apart and decode 1.19x at one slot (section 2 of
+[`docs/results.md`](docs/results.md)). That is what makes this a question about
+language-model serving rather than a queueing question with language models attached, and
+chasing it is the whole of the phase question
+([`docs/research-plan.md`](docs/research-plan.md), K1).
 
 **The admissible envelope is `prompt ≤ 512, output ≤ 128`**, with the load band at
 **1.03 to 1.30 req/s** on a one-node pool.
@@ -388,7 +389,7 @@ cd controlplane
 mvn -q exec:java -Dexec.mainClass=com.sched.live.LiveSchedulerApp \
   -Dexec.args="../runs/exp/<run_id>/manifest.pre.json --port 50051 \
     --cost-models ../contracts/cost_models --log-dir ../runs/exp/<run_id> \
-    --worker gtx1650ti=10.42.0.1:50061 --worker rtx4070=10.42.0.11:50061"
+    --worker gtx1650ti=10.42.0.1:50061 --worker rtx3050=10.42.0.12:50061"
 ```
 
 `--worker <node_id>=<host:port>` maps the node ids in the manifest to endpoints. The ids
@@ -458,7 +459,7 @@ network, no engine, and it runs on a laptop.
 uv run pipeline  runs/exp/jsq_r1 --trace runs/traces/t_lam1.2.jsonl
 uv run costcheck runs/exp                                     # before blaming the simulator
 uv run runset    runs/exp --out runs/exp/runset.parquet
-uv run figures   runs/exp/runset.parquet --out figures/ --tau-s 69.5
+uv run figures   runs/exp/runset.parquet --out figures/
 ```
 
 Nothing changes between runs except the policy and the `-ngl` setting. That is the entire
@@ -468,11 +469,10 @@ reason the results are comparable.
 *R* renders the load characterisation and nothing else. That characterisation is all four
 of the study's dependent variables: latency percentiles, queue wait, per-node utilization,
 and the routing share. The full set adds the hypothesis figures: H1's interaction plot, H2's
-advantage curve against *R* drawn both ways, the interaction across the *R* range, and H3
-against estimate age. `--tau-s` is the measured autocorrelation
-time from the C-3 snapshot for that node class. Without it the H3 figure is skipped rather
-than drawn against a guess, because age over τ is the only axis H3 is a claim about, and
-substituting the heartbeat interval would turn a property of the process into a property
+advantage curve against *R* drawn both ways, and the interaction across the *R* range. H3
+is out of this paper, and its figure is drawn only when `--tau-s` is passed. τ is resolved
+on no class we own, so paper one does not pass it: age over τ is the only axis H3 is a claim
+about, and a τ at the measurement floor would turn a property of the process into a property
 of a setting.
 
 **Read the manifest before reading any figure.** Four fields decide whether a run is a data
@@ -592,11 +592,10 @@ been audited and re-derived. Five campaigns are configured and unrun.
 | Measured | 132 valid runs on one pair of laptop GPUs: the anchor trace and three workload shapes, five policies, three repeats, up to three load points |
 | Re-derived | All 132 runs under the rules in [`docs/analysis-plan.md`](docs/analysis-plan.md): paired block bootstrap, a steady-state gate on every cell, log-scale interaction as the primary statistic |
 | Standing | K1 and K6. K3 is a candidate on one arrival path, K2 and K5 are unrun, and H3 is out of this paper |
-| Next | Two gates on this laptop (engine rebuild and bench, recalibration), then two nights on the pool. About 17 hours of machine time |
+| Next | Close the audit's code items, recalibrate the RTX 3050, then re-run G4 and P4 and the K2, K4 and K5 campaigns on the pool |
 
 We audited the finished first pair as a reviewer would, and it changed the headline. What the
-audit withdrew and why is section 11 of [`docs/results.md`](docs/results.md); the three open
-control-plane items are in [`docs/experiment-plan.md`](docs/experiment-plan.md).
+audit withdrew and why is section 11 of [`docs/results.md`](docs/results.md).
 
 ## Team
 

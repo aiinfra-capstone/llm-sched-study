@@ -1,43 +1,29 @@
-# Fixtures — the fake scheduler and the fake worker
+# Fixtures: the fake scheduler
 
-Throwaway, and load-bearing.
+**Superseded for anything measured, as of 2026-09-04.** The real control plane dispatches:
+`LiveSchedulerApp` runs the veil, the filter and the policy, writes the C-4 decision record,
+and forwards `Execute` to the chosen worker. Every committed run set from the MPR-2 campaign
+on went through it. Verified end to end on a two-node local pool, where WJSQ split 200
+requests 130/70 between an `ngl 99` node and an `ngl 0` one and every row came out with
+`chosen_node` and `routing_error_ms` populated.
 
-**Superseded for anything measured, as of 2026-09-04.** The real control plane now
-dispatches: `LiveSchedulerApp` runs the veil, the filter and the policy, writes the C-4
-decision record, and forwards `Execute` to the chosen worker. Verified end to end on a
-two-node local pool, where WJSQ split 200 requests 130/70 between an `ngl 99` node and an
-`ngl 0` one and every row came out with `chosen_node` and `routing_error_ms` populated for
-the first time in the project.
-
-`fake_scheduler` round-robins blindly and writes no decision record, so every run it drives
-has those columns null and cannot answer H1 or MPR-2. Keep it for developing the data plane
-without the JVM in the loop. Do not point a measurement at it.
+`fake_scheduler/` round-robins blindly and writes no decision record. We keep it for two
+things: developing the data plane without the JVM in the loop, and
+`dataplane/tests/test_end_to_end.py`, which drives a replay through it as its own process.
+It is never pointed at a measurement.
 
 | | Built by | Talks to | Behaviour |
 |---|---|---|---|
 | `fake_scheduler/` | **A** | A's replay client | Round-robins blindly. Accepts `Dispatch`, returns a `DispatchAck`, forwards `Execute`. No policy, no state store. |
-| `fake_worker/` | **B** | B's scheduler | Heartbeats scripted state. Accepts `Execute`, sleeps a scripted duration, delivers to `client_endpoint`. No engine. |
 
-Each costs about half a day. They are the difference between two people working in
-parallel and two people working in sequence on a timeline with no slack.
+The fake worker planned for the control-plane side was never needed: the control plane was
+developed against the real worker, and its placeholder directory is gone.
 
-**Both must be running by end of Week 1.** The Week-1 joint gate is an end-to-end single
-request through the *real* worker and *real* scheduler — but neither person should be
-blocked waiting for that to get their own half working.
-
-Emit C-4-conformant records from both. `uv run contracts/check.py` validates the
-examples; point it at your fixture output too. If A's fake scheduler and B's fake worker
-both emit records that pass, the two halves will join when they meet for real.
-
-**What a run driven by the fake scheduler cannot tell you.** It writes no scheduler log, on
+**What a run driven by the fake scheduler cannot tell us.** It writes no scheduler log, on
 purpose, so `chosen_node`, `decide_us`, `chosen_queue_depth`, `best_alt_node` and
 `routing_error_ms` are null in every joined record it produces, and the `chosen_node` in its
 ack is the worker's endpoint string rather than a node id. It also selects by blind rotation,
 so it cannot carry a policy comparison: MPR-2 is the four-policy decomposition, and a
-rotation has no policy to decompose. Every hardware run committed to date went through it,
-which is why the whole decision-derived half of C-5 is empty so far. The real scheduler
-replaces it and is tracked in issue #14.
+rotation has no policy to decompose.
 
-Delete these after Week 3. They are not part of the instrument, and a fake worker that
-survives into the measurement weeks is a fake worker somebody will eventually run a
-calibration against by accident.
+Its records are C-4-conformant, and `uv run contracts/check.py` validates the examples.

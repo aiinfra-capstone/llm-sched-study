@@ -65,13 +65,14 @@ Discharges: F-9, F-9a, F-9b, F-10–F-13, F-18, §5.1; threat R9.
 \includegraphics[width=\linewidth]{figures/fig03_deployment.pdf}
 ```
 
-## Figure 4 — Class View: Scheduler Core and the Five-Policy Factorial
+## Figure 4 — Class View: Scheduler Core and the Eight Policies
 `fig04_class_scheduler`
 
-> **Draft caption.** The five policies behind one dispatch interface. The four
-> cells form the $2\times2$ factorial of hardware-awareness against
+> **Draft caption.** The eight policies behind one dispatch interface. Four of
+> them form the $2\times2$ factorial of hardware-awareness against
 > queue-awareness; Threshold($T$) is the degenerate baseline against which H2
-> predicts convergence at high $R$. Clock and randomness are injected, which is
+> predicts convergence at high $R$. JSQ-fast-first, smooth weighted round-robin
+> and ECT are control arms. Clock and randomness are injected, which is
 > what permits the same object to run in the simulator.
 
 Discharges: F-1–F-3, F-6–F-8, F-13, F-14; hypotheses H1 and H2.
@@ -100,8 +101,10 @@ Discharges: F-16–F-20.
 > **Draft caption.** The simulator holds a `DispatchPolicy` object rather than a
 > copy, so any divergence from live routing is a difference in service time or
 > state, never in policy. Service-time parameters derive from the Week-2
-> calibration campaign including a noise term fitted to the observed variance
-> envelope and autocorrelation time $\tau$. `SimNode.batch_capacity` models
+> calibration campaign, with one lognormal multiplier per request,
+> $\exp(\sigma Z - \sigma^2/2)$, independent across requests and with $\sigma$
+> from the snapshot. There is no autocorrelation: $\tau$ is measured for K6 and
+> the simulator does not read it. `SimNode.batch_capacity` models
 > llama.cpp's fixed slot count exactly for every node in the pool, rather than
 > approximating two different admission models. Sweeps run only after validation.
 
@@ -115,7 +118,8 @@ Discharges: F-21–F-24; threats R2 and R9.
 `fig07_seq_request`
 
 > **Draft caption.** One request end to end. The capability view is read *as of*
-> `now − s`, where $s$ is the injected staleness of H3. Per-stage durations are
+> `now − s`, where $s$ is the injected staleness ($s = 0$ by default; $s > 0$ is
+> a robustness test of H1, since H3 is out of paper one). Per-stage durations are
 > each measured on the machine that observed both endpoints.
 
 Discharges: F-3, F-4, F-8, F-9, F-10, F-11, F-18.
@@ -127,9 +131,9 @@ Discharges: F-3, F-4, F-8, F-9, F-10, F-11, F-18.
 ## Figure 8 — Sequence: Experiment Execution and Simulator Validation
 `fig08_seq_experiment`
 
-> **Draft caption.** One experiment. An identical trace is replayed across all
-> five policies and across the hardware–simulator boundary. Sweeps proceed only
-> if p50 and p95 agree within the stated tolerance at three or more operating
+> **Draft caption.** One experiment. An identical trace is replayed across every
+> policy in the campaign and across the hardware–simulator boundary. Sweeps
+> proceed only if p50 and p95 agree within the stated tolerance at three or more operating
 > points; otherwise claims are restricted to the hardware-grounded range.
 
 Discharges: F-17, F-19, F-20, F-22, F-23.
@@ -156,11 +160,12 @@ Discharges: F-13–F-15; threat R4.
 `fig10_state_node`
 
 > **Draft caption.** Node lifecycle, with the scheduler-side freshness of that
-> node's throughput estimate shown as a separate region. Freshness is what H3
-> manipulates: the estimate ages toward the autocorrelation time $\tau$ of the
-> node's actual throughput unless a heartbeat resets it.
+> node's throughput estimate shown as a separate region. The estimate ages toward
+> the autocorrelation time $\tau$ of the node's actual throughput unless a
+> heartbeat resets it. $\tau$ is measured for K6; H3, which would manipulate
+> freshness, is out of paper one.
 
-Discharges: F-10; hypothesis H3; MPR-1.
+Discharges: F-10; MPR-1.
 
 ```latex
 \includegraphics[width=0.7\linewidth]{figures/fig10_state_node.pdf}
@@ -170,7 +175,7 @@ Discharges: F-10; hypothesis H3; MPR-1.
 `fig11_activity_dispatch`
 
 > **Draft caption.** The dispatch decision across client, scheduler, and worker.
-> Admissibility is applied to every policy including the baselines, and all five
+> Admissibility is applied to every policy including the baselines, and all eight
 > branches share one interface, so policy is the only factor that varies across
 > a comparison.
 

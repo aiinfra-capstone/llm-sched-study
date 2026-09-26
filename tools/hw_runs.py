@@ -513,6 +513,11 @@ def trace_for(workload: Workload, gen_seed: int | None) -> TraceFile:
 
     A file already on disk keeps its identity, so a campaign that stopped resumes with the
     same `trace_sha256` in every manifest instead of splitting a run set across two.
+
+    This is a check against the generator at the current commit, within one campaign. It
+    shows the file's requests are what HEAD writes; it does not reproduce the file's hash.
+    Byte-identical regeneration at a later commit goes through the `generator_git_sha` each
+    manifest records (`tools/ensure_trace.py`).
     """
     if workload.trace_config is None:
         assert workload.trace is not None and workload.trace_sha256 is not None

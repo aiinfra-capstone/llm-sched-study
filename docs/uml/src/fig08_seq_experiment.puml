@@ -54,7 +54,7 @@ alt within tolerance at >= 3 operating points
   activate SIM
   SIM --> AN : simulated records, flagged simulated
   deactivate SIM
-  AN -> AN : H1 — 2x2 interaction term\nH2 — peak in (WJSQ - JSQ) over R\nH3 — peak shift under staleness
+  AN -> AN : H1 — 2x2 interaction term\nH2 — peak in (WJSQ - JSQ) over R\nH3 — out of paper one
   AN --> EX : figures + hypothesis tests
 else outside tolerance
   RUN --> EX : report validation error;\nrestrict claims to the hardware-grounded\nrange only (threat R2)

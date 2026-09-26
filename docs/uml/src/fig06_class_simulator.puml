@@ -60,8 +60,7 @@ package "Discrete-event simulator" #FFFCF5 {
   }
   class StochasticComponent {
     +sigma : float
-    +tau : float
-    +sample(now : float, rng : Random) : float
+    +sample(rng : Random) : float
   }
   DiscreteEventSimulator *--> SimClock
   DiscreteEventSimulator *--> EventHeap
@@ -107,8 +106,10 @@ end note
 
 note left of FittedServiceTimeModel
   Every parameter comes from the Week-2 calibration campaign: throughput against
-  prompt length and concurrency, plus a noise term fitted to the measured variance
-  envelope and autocorrelation time tau (F-22).
+  prompt length and concurrency, plus one lognormal multiplier per request,
+  exp(sigma Z - sigma^2 / 2), independent across requests, with sigma from the
+  snapshot's stochastic.sigma (F-22). There is no autocorrelation: tau is measured
+  for K6 and the simulator does not read it.
 end note
 
 note right of SimNode

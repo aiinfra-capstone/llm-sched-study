@@ -1,6 +1,6 @@
 @startuml fig04_class_scheduler
 !include theme.iuml
-title Figure 4 — Class View: Scheduler Core and the Five-Policy Factorial
+title Figure 4 — Class View: Scheduler Core and the Eight Policies
 
 skinparam linetype ortho
 
@@ -24,12 +24,26 @@ class WJSQ <<queue-aware · hw-aware>> {
 class ThresholdT <<degenerate baseline, H2>> {
   -T : float
 }
+class JSQFastFirst <<queue-aware · ties to fastest>> {
+  +choose() : NodeId
+}
+class StaticWeightedWRR <<queue-blind · hw-aware, smooth WRR>> {
+  -current : dict[NodeId, float]
+}
+class ECT <<expected completion time>> {
+  -capacities : dict[NodeId, int]
+  -mode : "known" | "unknown"
+  -priorOutputLen : int
+}
 
 DispatchPolicy <|.. RoundRobin
 DispatchPolicy <|.. JSQ
 DispatchPolicy <|.. StaticWeighted
 DispatchPolicy <|.. WJSQ
 DispatchPolicy <|.. ThresholdT
+DispatchPolicy <|.. JSQFastFirst
+DispatchPolicy <|.. StaticWeightedWRR
+DispatchPolicy <|.. ECT
 
 ' --- arrange the four factorial cells as a 2x2 block ---
 RoundRobin -[hidden]right- JSQ
@@ -96,11 +110,11 @@ class CapabilityView {
 CapabilityView ..> NodeState : serves aged copies
 CapabilityView o--> CostModel
 
-class StalenessInjector <<F-8>> {
-  +s : float
-  +age(view : CapabilityView, now : float) : list[NodeState]
+class StalenessVeil <<F-8>> {
+  -staleNs : long
+  +seed(v : NodeView, atNs : long) : void
 }
-CapabilityView *--> StalenessInjector
+CapabilityView *--> StalenessVeil
 
 abstract class CostModel <<F-6 / F-7>> {
   +fitted_at : float

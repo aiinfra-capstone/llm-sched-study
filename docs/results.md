@@ -1,7 +1,7 @@
 # Results
 
 Every measurement that currently stands, with its provenance, and every claim we have
-withdrawn. Snapshot of **2026-09-16**. This is what the write-up draws from.
+withdrawn. Snapshot of **2026-09-26**. This is what the write-up draws from.
 
 **The run set wins.** Each run set's `summary.json` is the source of truth. A number here that
 disagrees with it is wrong, and the superseded `summary_iid_v1.*` files are never cited.
@@ -38,8 +38,8 @@ Operating columns are the ratios the steady cells of the live runs recorded at 2
 | anchor | 3.00 | 1.78 [1.77, 1.78] | 3.10 [2.81, 3.42] | 9.97 | 7.16 [6.20, 8.34] | 1.19 | 2.07 [1.87, 2.29] | 2.24 | 1.79 |
 | summarisation | 13.76 | 2.56 [2.55, 2.58] | 4.51 [3.75, 5.40] | 11.15 | 7.29 [5.69, 9.43] | 1.19 | 2.54 [2.06, 3.08] | 4.57 | 2.98 |
 
-Supported: the same two machines look 1.39x or 2.59x apart at one slot depending only on the
-workload, and 2.2x to 4.4x at four slots.
+Supported: the same two machines look 1.38x or 2.56x apart at one slot depending only on the
+workload, and 2.2x to 4.5x at four slots.
 
 Not supported: that decode is nearly homogeneous on this pair. That holds at one slot only.
 The 3050 gains about 2.85x aggregate decode throughput from batching and the 1650 Ti about
@@ -273,7 +273,7 @@ hardware than the model it is parameterised from.
 
 Looking at the model itself shows why. Every one of the six buckets in the RTX 3050 snapshot
 of 2026-09-14 is **inverted in concurrency**: its mean service time at three concurrent
-requests is 14 to 40% *above* its mean at four. Sharing an engine with one more request
+requests is 10 to 23% *above* its mean at four. Sharing an engine with one more request
 cannot make a request faster, so this is a property of that measurement and not of the card.
 The GTX 1650 Ti snapshot taken on 2026-09-17 has no inversion in any bucket.
 
@@ -283,10 +283,14 @@ What the inversion does and does not touch:
   flight is charged a time the hardware never took, and the fast node under a queue-aware
   policy is where concurrency piles up.
 - **The hardware campaigns, not at all.** Capability, which is what WJSQ, ECT and
-  StaticWeighted are given, is the concurrency-1 decode rate, and the concurrency-1 row is
+  StaticWeighted are given, is the concurrency-1 service rate, and the concurrency-1 row is
   clean on both nodes. The SLO reference is also a concurrency-1 cell. No hardware decision
   was made from an inverted cell.
-- **K1 and the R ratios, not at all.** They come from the sustained segment.
+- **K1's one-slot ratios, not at all; its four-slot ratios, possibly.** K1 reads R from
+  the calibration grid (`tools/cell_intervals.py`), not from the sustained segment. The
+  one-slot cells are clean on both nodes. The four-slot ratios read the concurrency-4 cells
+  of the same inverted 3050 grid, so they are recomputed, with `grid()` now dropping any
+  batch that ran below its concurrency, when the 3050 is recalibrated.
 
 Two fixes are in, and E2.0 tonight is what closes it. `tools/promote_calibration.py` now
 refuses a snapshot that is inverted in concurrency, naming the buckets, so this cannot reach
@@ -476,7 +480,7 @@ Listed so that nothing re-enters from an old figure or an old summary.
 | 1650 Ti build flags unknown; its cost model predates the context pin and the driver | K1 | Engine bench and rebuild, then recalibration |
 | The harness shares a 6-core host with the slow node | K1 and every latency on that node | A third host, one anchor rerun |
 | Two nodes | H1's generality, Threshold's meaning | Simulator with 1 fast plus k slow |
-| The simulator understates `wjsq/jsq` at all six held-out shape points, by 0.015 to 0.053, and fails the contrast criterion | Every simulator claim, including H2, is illustrative until it is repaired | Section 8, E0.4. Traced to the RTX 3050 cost model being inverted in concurrency; E2.0 recalibrates it and the criterion is rerun |
+| The simulator understates `wjsq/jsq` at all six held-out shape points, by 0.010 to 0.066, and fails the contrast criterion | Every simulator claim, including H2, is illustrative until it is repaired | Section 8, E0.4. Traced to the RTX 3050 cost model being inverted in concurrency; E2.0 recalibrates it and the criterion is rerun |
 | Anchor trace is development data | Anchor results | Reported as development results; shapes and heavy-tailed traces are held out |
 | Shape is also campaign order and time of night | K4 | Interleaved shapes in the matched-load campaign |
 | The spec PDF disagrees on H1's sign and H2's observable | A reviewer given the spec | Recorded as deviations in `research-plan.md` section 7 |

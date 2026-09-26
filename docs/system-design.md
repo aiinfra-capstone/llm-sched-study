@@ -99,7 +99,7 @@ returns 0 for every pair, and the first node in the list absorbs every tie.
 | | Hardware | Simulator |
 |---|---|---|
 | Arrivals | Open-loop replay client on a real clock | Events at the trace's offsets |
-| Service | The engine | C-3 lookup by (prompt bucket, output bucket, concurrency), times a lognormal draw |
+| Service | The engine | C-3 lookup by (prompt bucket, output bucket, concurrency), times one lognormal multiplier per request, `exp(σZ - σ²/2)` with σ from the snapshot's `stochastic.sigma`, independent across requests and with no autocorrelation (K6 resolves no drift, so `autocorr_time_s` is not read) |
 | Concurrency effects | Real | `reevaluateActive` rescales the decode remainder when the batch changes; prefill passes through |
 | Queue state | The scheduler's own admit and complete counters, aged by the veil | The same, from `SimNodeServer` |
 | Transport | Real, and asymmetric by node | One additive per-node term from the manifest |
@@ -119,7 +119,7 @@ produces confident nonsense, so each has a check beside it.
 | No duration crosses a host boundary | Every span is stamped on one machine's monotonic clock; the leftover is one honest residual, never decomposed |
 | Clock discipline is recorded, not assumed | `clocksync` writes each host's method, offset, dispersion and rate error into every manifest; rate is what matters, and offset is subtracted from nothing |
 | Load generation stays open-loop | The client never waits for a response, asserts send lag per request, and a breach invalidates the run |
-| A trace is reproducible from (config, seed) and identified by its SHA-256 | `gen_trace` prints it, the replay refuses to start unless the file still hashes to it |
+| A trace is identified by its SHA-256, which covers (config, seed, generator commit) | `gen_trace` prints it, every manifest records the generator sha, regeneration at that sha is byte-identical, and the replay refuses to start unless the file still hashes to it |
 | The engine does not move | One tag, one commit, one patch, one quantisation, pinned context, recorded per node; the driver checks engine identity before and after every run and counts an unreadable engine as fatal |
 | Output length is an independent variable | `n_predict` plus `ignore_eos`, so service time never measures the model's stopping behaviour |
 | Service time does not depend on trace order | `cache_prompt: false` on every request, `--cache-ram 0` on the engine |
@@ -138,14 +138,16 @@ Written down because each one bounds what a result can mean.
 - The veil ages queue counts only. Capability never ages.
 - `jsq` and `wjsq` score on `queueDepth() + inflight()`, so dispatch sees the size of the
   in-flight set but not its composition. Exposed through `batch_size_at_admission`.
-- Sweeps still set load as a rate, so pool utilisation rises with R. Until that changes, a
-  rise-and-fall in R can come from saturation alone.
+- Sweeps set load either as a rate scale or as a pool utilisation (`pool_utilisation` in the
+  sweep grid). On a rate-scale axis pool utilisation rises with R, so a rise-and-fall in R
+  read off it can come from saturation alone; the utilisation axis holds load fixed across R.
 - Validation so far is single-node, in sample, and on absolute latency. The contrast criterion
   is in `analysis-plan.md` section 6.6.
 
 **Live path.**
-- `dispatch` forwards `Worker.Execute` synchronously and admits to its own counters after the
-  forward returns, so two near-simultaneous dispatches can both read the pre-admission state.
+- `dispatch` reads queue state, decides and records the admission under `stateLock`, and
+  forwards `Worker.Execute` only after, so two near-simultaneous dispatches each see the
+  other's admission. A forward that fails is rolled back under the same lock.
 - Transport is asymmetric on the first pair: 5 to 7 ms to the co-located node, 9 to 16 ms to
   the node over Wi-Fi. The simulator now takes a per-node term.
 - The harness shares a host with one pool node.
@@ -159,7 +161,7 @@ from an earlier draft.
 `runs/**` is ignored except for the things another person has to be able to open: the run
 manifest for every run, the admissible set, the load band, and the per-run-set `summary.json`
 that every number in `results.md` cites. Traces are regenerable byte for byte from (config,
-seed), and logs are large and per-run. The time-ordered C-3 snapshot series lives under
+seed) at the generator sha each manifest records, and logs are large and per-run. The time-ordered C-3 snapshot series lives under
 `contracts/cost_models/`, so parameterising the simulator does not require a copy of one
 laptop.
 

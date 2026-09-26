@@ -30,6 +30,15 @@ and never reached the table.
 77 snapshots in all. τ is resolved on no class (`docs/results.md`, K6).
 
 
+### A thin cell says so
+
+A cell is fitted only from the samples served at the concurrency it claims. When none were
+(the batch was draining for every sample), the cell is still fitted, from all of its samples,
+and the entry carries `thin: true`, since its service time is then biased low. `n_samples`
+counts the samples fitted. `thin` is optional in C-3: the committed snapshots predate it and
+leave it out.
+
+
 ### Every entry carries its phase split
 
 Each `entries[]` row now has `prefill_ms_mean` and `decode_ms_mean` alongside
@@ -119,9 +128,12 @@ does not read it; its noise is one i.i.d. lognormal multiplier per request from
 decays inside the first window, so the value is the 5 s floor or the window the series was
 measured with: an *upper bound*, not an estimate. The CPU class has a fitted 69.5 s with
 `r² = 0.989`, but its own calibration record says `tau_resolved: false`, and the
-block-bootstrap interval is 31 to 91 s (`tools/tau_interval.py`). Snapshots built from now on
-carry `tau_resolved` and `tau_censored` in the `stochastic` block, so a floor cannot be read
-as a measurement.
+block-bootstrap interval is 31 to 91 s (`tools/tau_interval.py`). Every snapshot carries
+`tau_resolved` and `tau_censored` in the `stochastic` block, and C-3 requires both, so a floor
+cannot be read as a measurement. The 77 committed snapshots predate the flags, so we copied
+them from each snapshot's calibration run (`campaign.json`, the `stationarity` record), after
+checking that the run's τ and `r²` match the ones in the snapshot. `build_snapshot` writes
+them itself from now on.
 
 That difference is not an accident of effort. The instrument can only see a correlation time
 longer than five times one request's service time (`bursts_per_window == window_s /

@@ -77,7 +77,7 @@ def test_a_draining_cell_keeps_only_its_steady_samples() -> None:
     """Six requests shared the engine with three others; the last two ran beside one."""
     cell = [_obs(4, 4.0)] * 6 + [_obs(4, 2.0, service_ms=60.0)] * 2
     assert cm.steady_samples(cell) == cell[:6]
-    assert cm.at_stated_concurrency(cell) == cell[:6]
+    assert cm.at_stated_concurrency(cell) == (cell[:6], False)
 
 
 def test_steady_allows_a_small_shortfall_and_no_more() -> None:
@@ -94,7 +94,7 @@ def test_a_cell_with_no_steady_sample_falls_back_rather_than_leaving_a_hole() ->
     worse than one with a known bias. The campaign reports the thin cell instead."""
     cell = [_obs(4, 1.5), _obs(4, 2.0), _obs(4, 3.0)]
     assert cm.steady_samples(cell) == []
-    assert cm.at_stated_concurrency(cell) == cell
+    assert cm.at_stated_concurrency(cell) == (cell, True)
 
 
 def test_a_sample_recorded_before_occupancy_existed_is_kept() -> None:

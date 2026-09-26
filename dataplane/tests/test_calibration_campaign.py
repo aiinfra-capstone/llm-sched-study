@@ -211,7 +211,7 @@ def test_failures_are_counted_but_never_fitted() -> None:
             o.concurrency,
         )
         cells.setdefault(key, []).append(o)
-    fitted = sum(len(cm.at_stated_concurrency(obs)) for obs in cells.values())
+    fitted = sum(len(cm.at_stated_concurrency(obs)[0]) for obs in cells.values())
 
     assert sum(e["n_samples"] for e in result.snapshots[0]["entries"]) == fitted
     assert fitted <= len(ok) < len(all_obs)

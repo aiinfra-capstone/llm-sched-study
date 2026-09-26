@@ -444,13 +444,15 @@ def test_refitting_the_g2_1650ti_run_changes_only_cells_above_one_slot(
     key = lambda e: (tuple(e["prompt_bucket"]), tuple(e["output_bucket"]), e["concurrency"])
     # The promoted snapshots carry the phase split `backfill_phase_split.py` added at
     # promotion. The fit now writes the same split itself, so at one slot the whole cell,
-    # split included, comes out as promoted.
+    # split included, comes out as promoted. The one key the fit adds is `thin` (D5), which
+    # the promoted snapshots predate, and a cell at one slot is never thin.
     old_cells = {key(e): e for e in old["entries"]}
     new_cells = {key(e): e for e in new["entries"]}
     assert set(new_cells) == set(old_cells)
     for k, e in new_cells.items():
         if k[2] == 1:
-            assert e == old_cells[k], k
+            assert e["thin"] is False, k
+            assert {f: v for f, v in e.items() if f != "thin"} == old_cells[k], k
         assert e["n_samples"] >= 1
     assert pool_load.capability(new) == pool_load.capability(old)
     kept = json.loads((out / "campaign.json").read_text())["grid_samples_at_stated_concurrency"]

@@ -284,3 +284,28 @@ def test_every_entry_carries_prefill_and_decode_means() -> None:
     ]
     (bare,) = _fit(untimed)["entries"]
     assert "prefill_ms_mean" not in bare and "decode_ms_mean" not in bare
+
+
+def test_a_cell_with_no_sample_at_its_concurrency_is_marked_thin() -> None:
+    """D5. A cell whose every sample ran with the batch already draining is still fitted,
+    since a hole in the grid cannot price a request at all, but the entry says it is thin.
+    `n_samples` counts the samples the entry was fitted from, not the ones that landed."""
+    from dataclasses import replace
+
+    def at(occupancy, **kw):
+        return replace(_obs(concurrency=4, **kw), occupancy_mean=occupancy)
+
+    full = [at(4.0, prompt_len=64, t=i) for i in range(3)] + [at(1.5, prompt_len=64, t=3)]
+    drained = [at(2.0, prompt_len=256, t=4 + i) for i in range(2)]
+
+    samples, thin = cm.at_stated_concurrency(full)
+    assert (samples, thin) == (full[:3], False)
+    assert cm.at_stated_concurrency(drained) == (drained, True)
+
+    snapshot = _fit(full + drained)
+    jsonschema.validate(snapshot, _SCHEMA)
+    by_prompt = {tuple(e["prompt_bucket"]): e for e in snapshot["entries"]}
+    assert by_prompt[(1, 128)]["thin"] is False
+    assert by_prompt[(1, 128)]["n_samples"] == 3
+    assert by_prompt[(129, 512)]["thin"] is True
+    assert by_prompt[(129, 512)]["n_samples"] == 2

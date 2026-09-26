@@ -46,7 +46,9 @@
     "model": "lognormal_multiplier",
     "sigma": 0.113,
     "autocorr_time_s": 42.0,
-    "fit_r2": 0.87
+    "fit_r2": 0.87,
+    "tau_resolved": true,
+    "tau_censored": false
   },
   "admissibility": {
     "max_prompt": 2048,

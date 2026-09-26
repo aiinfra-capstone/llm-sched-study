@@ -108,7 +108,12 @@
           },
           "n_samples": {
             "type": "integer",
-            "minimum": 1
+            "minimum": 1,
+            "description": "Samples fitted into this cell: those served at the stated concurrency, or every sample of the cell when it is `thin`."
+          },
+          "thin": {
+            "type": "boolean",
+            "description": "True when no sample in this cell was served at the stated concurrency (the batch was always draining), so the cell is fitted from all of its samples and its service time is biased low. Optional; absent means the snapshot predates the field."
           }
         }
       }
@@ -120,7 +125,9 @@
         "model",
         "sigma",
         "autocorr_time_s",
-        "fit_r2"
+        "fit_r2",
+        "tau_resolved",
+        "tau_censored"
       ],
       "properties": {
         "model": {
@@ -137,6 +144,14 @@
         },
         "fit_r2": {
           "type": "number"
+        },
+        "tau_resolved": {
+          "type": "boolean",
+          "description": "True when tau sits far enough above the resolution floor of the operating point (2x one request's duration) to be a measurement. Copied from the calibration run's stationarity report."
+        },
+        "tau_censored": {
+          "type": "boolean",
+          "description": "True when the autocorrelation showed no decay to fit, so `autocorr_time_s` is the one-window bound (the 5 s floor), not a fitted tau. Copied from the calibration run's stationarity report."
         }
       }
     },

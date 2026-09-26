@@ -177,13 +177,16 @@ def steady_samples(obs: list[Observation]) -> list[Observation]:
     ]
 
 
-def at_stated_concurrency(obs: list[Observation]) -> list[Observation]:
-    """`steady_samples`, falling back to the whole cell when none qualify.
+def at_stated_concurrency(obs: list[Observation]) -> tuple[list[Observation], bool]:
+    """(samples to fit, thin): `steady_samples`, or the whole cell when none qualify.
 
-    A cost model with a hole in it is worse than one with a known bias, and the campaign
-    reports how many samples each cell kept, so a thin cell is visible rather than silent.
+    A cost model with a hole in it is worse than one with a known bias, so a cell with no
+    sample at its stated concurrency is still fitted, from every sample it has. It comes
+    back marked thin, and the entry says so (`thin` in C-3), rather than reporting a
+    draining batch's speed as the stated concurrency's.
     """
-    return steady_samples(obs) or obs
+    steady = steady_samples(obs)
+    return (steady, False) if steady else (obs, True)
 
 
 # What C-3's `stochastic` block carries, read from `StationarityReport.to_dict()`. The two
@@ -210,9 +213,17 @@ def stochastic_block(report: dict[str, Any]) -> dict[str, Any]:
 
 
 def _cell_entry(
-    obs: list[Observation], prompt_bucket: tuple[int, int], output_bucket: tuple[int, int]
+    obs: list[Observation],
+    prompt_bucket: tuple[int, int],
+    output_bucket: tuple[int, int],
+    *,
+    thin: bool = False,
 ) -> dict[str, Any]:
-    """One C-3 `entries[]` row from the samples that landed in one grid cell."""
+    """One C-3 `entries[]` row from the samples fitted for one grid cell.
+
+    `n_samples` counts those samples only. `thin` says they were not served at the cell's
+    stated concurrency (`at_stated_concurrency`).
+    """
     service_ms = np.array([o.service_ms for o in obs], dtype=np.float64)
     tok_s = [o.decode_tokens_per_s for o in obs]
     measured = [t for t in tok_s if t is not None]
@@ -227,6 +238,7 @@ def _cell_entry(
         # one sample's worth, not drag the node's advertised speed down with it.
         "tokens_per_s": round(float(np.median(measured)), 4) if measured else 0.0,
         "n_samples": len(obs),
+        "thin": thin,
     }
     # The phase split, as backfill_phase_split writes it: each phase's share of the timed
     # samples' service time, applied to this cell's mean. With every sample timed that is
@@ -294,10 +306,10 @@ def build_snapshot(
         )
         cells.setdefault(key, []).append(o)
 
-    entries = [
-        _cell_entry(at_stated_concurrency(obs), p_bucket, o_bucket)
-        for (p_bucket, o_bucket, _), obs in sorted(cells.items())
-    ]
+    entries = []
+    for (p_bucket, o_bucket, _), obs in sorted(cells.items()):
+        fitted, thin = at_stated_concurrency(obs)
+        entries.append(_cell_entry(fitted, p_bucket, o_bucket, thin=thin))
     return {
         "cost_model_schema": SCHEMA_VERSION,
         "snapshot_id": snapshot_id(node_class, measured_at_unix),

@@ -41,7 +41,38 @@
     },
     "config": {
       "type": "object",
-      "description": "Verbatim config."
+      "description": "Verbatim config.",
+      "properties": {
+        "generator_git_sha": {
+          "type": "string",
+          "description": "The `generator_git_sha` from the header of the trace this run replayed. The trace SHA-256 covers the header, so it identifies (config, seed, generator commit); regenerating the trace at this sha reproduces it byte for byte when the generator still writes the same stream (`tools/ensure_trace.py`)."
+        },
+        "worker_log_counts": {
+          "type": "object",
+          "description": "node_id -> {dispatched, logged}: requests the client saw acknowledged by that node, and records in its worker log. Compared before the manifest is written; any node where the two differ counts towards `validity.worker_log_incomplete`.",
+          "additionalProperties": {
+            "type": "object",
+            "required": [
+              "dispatched",
+              "logged"
+            ],
+            "properties": {
+              "dispatched": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "logged": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        },
+        "allow_dirty": {
+          "type": "boolean",
+          "description": "Present and true when the campaign was started with --allow-dirty from a working tree with uncommitted changes, so `git_shas` name a commit the running code had edits on top of. See `git_dirty`."
+        }
+      }
     },
     "trace_path": {
       "type": "string"
@@ -358,6 +389,24 @@
         }
       }
     },
+    "git_dirty": {
+      "type": "object",
+      "description": "Per component, whether the working tree had uncommitted changes or untracked files when the manifest was written. A true value means `git_shas` names a commit the code that ran had edits on top of. Optional, and absent means the run predates the field.",
+      "properties": {
+        "worker": {
+          "type": "boolean"
+        },
+        "scheduler": {
+          "type": "boolean"
+        },
+        "harness": {
+          "type": "boolean"
+        },
+        "sim": {
+          "type": "boolean"
+        }
+      }
+    },
     "f18_status": {
       "enum": [
         "full",
@@ -388,8 +437,11 @@
           "type": "integer"
         },
         "heartbeat_gaps": {
-          "type": "integer",
-          "description": "Detected via Heartbeat.seq gaps."
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Missed heartbeats, summed over nodes from the scheduler's `heartbeat_summary` records (Heartbeat.seq gaps). Null when the run could not count them, and then `unmeasured` names it: null is never written as 0. Reported, never fatal."
         },
         "engine_restarts": {
           "type": "integer"
@@ -411,6 +463,18 @@
           "type": "integer",
           "minimum": 0,
           "description": "Hosts in `clock_sync.hosts` whose time daemon reported no discipline. Optional, and absent means the run predates the field or had no clock block at all.\\n\\nReported, never fatal. The pipeline acts only on the rate error, since a constant offset cancels in a difference of single-host durations, and 100 ppm on a 900 ms request is 0.09 ms. An unsynchronised host costs the evidence that the durations were comparable, not the durations themselves."
+        },
+        "worker_log_incomplete": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Pool nodes whose worker log does not hold one record per dispatch (`config.worker_log_counts`). Optional, and absent means the run predates the field.\n\nFatal: the join is then short of the requests still running at the end of the run, which are the slowest ones, not a random sample."
+        },
+        "unmeasured": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Names of validity fields this run could not measure, for example `heartbeat_gaps` for a simulator run, which has no heartbeats. Reported, never fatal. Optional; written by the harness and by SimApp alike."
         }
       }
     }

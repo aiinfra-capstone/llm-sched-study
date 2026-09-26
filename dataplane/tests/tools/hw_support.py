@@ -52,6 +52,9 @@ class Pool:
     records: list[dict[str, Any]] | None = None
     validity: manifest_mod.Validity = field(default_factory=manifest_mod.Validity)
     worker_lines: dict[str, int] | None = None
+    # The order of the Maven steps main() takes: "compile", then "exec:java" per run.
+    maven: list[str] = field(default_factory=list)
+    compile_fails: bool = False
 
     # ------------------------------------------------------------------ engine reads
 
@@ -96,6 +99,7 @@ class Pool:
                 self.pre_path = pre_path
 
             def start(self, timeout_s: float = 300.0) -> None:
+                pool.maven.append("exec:java")
                 pool.schedulers.append(self.pre_path)
                 pool.phase = "during"
 
@@ -125,6 +129,11 @@ class Pool:
             validity=self.validity,
             header=gen_trace.load(kw["trace_path"])[0],
         )
+
+    def compile_scheduler(self) -> None:
+        self.maven.append("compile")
+        if self.compile_fails:
+            raise RuntimeError("mvn -q compile failed: COMPILATION ERROR")
 
     def pull_worker_log(self, node_id, logs, run_id, run_dir):
         path = run_dir / f"worker_{node_id}_{run_id}.jsonl"
@@ -162,6 +171,11 @@ def install(monkeypatch, tmp_path: Path) -> Pool:
     pool = Pool(tmp=tmp_path, real_run=subprocess.run)
     monkeypatch.setattr(hw_runs.subprocess, "run", pool.run)
     monkeypatch.setattr(hw_runs, "Scheduler", pool.scheduler_class())
+    monkeypatch.setattr(hw_runs, "compile_scheduler", pool.compile_scheduler)
+    # The checkout the suite runs in may well have edits in it; a test that is not about the
+    # dirty-tree refusal runs as though from a clean one.
+    clean = dict.fromkeys(manifest_mod.COMPONENTS, False)
+    monkeypatch.setattr(manifest_mod, "git_dirty", lambda root=None: clean)
     monkeypatch.setattr(hw_runs.replay_mod, "replay", pool.replay)
     monkeypatch.setattr(hw_runs, "pull_worker_log", pool.pull_worker_log)
     monkeypatch.setattr(hw_runs.time, "sleep", lambda s: None)

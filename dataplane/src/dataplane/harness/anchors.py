@@ -26,8 +26,9 @@ Week 3's exit criterion names both.
 What this module does **not** do is bring the pool up. `llama-server`, the worker wrapper
 and the scheduler are three processes with three lifetimes, and a campaign runner that
 owned them would hide an engine restart inside a Python traceback. They are started by the
-operator (README), and this connects to them; `engine_restarts` in the validity block is
-counted, not caused.
+operator (README), and this connects to them. Each node's llama-server is read before and
+after every point, as `hw_runs` does, so `engine_restarts` and `engine_unchecked` in the
+validity block are counted from those reads, and `config.engine_check` records them.
 """
 
 from __future__ import annotations
@@ -36,12 +37,13 @@ import argparse
 import asyncio
 import json
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from dataplane.calibration.admissible import ANCHOR_ROOT
-from dataplane.harness import gen_trace
+from dataplane.harness import gen_trace, launch
 from dataplane.harness import manifest as manifest_mod
 from dataplane.harness import replay as replay_mod
 
@@ -85,6 +87,11 @@ class AnchorConfig:
     # measurement of the pool taken just before the run, not a property of the run's design.
     clock_sync: dict[str, Any] | None = None
     tag: str = "anchor"
+    # Read each pool node's llama-server before and after every point. Off only for a pool
+    # whose engines cannot be reached, and then the manifest says "disabled" in words.
+    check_engine_restarts: bool = True
+    # node_id -> ssh destination for the engine read. A node not named is read locally.
+    ssh: dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> AnchorConfig:
@@ -112,6 +119,15 @@ class AnchorConfig:
             out_root=Path(d.get("out_root", ANCHOR_ROOT)),
             cost_model_snapshots=d.get("cost_model_snapshots", {}),
             tag=d.get("tag", "anchor"),
+            check_engine_restarts=bool(d.get("check_engine_restarts", True)),
+            ssh=dict(d.get("ssh", {})),
+        )
+
+    def read_engines(self) -> dict[str, str | None]:
+        """One read of every pool node's llama-server."""
+        pool = [n for n in self.nodes if n.get("role", "pool") == "pool"]
+        return launch.engine_processes(
+            [{"node_id": n["node_id"], "ssh": self.ssh.get(n["node_id"])} for n in pool]
         )
 
 
@@ -151,6 +167,8 @@ def _reasons(validity: dict[str, Any]) -> list[str]:
         out.append(f"{validity['colocated_nodes']} co-located node(s)")
     if validity["engine_restarts"]:
         out.append(f"{validity['engine_restarts']} engine restart(s)")
+    if validity.get("engine_unchecked"):
+        out.append(f"{validity['engine_unchecked']} engine(s) that could not be read")
     return out
 
 
@@ -161,8 +179,13 @@ def build_manifest(
     *,
     run_id: str,
     started_unix: int,
+    engine_check: dict[str, dict[str, str | None]] | Literal["disabled"],
 ) -> dict[str, Any]:
     """A C-6 manifest for one anchor, with the operating point recorded as `lambda`.
+
+    `engine_check` is node_id -> {before, after, verdict}, from `launch.engine_verdict`,
+    and the restart and unchecked counts are taken from it. "disabled" says in words that
+    nobody looked, because `engine_restarts: 0` alone would read as "the engines stayed up".
 
     `lambda` is the trace's base rate multiplied by the compression factor, because that
     is the load the pool actually saw. The unscaled rate stays visible in `config.arrival`,
@@ -170,13 +193,17 @@ def build_manifest(
     the manifest still means requests per second.
     """
     header = result.header
+    checks = {} if engine_check == "disabled" else engine_check
+    verdicts = [c["verdict"] for c in checks.values()]
     validity = manifest_mod.Validity(
         max_send_lag_ms=result.validity.max_send_lag_ms,
         send_lag_violations=result.validity.send_lag_violations,
         dropped_requests=result.validity.dropped_requests,
         heartbeat_gaps=result.validity.heartbeat_gaps,
-        engine_restarts=result.validity.engine_restarts,
-        colocated_nodes=_colocated(config.nodes),
+        engine_restarts=result.validity.engine_restarts
+        + sum(v in ("changed", "died") for v in verdicts),
+        engine_unchecked=result.validity.engine_unchecked + verdicts.count("unknown"),
+        colocated_nodes=launch.colocated_count(config.nodes),
         clock_unsynced_hosts=manifest_mod.unsynced_hosts(config.clock_sync),
     )
     run_config = {
@@ -191,6 +218,10 @@ def build_manifest(
         # a config rate and a scale factor lands on 0.7200000000000001 often enough to be
         # worth not putting in an artifact people read.
         "lambda": round(float(header["arrival"].get("lambda_base", 0.0)) * point.rate_scale, 6),
+        "engine_check": engine_check,
+        # The trace hash covers the generator commit, so this is what regenerates it byte for
+        # byte (`tools/ensure_trace.py`).
+        "generator_git_sha": header["generator_git_sha"],
     }
     return manifest_mod.build(
         run_id=run_id,
@@ -207,20 +238,12 @@ def build_manifest(
     )
 
 
-def _colocated(nodes: list[dict[str, Any]]) -> int:
-    """F-9a, counted here rather than imported, so an anchor manifest carries the number.
-
-    The launcher already refuses to *start* a co-located pool; this is the record that the
-    pool which actually ran was not one.
-    """
-    hosts: dict[str, int] = {}
-    for n in nodes:
-        if n.get("role", "pool") == "pool":
-            hosts[n["host"]] = hosts.get(n["host"], 0) + 1
-    return sum(c for c in hosts.values() if c > 1)
-
-
-async def run_anchors(config: AnchorConfig, *, sleep=asyncio.sleep) -> list[AnchorResult]:
+async def run_anchors(
+    config: AnchorConfig,
+    *,
+    sleep=asyncio.sleep,
+    read_engines: Callable[[], dict[str, str | None]] | None = None,
+) -> list[AnchorResult]:
     """Replay the trace once per operating point, slowest first, writing one run each.
 
     Slowest first because the engine is coldest at the start: a run that begins with a
@@ -233,6 +256,7 @@ async def run_anchors(config: AnchorConfig, *, sleep=asyncio.sleep) -> list[Anch
     # inside them: three runs is tens of minutes, and discovering the trace is not the
     # trace the manifest will claim is worth ten seconds at the start.
     gen_trace.load(config.trace, expect_sha256=config.trace_sha256)
+    read = read_engines or config.read_engines
 
     results: list[AnchorResult] = []
     for i, point in enumerate(sorted(config.points, key=lambda p: p.rate_scale)):
@@ -240,6 +264,7 @@ async def run_anchors(config: AnchorConfig, *, sleep=asyncio.sleep) -> list[Anch
             await sleep(config.settle_s)
         started_unix = int(time.time())
         run_id = f"{config.tag}_{point.name}_{started_unix}"
+        before = read() if config.check_engine_restarts else {}
         result = await replay_mod.replay(
             trace_path=config.trace,
             scheduler_endpoint=config.scheduler,
@@ -250,7 +275,25 @@ async def run_anchors(config: AnchorConfig, *, sleep=asyncio.sleep) -> list[Anch
             warmup_s=config.warmup_s,
             rate_scale=point.rate_scale,
         )
-        manifest = build_manifest(config, point, result, run_id=run_id, started_unix=started_unix)
+        engine_check: dict[str, dict[str, str | None]] | Literal["disabled"] = "disabled"
+        if config.check_engine_restarts:
+            after = read()
+            engine_check = {
+                node_id: {
+                    "before": was,
+                    "after": after.get(node_id),
+                    "verdict": launch.engine_verdict(was, after.get(node_id)),
+                }
+                for node_id, was in before.items()
+            }
+        manifest = build_manifest(
+            config,
+            point,
+            result,
+            run_id=run_id,
+            started_unix=started_unix,
+            engine_check=engine_check,
+        )
         run_dir = config.out_root / run_id
         run_dir.mkdir(parents=True, exist_ok=True)
         (run_dir / f"client_{run_id}.jsonl").write_text(

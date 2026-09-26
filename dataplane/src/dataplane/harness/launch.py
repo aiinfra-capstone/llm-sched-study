@@ -28,12 +28,27 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
+import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from dataplane.harness.manifest import Validity
 
-__all__ = ["NodeSpec", "build_nodes", "colocated_count", "validity_for"]
+__all__ = [
+    "ENGINE_PS",
+    "NodeSpec",
+    "build_nodes",
+    "colocated_count",
+    "engine_processes",
+    "engine_verdict",
+    "on_host",
+    "validity_for",
+]
+
+# One line per llama-server: pid, start time, command line. A restart changes the first two.
+ENGINE_PS = "ps -C llama-server -o pid=,lstart=,args="
 
 _REQUIRED_ENGINE_CONFIG = ("ngl", "threads", "parallel")
 
@@ -141,6 +156,76 @@ def build_nodes(specs: list[dict[str, Any]], *, allow_colocation: bool = False) 
 def validity_for(nodes: list[dict[str, Any]], **counts: Any) -> Validity:
     """A C-6 validity block carrying the co-location count the launcher measured."""
     return Validity(colocated_nodes=colocated_count(nodes), **counts)
+
+
+def on_host(
+    ssh: str | None,
+    command: str,
+    *,
+    timeout_s: float = 20,
+    attempts: int = 2,
+    run: Callable[..., subprocess.CompletedProcess[str]] | None = None,
+) -> str | None:
+    """Run a shell command on a host: over ssh when `ssh` names one, else locally.
+
+    Returns the command's output, or None when it could not be run at all. The two are
+    different findings and the caller treats them differently: a `ps` that ran and printed
+    nothing says the engine is gone, which is a restart, while an ssh that never connected
+    says nothing about the engine at all.
+
+    Retried once by default, because one refused connection is not evidence either way.
+    `run` is looked up at call time so a test can replace `subprocess.run`.
+    """
+    run = run or subprocess.run
+    cmd = ["ssh", "-o", "BatchMode=yes", ssh, command] if ssh else ["sh", "-c", command]
+    for attempt in range(attempts):
+        try:
+            result = run(cmd, capture_output=True, text=True, timeout=timeout_s, check=False)
+        except (OSError, subprocess.SubprocessError):
+            result = None
+        if result is not None and result.returncode in (0, 1):
+            # `ps -C` exits 1 when it matched no process, which is an answer.
+            return result.stdout
+        if attempt + 1 < attempts:
+            time.sleep(1.0)
+    return None
+
+
+def engine_processes(
+    nodes: list[dict[str, Any]],
+    *,
+    run: Callable[..., subprocess.CompletedProcess[str]] | None = None,
+) -> dict[str, str | None]:
+    """node_id -> `pid start args` of its llama-server.
+
+    Each node is read on the host its `ssh` key names, or locally without one. An empty
+    string means the read worked and found no llama-server. None means the read itself
+    failed, so nothing was learned.
+    """
+    out: dict[str, str | None] = {}
+    for node in nodes:
+        answer = on_host(node.get("ssh"), ENGINE_PS, run=run)
+        out[node["node_id"]] = None if answer is None else " ".join(answer.split())
+    return out
+
+
+def engine_verdict(
+    before: str | None, after: str | None
+) -> Literal["same", "changed", "died", "unknown"]:
+    """What one node's engine did across a run, from a read before and a read after.
+
+    A read that failed teaches nothing, and neither does a run whose engine was already
+    missing before it: that is `unknown`, which is neither a restart nor a clean run. `ps`
+    that ran after the run and found no llama-server means the engine that served it is
+    gone, which is a restart by the time anyone reads the record.
+    """
+    if after is None or not before:
+        return "unknown"
+    if before == after:
+        return "same"
+    if not after:
+        return "died"
+    return "changed"
 
 
 def main(argv: list[str] | None = None) -> int:

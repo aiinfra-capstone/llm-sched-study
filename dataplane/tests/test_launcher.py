@@ -9,9 +9,11 @@ has to be caught before the run.
 from __future__ import annotations
 
 import json
+import subprocess
 
 import pytest
 
+from dataplane.harness import launch
 from dataplane.harness.launch import build_nodes, colocated_count, main, validity_for
 
 _EC = {"ngl": 20, "threads": 6, "parallel": 4}
@@ -110,3 +112,58 @@ def test_cli_writes_the_node_block_and_flags_colocation(tmp_path, capsys) -> Non
     shared.write_text(json.dumps([_node("n1", "boxA"), _node("n2", "boxA")]))
     assert main([str(shared), "--allow-colocation"]) == 1
     assert "cannot be analysed" in capsys.readouterr().out
+
+
+# --------------------------------------------------------------------------------------
+# Engine reads, shared by hw_runs and anchors
+# --------------------------------------------------------------------------------------
+
+
+def test_engine_verdict_covers_same_changed_died_unknown() -> None:
+    line = "4242 Mon Sep 15 10:00:00 2026 /opt/llama/bin/llama-server -m /m/1b.gguf"
+    other = "5151 Mon Sep 15 10:07:00 2026 /opt/llama/bin/llama-server -m /m/1b.gguf"
+    assert launch.engine_verdict(line, line) == "same"
+    assert launch.engine_verdict(line, other) == "changed"
+    # ps ran after the run and found no llama-server: the engine that served it is gone.
+    assert launch.engine_verdict(line, "") == "died"
+    # A read that failed teaches nothing, before or after, and neither does a run whose
+    # engine was already missing when it started.
+    assert launch.engine_verdict(line, None) == "unknown"
+    assert launch.engine_verdict(None, line) == "unknown"
+    assert launch.engine_verdict("", line) == "unknown"
+
+
+def test_engine_processes_reads_locally_or_over_ssh_and_retries_a_failed_read(
+    monkeypatch,
+) -> None:
+    calls = []
+    answers = {
+        "local": [subprocess.CompletedProcess([], 0, stdout="1  a   b\n", stderr="")],
+        "u@far": [
+            subprocess.CompletedProcess([], 255, stdout="", stderr="refused"),
+            subprocess.CompletedProcess([], 1, stdout="", stderr=""),
+        ],
+        "u@gone": [subprocess.CompletedProcess([], 255, stdout="", stderr="refused")] * 2,
+        "u@slow": [],
+    }
+
+    def run(cmd, **kw):
+        where = cmd[3] if cmd[0] == "ssh" else "local"
+        calls.append((where, cmd))
+        if not answers[where]:
+            raise subprocess.TimeoutExpired(cmd, kw["timeout"])
+        return answers[where].pop(0)
+
+    monkeypatch.setattr(launch.time, "sleep", lambda s: None)
+    nodes = [
+        {"node_id": "here"},
+        {"node_id": "far", "ssh": "u@far"},
+        {"node_id": "gone", "ssh": "u@gone"},
+        {"node_id": "slow", "ssh": "u@slow"},
+    ]
+    got = launch.engine_processes(nodes, run=run)
+    assert got == {"here": "1 a b", "far": "", "gone": None, "slow": None}
+    local = next(cmd for where, cmd in calls if where == "local")
+    assert local == ["sh", "-c", launch.ENGINE_PS]
+    assert [w for w, _ in calls].count("u@far") == 2
+    assert [w for w, _ in calls].count("u@gone") == 2

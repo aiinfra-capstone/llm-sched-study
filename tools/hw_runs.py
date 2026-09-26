@@ -66,7 +66,7 @@ import threading
 import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pool_load
 from dataplane.harness import gen_trace, launch
@@ -197,6 +197,9 @@ class Campaign:
     scheduler_seeds: list[int] | None = None
     check_engine_restarts: bool = True
     engine_provenance: dict[str, Any] = field(default_factory=dict)
+    # Set by main() from --allow-dirty when the tree had uncommitted changes, never read from
+    # the campaign file: it describes the checkout the campaign ran from, not its design.
+    allow_dirty: bool = False
 
     @property
     def trace(self) -> Path | None:
@@ -539,7 +542,13 @@ def trace_for(workload: Workload, gen_seed: int | None) -> TraceFile:
     return TraceFile(path, sha, header)
 
 
-ENGINE_PS = "ps -C llama-server -o pid=,lstart=,args="
+ENGINE_PS = launch.ENGINE_PS
+
+
+def _ssh_target(c: Campaign, node_id: str) -> str | None:
+    """The ssh destination a node's log location names, or None for a local node."""
+    host, sep, _ = c.workers[node_id].get("logs", "").partition(":")
+    return host if sep and "/" not in host else None
 
 
 def _on_node(
@@ -547,32 +556,10 @@ def _on_node(
 ) -> str | None:
     """Run a shell command on a node's host: over ssh when its log location is remote.
 
-    Returns the command's output, or None when it could not be run at all. The two are
-    different findings and the caller treats them differently: a `ps` that ran and printed
-    nothing says the engine is gone, which is a restart, while an ssh that never connected
-    says nothing about the engine at all.
-
-    Retried once by default, because one refused connection is not evidence either way.
+    See `launch.on_host`: None means the command could not be run at all, which is a
+    different finding from a command that ran and printed nothing.
     """
-    host, sep, _ = c.workers[node_id].get("logs", "").partition(":")
-    cmd = (
-        ["ssh", "-o", "BatchMode=yes", host, command]
-        if sep and "/" not in host
-        else ["sh", "-c", command]
-    )
-    for attempt in range(attempts):
-        try:
-            result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=timeout_s, check=False
-            )
-        except (OSError, subprocess.SubprocessError):
-            result = None
-        if result is not None and result.returncode in (0, 1):
-            # `ps -C` exits 1 when it matched no process, which is an answer.
-            return result.stdout
-        if attempt + 1 < attempts:
-            time.sleep(1.0)
-    return None
+    return launch.on_host(_ssh_target(c, node_id), command, timeout_s=timeout_s, attempts=attempts)
 
 
 def engine_provenance(c: Campaign) -> dict[str, dict[str, Any]]:
@@ -623,16 +610,8 @@ def engine_provenance(c: Campaign) -> dict[str, dict[str, Any]]:
 
 
 def engine_processes(c: Campaign) -> dict[str, str | None]:
-    """node_id -> `pid start args` of its llama-server.
-
-    An empty string means the read worked and found no llama-server. None means the read
-    itself failed, so nothing was learned.
-    """
-    out: dict[str, str | None] = {}
-    for node_id in c.workers:
-        answer = _on_node(c, node_id, ENGINE_PS)
-        out[node_id] = None if answer is None else " ".join(answer.split())
-    return out
+    """node_id -> `pid start args` of its llama-server. See `launch.engine_processes`."""
+    return launch.engine_processes([{"node_id": n, "ssh": _ssh_target(c, n)} for n in c.workers])
 
 
 def pre_run_manifest(
@@ -651,6 +630,9 @@ def pre_run_manifest(
         "arrival": header["arrival"],
         "length_dist": header["length_dist"],
         "gen_seed": header["gen_seed"],
+        # The trace hash covers the generator commit, so this is what regenerates it byte for
+        # byte (`tools/ensure_trace.py`).
+        "generator_git_sha": header["generator_git_sha"],
         "staleness_s": run.staleness_s,
         "repeat": run.repeat,
         "sequence_no": run.sequence_no,
@@ -686,6 +668,9 @@ def pre_run_manifest(
         config["seed"] = run.scheduler_seed
     if run.workload is not None and run.workload.name:
         config["workload"] = run.workload.name
+    if c.allow_dirty:
+        # Said in the record: the git shas name a commit the running code had edits on top of.
+        config["allow_dirty"] = True
     return manifest_mod.build(
         run_id=run.run_id,
         config=config,
@@ -706,6 +691,28 @@ def pre_run_manifest(
         },
         clock_sync=c.clock_sync,
     )
+
+
+def compile_scheduler(*, run=None) -> None:
+    """`mvn -q compile` the control plane, so the scheduler a run starts is today's code.
+
+    `exec:java` runs whatever classes are in `target/`, and those can be older than the
+    sources the manifest's git sha names. Compiling first makes the two the same. A failed
+    compile raises: no run starts against classes that do not match the tree.
+    """
+    run = run or subprocess.run
+    mvn = shutil.which("mvn")
+    if mvn is None:
+        raise RuntimeError("mvn not found on PATH; the live scheduler runs through Maven")
+    result = run(
+        [mvn, "-q", "-f", str(REPO_ROOT / "controlplane" / "pom.xml"), "compile"],
+        cwd=REPO_ROOT / "controlplane",
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"mvn -q compile failed: {(result.stdout + result.stderr)[-1500:]}")
 
 
 class Scheduler:
@@ -881,6 +888,18 @@ def run_one(c: Campaign, run: Run, header: dict[str, Any], trace: TraceFile | No
         worker_counts[node_id] = (
             sum(1 for line in path.read_text().splitlines() if line.strip()) if path else 0
         )
+    # Compared before the manifest is written, so the file on disk says what this returns.
+    dispatched: dict[str, int] = {}
+    for r in result.records:
+        if r["chosen_node_from_ack"]:
+            dispatched[r["chosen_node_from_ack"]] = dispatched.get(r["chosen_node_from_ack"], 0) + 1
+    worker_log_counts = {
+        node_id: {"dispatched": dispatched.get(node_id, 0), "logged": n}
+        for node_id, n in sorted(worker_counts.items())
+    }
+    incomplete = [n for n, c_ in worker_log_counts.items() if c_["dispatched"] != c_["logged"]]
+    if incomplete:
+        result.validity = replace(result.validity, worker_log_incomplete=len(incomplete))
 
     # replay() counts failures inside the measurement window only. A response lost during
     # warmup is still a lost response, and on the first pair three of them (a summarisation
@@ -895,22 +914,13 @@ def run_one(c: Campaign, run: Run, header: dict[str, Any], trace: TraceFile | No
         engines_after = engine_processes(c)
         for node_id, before in engines_before.items():
             after = engines_after.get(node_id)
-            if after is None or not before:
-                # A read that failed after its retry taught nothing, and neither does a run
-                # whose engine was already missing before it. Not a restart, and not a clean
-                # run either.
-                verdict = "unknown"
-            elif before == after:
-                verdict = "same"
-            elif not after:
-                # `ps` ran and found no llama-server at all: the engine that served this
-                # run is gone, which is a restart by the time anyone reads the record.
-                verdict = "died"
-            else:
-                verdict = "changed"
             # `before` and `after` are kept as they were read, null included: a read that
             # failed is not an engine that printed nothing, and the record says which.
-            engine_check[node_id] = {"before": before, "after": after, "verdict": verdict}
+            engine_check[node_id] = {
+                "before": before,
+                "after": after,
+                "verdict": launch.engine_verdict(before, after),
+            }
         restarted = sorted(
             n for n, e in engine_check.items() if e["verdict"] in ("changed", "died")
         )
@@ -939,28 +949,49 @@ def run_one(c: Campaign, run: Run, header: dict[str, Any], trace: TraceFile | No
         clock_sync=c.clock_sync,
     )
     man["config"]["engine_check"] = engine_check if c.check_engine_restarts else "disabled"
+    man["config"]["worker_log_counts"] = worker_log_counts
     man["config_hash"] = manifest_mod.config_hash(man["config"])
     (run_dir / "manifest.json").write_text(json.dumps(man, indent=2) + "\n", encoding="utf-8")
 
-    dispatched: dict[str, int] = {}
-    for r in result.records:
-        if r["chosen_node_from_ack"]:
-            dispatched[r["chosen_node_from_ack"]] = dispatched.get(r["chosen_node_from_ack"], 0) + 1
     ok = sum(1 for r in result.records if r["status"] == "ok")
     v = man["validity"]
     print(
         f"  {ok}/{len(result.records)} ok  max send lag {v['max_send_lag_ms']:.1f} ms  "
         f"{'VALID' if v['valid'] else 'INVALID'}"
     )
-    complete = True
-    for node_id, n in worker_counts.items():
-        sent = dispatched.get(node_id, 0)
-        flag = "" if n == sent else "  MISMATCH"
-        complete = complete and n == sent
-        print(f"    {node_id}: dispatched {sent}, worker log {n}{flag}")
-    if not complete:
+    for node_id, counts in worker_log_counts.items():
+        flag = "" if node_id not in incomplete else "  MISMATCH"
+        print(
+            f"    {node_id}: dispatched {counts['dispatched']}, worker log {counts['logged']}{flag}"
+        )
+    if incomplete:
         print("    the worker log does not account for every dispatch; the join will be partial")
-    return bool(v["valid"]) and complete
+    return bool(v["valid"])
+
+
+def resume_state(run_dir: Path, run_id: str) -> Literal["todo", "done", "invalid"]:
+    """Where a planned run stands: not finished, finished and valid, or finished and invalid.
+
+    Only a run whose manifest says `valid: true` is done. A manifest that is invalid, or
+    that carries no validity block at all, is a run that finished and does not count, and
+    resume must not skip it as though it did.
+    """
+    manifest_path = run_dir / "manifest.json"
+    if not (manifest_path.is_file() and (run_dir / f"client_{run_id}.jsonl").is_file()):
+        return "todo"
+    man = json.loads(manifest_path.read_text(encoding="utf-8"))
+    return "done" if man.get("validity", {}).get("valid") is True else "invalid"
+
+
+def _move_aside(run_dir: Path) -> Path:
+    """Rename an invalid run to `<run_id>.invalid` (numbered if that is taken)."""
+    aside = run_dir.with_name(f"{run_dir.name}.invalid")
+    n = 1
+    while aside.exists():
+        n += 1
+        aside = run_dir.with_name(f"{run_dir.name}.invalid{n}")
+    run_dir.rename(aside)
+    return aside
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -976,6 +1007,17 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--keep-going", action="store_true", help="continue after a run fails to complete"
     )
+    ap.add_argument(
+        "--allow-dirty",
+        action="store_true",
+        help="run from a working tree with uncommitted changes; every manifest records it",
+    )
+    ap.add_argument(
+        "--rerun-invalid",
+        action="store_true",
+        help="move a finished run whose manifest is invalid to <run_id>.invalid and run it "
+        "again; by default it is reported, counted as not usable, and left alone",
+    )
     args = ap.parse_args(argv)
 
     c = Campaign.from_dict(json.loads(args.config.read_text(encoding="utf-8")))
@@ -983,7 +1025,9 @@ def main(argv: list[str] | None = None) -> int:
         c.clock_sync = json.loads(args.clock_sync.read_text(encoding="utf-8"))
     runs = plan(c)
     try:
-        check_campaign(c, snapshot_index(SNAPSHOT_ROOT), args.allow_colocation, allow_placeholder=args.dry_run)
+        check_campaign(
+            c, snapshot_index(SNAPSHOT_ROOT), args.allow_colocation, allow_placeholder=args.dry_run
+        )
         traces = {
             (r.workload.name, r.gen_seed): trace_for(r.workload, r.gen_seed)
             for r in runs
@@ -1021,6 +1065,22 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {r.sequence_no:3d}  {r.run_id}  {lam:.3f} req/s{seeds}")
         return 0
 
+    dirty = sorted(k for k, v in manifest_mod.git_dirty().items() if v)
+    if dirty and not args.allow_dirty:
+        print(
+            f"refusing: the working tree has uncommitted changes ({', '.join(dirty)}), so the "
+            "git shas a manifest records would not name the code that ran. Commit, or pass "
+            "--allow-dirty and every manifest says so"
+        )
+        return 2
+    c.allow_dirty = bool(dirty) and args.allow_dirty
+
+    try:
+        compile_scheduler()
+    except RuntimeError as exc:
+        print(f"refusing: {exc}")
+        return 2
+
     if c.check_engine_restarts:
         c.engine_provenance = engine_provenance(c)
         for node_id, prov in c.engine_provenance.items():
@@ -1032,11 +1092,20 @@ def main(argv: list[str] | None = None) -> int:
     for r in runs:
         assert r.workload is not None
         run_dir = r.workload.out_root / r.run_id
-        if (run_dir / "manifest.json").is_file() and (
-            run_dir / f"client_{r.run_id}.jsonl"
-        ).is_file():
+        state = resume_state(run_dir, r.run_id)
+        if state == "done":
             print(f"[{r.sequence_no + 1}/{len(runs)}] {r.run_id}  already done, skipped")
             continue
+        if state == "invalid" and not args.rerun_invalid:
+            print(
+                f"[{r.sequence_no + 1}/{len(runs)}] {r.run_id}  recorded as invalid, left as "
+                "it is (--rerun-invalid moves it aside and runs it again)"
+            )
+            failed.append(r.run_id)
+            continue
+        if state == "invalid":
+            aside = _move_aside(run_dir)
+            print(f"[{r.sequence_no + 1}/{len(runs)}] {r.run_id}  invalid, moved to {aside.name}")
         print(f"[{r.sequence_no + 1}/{len(runs)}] {r.run_id}", flush=True)
         trace = traces[(r.workload.name, r.gen_seed)]
         try:

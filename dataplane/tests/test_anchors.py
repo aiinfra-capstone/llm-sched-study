@@ -14,7 +14,7 @@ import json
 
 import pytest
 
-from dataplane.harness import anchors, gen_trace
+from dataplane.harness import anchors, gen_trace, launch
 from dataplane.harness import manifest as manifest_mod
 
 NODES = [
@@ -32,6 +32,24 @@ NODES = [
         "max_batch": 4,
     }
 ]
+
+
+LINE = "4242 Mon Sep 15 10:00:00 2026 /opt/llama/bin/llama-server -m /m/1b.gguf"
+OTHER_PID = "5151 Mon Sep 15 10:07:00 2026 /opt/llama/bin/llama-server -m /m/1b.gguf"
+
+
+@pytest.fixture(autouse=True)
+def steady_engines(monkeypatch):
+    """Every engine read finds the same llama-server, so a test that is not about engine
+    restarts runs the real check and passes it, and no test reads this machine's `ps`."""
+    reads = []
+
+    def read(nodes, **kw):
+        reads.append([n["node_id"] for n in nodes])
+        return {n["node_id"]: LINE for n in nodes}
+
+    monkeypatch.setattr(launch, "engine_processes", read)
+    return reads
 
 
 @pytest.fixture
@@ -164,23 +182,86 @@ def test_reasons_names_every_way_a_run_can_be_disqualified() -> None:
             "dropped_requests": 3,
             "colocated_nodes": 1,
             "engine_restarts": 4,
+            "engine_unchecked": 5,
         }
     ) == [
         "2 send-lag violation(s)",
         "3 request(s) never returned",
         "1 co-located node(s)",
         "4 engine restart(s)",
+        "5 engine(s) that could not be read",
     ]
 
 
-def test_two_logical_nodes_on_one_host_are_counted_into_the_manifest() -> None:
-    """F-9a. The launcher refuses to start such a pool; this is the record that the pool
-    which actually ran was not one."""
+def _result(header):
+    return anchors.replay_mod.ReplayResult(
+        records=[], validity=manifest_mod.Validity(), header=header
+    )
+
+
+def test_a_probe_on_a_pool_host_is_not_counted_as_colocated(tmp_path, trace) -> None:
+    """F-9a, by the launcher's rule. The launcher refuses to start two pool nodes on one
+    host; the manifest records that the pool which ran was not one. The F-9b probe never
+    runs beside a pool node, so it does not count."""
+    path, sha = trace
+    header, _ = gen_trace.load(path)
     same_host = [dict(NODES[0]), {**NODES[0], "node_id": "n2"}]
     probe = [dict(NODES[0]), {**NODES[0], "node_id": "p1", "role": "engine_gap_probe"}]
-    assert anchors._colocated(NODES) == 0
-    assert anchors._colocated(same_host) == 2
-    assert anchors._colocated(probe) == 0
+    point = anchors.AnchorPoint("light", 1.0)
+    for nodes, expected in ((NODES, 0), (same_host, 2), (probe, 0)):
+        config = _config(path, sha, tmp_path, nodes=nodes)
+        man = anchors.build_manifest(
+            config, point, _result(header), run_id="r", started_unix=1, engine_check="disabled"
+        )
+        assert man["validity"]["colocated_nodes"] == expected
+    assert not hasattr(anchors, "_colocated")
+
+
+def test_an_anchor_run_counts_restarts_and_unchecked_engines(tmp_path, trace, monkeypatch) -> None:
+    """Read before and after each point, as hw_runs does. The same process is a clean run,
+    a different one or none is a restart, and a read that failed is unchecked."""
+    path, sha = trace
+    header, _ = gen_trace.load(path)
+    replay, _ = _fake_replay(header)
+    monkeypatch.setattr(anchors.replay_mod, "replay", replay)
+    reads = iter(
+        [
+            {"n1": LINE},  # light, before
+            {"n1": LINE},  # light, after: same
+            {"n1": LINE},  # mid, before
+            {"n1": OTHER_PID},  # mid, after: changed
+            {"n1": LINE},  # heavy, before
+            {"n1": None},  # heavy, after: the read failed
+        ]
+    )
+    results = asyncio.run(
+        anchors.run_anchors(_config(path, sha, tmp_path), read_engines=lambda: next(reads))
+    )
+    light, mid, heavy = (r.manifest["validity"] for r in results)
+    assert light["valid"] and light["engine_restarts"] == 0 and light["engine_unchecked"] == 0
+    assert mid["engine_restarts"] == 1 and not mid["valid"]
+    assert heavy["engine_unchecked"] == 1 and not heavy["valid"]
+
+
+def test_an_anchor_manifest_carries_engine_check(
+    tmp_path, trace, monkeypatch, steady_engines
+) -> None:
+    path, sha = trace
+    header, _ = gen_trace.load(path)
+    replay, _ = _fake_replay(header)
+    monkeypatch.setattr(anchors.replay_mod, "replay", replay)
+
+    (on, *_) = asyncio.run(anchors.run_anchors(_config(path, sha, tmp_path / "on")))
+    assert on.manifest["config"]["engine_check"] == {
+        "n1": {"before": LINE, "after": LINE, "verdict": "same"}
+    }
+    assert steady_engines == [["n1"]] * 6
+
+    steady_engines.clear()
+    config = _config(path, sha, tmp_path / "off", check_engine_restarts=False)
+    (off, *_) = asyncio.run(anchors.run_anchors(config))
+    assert off.manifest["config"]["engine_check"] == "disabled"
+    assert steady_engines == []
 
 
 def test_two_operating_points_are_not_an_anchor_set(tmp_path, trace) -> None:
@@ -383,3 +464,14 @@ def test_without_the_flag_an_anchor_manifest_carries_no_clock_claim(
         man = json.loads(m.read_text())
         assert "clock_sync" not in man
         assert man["validity"]["clock_unsynced_hosts"] == 0
+
+
+def test_an_anchor_manifest_records_the_generator_sha(tmp_path, trace, monkeypatch) -> None:
+    path, sha = trace
+    header, _ = gen_trace.load(path)
+    replay, _ = _fake_replay(header)
+    monkeypatch.setattr(anchors.replay_mod, "replay", replay)
+    results = asyncio.run(anchors.run_anchors(_config(path, sha, tmp_path)))
+    assert {r.manifest["config"]["generator_git_sha"] for r in results} == {
+        header["generator_git_sha"]
+    }

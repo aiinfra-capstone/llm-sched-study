@@ -17,6 +17,7 @@ from dataplane.harness.manifest import (
     Validity,
     build,
     config_hash,
+    git_dirty,
     git_shas,
     unsynced_hosts,
 )
@@ -387,3 +388,54 @@ def test_engine_unchecked_is_written_and_conforms(schema) -> None:
         nodes=_nodes(),
     )
     assert_conforms(schema("manifest"), [man], "manifest")
+
+
+def test_git_shas_are_full_forty_character_shas() -> None:
+    """A short sha is ambiguous once the history is long enough, and a manifest is kept
+    for longer than that."""
+    shas = git_shas()
+    assert set(shas) == {"worker", "scheduler", "harness", "sim"}
+    for sha in shas.values():
+        assert len(sha) == 40 and all(c in "0123456789abcdef" for c in sha), sha
+
+
+def test_git_dirty_reports_an_uncommitted_change(tmp_path: Path) -> None:
+    """A sha names the committed tree. A run from a tree with edits on top ran code that
+    sha does not name, and the manifest says so."""
+    import subprocess
+
+    def git(*args: str) -> None:
+        subprocess.run(
+            ["git", "-c", "user.name=t", "-c", "user.email=t@t", "-C", str(tmp_path), *args],
+            check=True,
+            capture_output=True,
+        )
+
+    git("init", "-q")
+    (tmp_path / "a.py").write_text("x = 1\n")
+    git("add", "a.py")
+    git("commit", "-q", "-m", "one")
+    assert git_dirty(tmp_path) == dict.fromkeys(("worker", "scheduler", "harness", "sim"), False)
+    (tmp_path / "a.py").write_text("x = 2\n")
+    assert set(git_dirty(tmp_path).values()) == {True}
+    assert git_shas(root=tmp_path)["harness"] != "unknown"
+    # A directory that is not a checkout holds nothing a commit names.
+    (tmp_path.parent / "loose").mkdir(exist_ok=True)
+    assert set(git_dirty(tmp_path.parent / "loose").values()) == {True}
+
+
+def test_an_incomplete_worker_log_invalidates_and_is_named_in_reasons() -> None:
+    """A worker log short of the dispatches means the join is short of those requests, and
+    which ones are missing is not random: they are the ones still running at the end."""
+    v = Validity(worker_log_incomplete=1)
+    assert not v.valid
+    assert v.to_dict()["worker_log_incomplete"] == 1
+    assert any("worker log" in r for r in v.reasons())
+    assert "worker_log_incomplete" in Validity().to_dict()
+
+
+def test_a_manifest_says_whether_the_tree_was_dirty(monkeypatch) -> None:
+    from dataplane.harness import manifest as manifest_mod
+
+    monkeypatch.setattr(manifest_mod, "git_dirty", lambda root=None: {"worker": True})
+    assert _manifest()["git_dirty"] == {"worker": True}

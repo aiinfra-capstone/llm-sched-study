@@ -396,6 +396,8 @@ def test_a_colocated_pool_is_counted_and_fails_the_run(
             str(out),
             "--nodes",
             str(_colocated_nodes_file(tmp_path)),
+            "--policy",
+            "round_robin",
         ],
     )
 
@@ -618,3 +620,24 @@ def test_nodes_that_differ_from_the_pre_run_manifest_are_refused(
             ),
         )
     assert "--nodes differs from the node block" in capsys.readouterr().err
+
+
+def test_replay_refuses_to_start_without_a_policy(trace, tmp_path, monkeypatch, capsys) -> None:
+    """A manifest names the policy that ran. With neither a pre-run manifest nor --policy
+    to say which, a default would label the run with a policy nobody chose."""
+    path, sha = trace
+    called = []
+
+    async def never(**kw):
+        called.append(kw)
+
+    monkeypatch.setattr(replay, "replay", never)
+    out = tmp_path / "runs"
+    args = [str(path), "--scheduler", "127.0.0.1:1", "--run-id", "run_nopol"]
+    args += ["--sha256", sha, "--out", str(out), "--nodes", str(_nodes_file(tmp_path))]
+    with pytest.raises(SystemExit) as exc:
+        _main(monkeypatch, args)
+    assert exc.value.code == 2
+    assert "--policy" in capsys.readouterr().err
+    assert called == []
+    assert not (out / "run_nopol" / "manifest.json").exists()

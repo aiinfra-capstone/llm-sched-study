@@ -302,17 +302,110 @@ def test_a_full_campaign_runs_every_run_and_reports_them_valid(
     assert "next: uv run --project dataplane runset" in out
 
 
+def _finished(run: hw_runs.Run, *, valid: bool) -> Path:
+    run_dir = run.workload.out_root / run.run_id
+    run_dir.mkdir(parents=True)
+    (run_dir / "manifest.json").write_text(json.dumps({"validity": {"valid": valid}}))
+    (run_dir / f"client_{run.run_id}.jsonl").write_text("")
+    return run_dir
+
+
 def test_finished_runs_are_skipped_on_resume(tmp_path, monkeypatch, capsys) -> None:
     pool = install(monkeypatch, tmp_path)
     d = _tiny(tmp_path, check_engine_restarts=False)
     runs = hw_runs.plan(hw_runs.Campaign.from_dict(d))
-    done = runs[0].workload.out_root / runs[0].run_id
-    done.mkdir(parents=True)
-    (done / "manifest.json").write_text("{}")
-    (done / f"client_{runs[0].run_id}.jsonl").write_text("")
+    _finished(runs[0], valid=True)
     assert hw_runs.main([_write(tmp_path, d)]) == 0
     assert "already done, skipped" in capsys.readouterr().out
     assert len(pool.schedulers) == 1
+
+
+def test_resume_state_reads_the_manifest_validity(tmp_path) -> None:
+    run_dir = tmp_path / "r1"
+    assert hw_runs.resume_state(run_dir, "r1") == "todo"
+    run_dir.mkdir()
+    (run_dir / "manifest.json").write_text(json.dumps({"validity": {"valid": True}}))
+    # A manifest with no client log beside it is a run that never finished writing.
+    assert hw_runs.resume_state(run_dir, "r1") == "todo"
+    (run_dir / "client_r1.jsonl").write_text("")
+    assert hw_runs.resume_state(run_dir, "r1") == "done"
+    (run_dir / "manifest.json").write_text(json.dumps({"validity": {"valid": False}}))
+    assert hw_runs.resume_state(run_dir, "r1") == "invalid"
+    (run_dir / "manifest.json").write_text("{}")
+    assert hw_runs.resume_state(run_dir, "r1") == "invalid"
+
+
+def test_an_invalid_run_is_reported_not_skipped_by_default(tmp_path, monkeypatch, capsys) -> None:
+    pool = install(monkeypatch, tmp_path)
+    d = _tiny(tmp_path, check_engine_restarts=False)
+    runs = hw_runs.plan(hw_runs.Campaign.from_dict(d))
+    run_dir = _finished(runs[0], valid=False)
+    before = sorted((p.name, p.read_bytes()) for p in run_dir.iterdir())
+
+    assert hw_runs.main([_write(tmp_path, d)]) == 1
+    out = capsys.readouterr().out
+    assert f"{runs[0].run_id}  recorded as invalid" in out
+    assert "--rerun-invalid" in out
+    assert f"1 run(s) not usable: ['{runs[0].run_id}']" in out
+    assert sorted((p.name, p.read_bytes()) for p in run_dir.iterdir()) == before
+    assert len(pool.schedulers) == 1
+
+
+def test_rerun_invalid_moves_the_old_run_aside_and_runs_it_again(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    pool = install(monkeypatch, tmp_path)
+    d = _tiny(tmp_path, check_engine_restarts=False)
+    runs = hw_runs.plan(hw_runs.Campaign.from_dict(d))
+    run_dir = _finished(runs[0], valid=False)
+
+    assert hw_runs.main([_write(tmp_path, d), "--rerun-invalid"]) == 0
+    aside = run_dir.with_name(f"{runs[0].run_id}.invalid")
+    assert json.loads((aside / "manifest.json").read_text()) == {"validity": {"valid": False}}
+    assert json.loads((run_dir / "manifest.json").read_text())["validity"]["valid"] is True
+    assert len(pool.schedulers) == 2
+    assert f"moved to {aside.name}" in capsys.readouterr().out
+
+    # A second invalid attempt never overwrites the first one set aside.
+    (run_dir / "manifest.json").write_text(json.dumps({"validity": {"valid": False}}))
+    assert hw_runs.main([_write(tmp_path, d), "--rerun-invalid"]) == 0
+    assert aside.is_dir() and run_dir.with_name(f"{runs[0].run_id}.invalid2").is_dir()
+
+
+def test_the_scheduler_is_compiled_before_the_first_run(tmp_path, monkeypatch, capsys) -> None:
+    pool = install(monkeypatch, tmp_path)
+    d = _tiny(tmp_path, check_engine_restarts=False)
+    assert hw_runs.main([_write(tmp_path, d)]) == 0
+    assert pool.maven == ["compile", "exec:java", "exec:java"]
+
+    pool.maven.clear()
+    pool.compile_fails = True
+    assert hw_runs.main([_write(tmp_path, d)]) == 2
+    assert "refusing: mvn -q compile failed" in capsys.readouterr().out
+    assert pool.maven == ["compile"]
+
+
+def test_compile_scheduler_runs_maven_compile_and_refuses_a_failure(tmp_path, monkeypatch) -> None:
+    _fake_mvn(tmp_path, "exit 0\n", monkeypatch)
+    calls = []
+
+    def run(cmd, **kw):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    hw_runs.compile_scheduler(run=run)
+    (cmd,) = calls
+    assert cmd[0].endswith("/mvn")
+    assert cmd[1:] == ["-q", "-f", str(hw_runs.REPO_ROOT / "controlplane" / "pom.xml"), "compile"]
+
+    def fails(cmd, **kw):
+        return subprocess.CompletedProcess(cmd, 1, stdout="[ERROR] COMPILATION ERROR", stderr="")
+
+    with pytest.raises(RuntimeError, match="COMPILATION ERROR"):
+        hw_runs.compile_scheduler(run=fails)
+    monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+    with pytest.raises(RuntimeError, match="mvn not found"):
+        hw_runs.compile_scheduler(run=run)
 
 
 @pytest.mark.parametrize("keep_going", [False, True])
@@ -373,6 +466,23 @@ def _repo_with_real_configs(tmp_path) -> Path:
 HW_CONFIGS = sorted(p.name for p in CONFIGS.glob("hw_*.json"))
 
 
+def _stand_in_trace(workload: dict, tmp_path) -> None:
+    """Generate a gitignored trace from its committed config, and point the workload at it.
+
+    `runs/traces/<shape>_1b.trace.jsonl` comes from `dataplane/configs/trace_<shape>_1b.json`.
+    No manifest records the generator commit the committed hash was taken at, so the file
+    cannot come back byte for byte; the dry run is checked against the stream the committed
+    config describes today, under that file's own hash.
+    """
+    from dataplane.harness import gen_trace
+
+    shape = Path(workload["trace"]).name.removesuffix(".trace.jsonl")
+    config = json.loads((CONFIGS / f"trace_{shape}.json").read_text())
+    path = tmp_path / "stand_in" / Path(workload["trace"]).name
+    workload["trace_sha256"] = gen_trace.generate(config, path)
+    workload["trace"] = str(path)
+
+
 @pytest.mark.parametrize("name", HW_CONFIGS)
 def test_every_committed_campaign_passes_its_checks_and_dry_runs(
     tmp_path, monkeypatch, capsys, name
@@ -380,9 +490,26 @@ def test_every_committed_campaign_passes_its_checks_and_dry_runs(
     d = json.loads((CONFIGS / name).read_text())
     for w in d.get("workloads", [d]):
         if "trace" in w and not (REPO_ROOT / w["trace"]).is_file():
-            pytest.skip(f"{w['trace']} is gitignored and not on this machine")
+            _stand_in_trace(w, tmp_path)
+    config = tmp_path / name
+    config.write_text(json.dumps(d))
     monkeypatch.setattr(hw_runs, "REPO_ROOT", _repo_with_real_configs(tmp_path))
-    assert hw_runs.main([str(CONFIGS / name), "--dry-run"]) == 0, capsys.readouterr().out
+    assert hw_runs.main([str(config), "--dry-run"]) == 0, capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "name", sorted(n for n in HW_CONFIGS if "trace" in json.loads((CONFIGS / n).read_text()))
+)
+def test_a_committed_campaign_dry_runs_on_a_stand_in_trace(
+    tmp_path, monkeypatch, capsys, name
+) -> None:
+    """The path a machine without the gitignored traces takes, run on every machine."""
+    d = json.loads((CONFIGS / name).read_text())
+    _stand_in_trace(d, tmp_path)
+    config = tmp_path / name
+    config.write_text(json.dumps(d))
+    monkeypatch.setattr(hw_runs, "REPO_ROOT", _repo_with_real_configs(tmp_path))
+    assert hw_runs.main([str(config), "--dry-run"]) == 0, capsys.readouterr().out
 
 
 def test_the_seeded_anchor_campaign_has_distinct_seeds() -> None:
@@ -403,3 +530,23 @@ def test_the_heavy_tail_trace_configs_generate_traces_that_pass_contracts_check(
     check = runpy.run_path(str(REPO_ROOT / "contracts" / "check.py"))
     rc = check["main"](["--validate", str(path), "--schema", "trace.schema.json"])
     assert rc == 0, capsys.readouterr().out
+
+
+def test_a_dirty_tree_is_refused_without_allow_dirty(tmp_path, monkeypatch, capsys) -> None:
+    """A git sha names committed code. A campaign from a tree with edits on top would record
+    shas that do not name what ran."""
+    from dataplane.harness import manifest as manifest_mod
+
+    pool = install(monkeypatch, tmp_path)
+    dirty = dict.fromkeys(manifest_mod.COMPONENTS, True)
+    monkeypatch.setattr(manifest_mod, "git_dirty", lambda root=None: dirty)
+    d = _tiny(tmp_path, check_engine_restarts=False)
+    assert hw_runs.main([_write(tmp_path, d)]) == 2
+    assert "refusing: the working tree has uncommitted changes" in capsys.readouterr().out
+    assert pool.schedulers == [] and pool.maven == []
+
+    assert hw_runs.main([_write(tmp_path, d), "--allow-dirty"]) == 0
+    runs = hw_runs.plan(hw_runs.Campaign.from_dict(d))
+    man = json.loads((runs[0].workload.out_root / runs[0].run_id / "manifest.json").read_text())
+    assert man["config"]["allow_dirty"] is True
+    assert man["git_dirty"] == dirty

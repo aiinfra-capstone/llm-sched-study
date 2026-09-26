@@ -251,6 +251,9 @@ def post_run_manifest(
             "gen_seed": header["gen_seed"],
         }
     )
+    # The trace hash covers the generator commit, so this is what regenerates it byte for
+    # byte (`tools/ensure_trace.py`). C-2 requires it in every header.
+    config["generator_git_sha"] = header["generator_git_sha"]
     if pre is not None:
         config["staleness_s"] = float(pre.get("staleness_s", 0.0))
     man = manifest_mod.build(
@@ -471,6 +474,11 @@ def main() -> int:
     # A C-6 manifest must carry the trace's sha256 (the schema pins it to 64 hex characters).
     if nodes is not None and not sha256:
         ap.error("--nodes writes a manifest, which must carry the trace hash; pass --sha256")
+    # A manifest names the policy that ran. A default here would label the run with a policy
+    # nobody chose, and every joined row inherits that label.
+    policy = (pre or {}).get("policy") or args.policy
+    if nodes is not None and not policy:
+        ap.error("--nodes writes a manifest, which must name the policy; pass --policy")
 
     result = asyncio.run(
         replay(
@@ -501,7 +509,7 @@ def main() -> int:
             rate_scale=args.rate_scale,
             warmup_s=args.warmup_s,
             nodes=nodes,
-            policy=(pre or {}).get("policy") or args.policy or "round_robin",
+            policy=policy,
             pre=pre,
             clock_sync=clock_sync,
         )

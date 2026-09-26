@@ -20,7 +20,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-__all__ = ["SEND_LAG_THRESHOLD_MS", "Validity", "build", "config_hash", "git_shas"]
+__all__ = [
+    "COMPONENTS",
+    "SEND_LAG_THRESHOLD_MS",
+    "Validity",
+    "build",
+    "config_hash",
+    "git_dirty",
+    "git_shas",
+]
+
+# The four components C-6 records a sha for.
+COMPONENTS = ("worker", "scheduler", "harness", "sim")
 
 # The open-loop guard. F-17 suggests 50 ms; a run that exceeds it anywhere in the
 # measurement window is marked invalid rather than analysed, because a load generator
@@ -34,16 +45,17 @@ class Validity:
 
     `valid` is computed, never set. The conditions that invalidate a run outright: the
     load generator drifted (`send_lag_violations`), requests never came back
-    (`dropped_requests`), or the pool was not what the manifest says it was
-    (`colocated_nodes`, `engine_restarts`, `engine_unchecked`).
+    (`dropped_requests`), the pool was not what the manifest says it was
+    (`colocated_nodes`, `engine_restarts`, `engine_unchecked`), or the worker logs do not
+    account for every dispatch (`worker_log_incomplete`).
 
     `engine_unchecked` is fatal for the reason `engine_restarts: 0` was never evidence on
     its own. That field was written by a driver that could not observe an engine at all, so
     its zero meant "nobody looked" while reading as "nothing happened". A driver that reads
     each engine's process before and after a run can now say which of the two it is, and a
-    run where it could not look is not a measurement of the pool the manifest names. `heartbeat_gaps` is reported but not fatal —
-    a missed heartbeat degrades the scheduler's estimate, which is a thing H3 is *about*,
-    not a thing that ruins the measurement.
+    run where it could not look is not a measurement of the pool the manifest names.
+    `heartbeat_gaps` is reported but not fatal: a missed heartbeat degrades the scheduler's
+    estimate of a node, and does not make the measurement of the run wrong.
 
     `clock_unsynced_hosts` is reported and not fatal either, and the arithmetic is why.
     The only clock term the pipeline acts on is the rate error, because a constant offset
@@ -63,6 +75,11 @@ class Validity:
     engine_unchecked: int = 0
     colocated_nodes: int = 0
     clock_unsynced_hosts: int = 0
+    # Pool nodes whose worker log does not hold one record per dispatch. The join is then
+    # short of exactly the requests still running at the end, which is not a random sample.
+    worker_log_incomplete: int = 0
+    # Validity fields this run could not measure, by name. Reported, never fatal.
+    unmeasured: tuple[str, ...] = ()
 
     @property
     def valid(self) -> bool:
@@ -72,6 +89,7 @@ class Validity:
             and self.colocated_nodes == 0
             and self.engine_restarts == 0
             and self.engine_unchecked == 0
+            and self.worker_log_incomplete == 0
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -85,6 +103,8 @@ class Validity:
             "valid": self.valid,
             "colocated_nodes": self.colocated_nodes,
             "clock_unsynced_hosts": self.clock_unsynced_hosts,
+            "worker_log_incomplete": self.worker_log_incomplete,
+            **({"unmeasured": list(self.unmeasured)} if self.unmeasured else {}),
         }
 
     def reasons(self) -> list[str]:
@@ -112,6 +132,12 @@ class Validity:
                 "before and after the run, so a restart can be neither confirmed nor ruled "
                 "out and the pool was not shown to be the one the manifest claims"
             )
+        if self.worker_log_incomplete:
+            out.append(
+                f"{self.worker_log_incomplete} node(s) whose worker log does not hold one "
+                "record per dispatch, so the join is short of the requests still running at "
+                "the end"
+            )
         return out
 
 
@@ -135,9 +161,10 @@ def config_hash(config: dict[str, Any]) -> str:
 
 
 def _sha(repo: Path) -> str:
+    """The full 40-character sha: a short one becomes ambiguous as the history grows."""
     try:
         out = subprocess.run(
-            ["git", "-C", str(repo), "rev-parse", "--short", "HEAD"],
+            ["git", "-C", str(repo), "rev-parse", "HEAD"],
             capture_output=True,
             text=True,
             timeout=5,
@@ -157,7 +184,30 @@ def git_shas(root: Path | None = None, **overrides: str) -> dict[str, str]:
     """
     root = root or Path(__file__).resolve().parents[4]
     head = _sha(root)
-    return {"worker": head, "scheduler": head, "harness": head, "sim": head} | overrides
+    return dict.fromkeys(COMPONENTS, head) | overrides
+
+
+def git_dirty(root: Path | None = None) -> dict[str, bool]:
+    """Per component, whether the tree had changes on top of the sha `git_shas` names.
+
+    A sha names the committed tree. A run from a tree with uncommitted edits, or with
+    untracked files, ran code that sha does not name. In this monorepo the four components
+    share one tree, so they share one answer. A directory that is not a checkout reports
+    dirty, since nothing it holds is named by a commit.
+    """
+    root = root or Path(__file__).resolve().parents[4]
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(root), "status", "--porcelain"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+        )
+        dirty = bool(out.stdout.strip())
+    except (subprocess.SubprocessError, OSError):
+        dirty = True
+    return dict.fromkeys(COMPONENTS, dirty)
 
 
 def build(
@@ -215,6 +265,7 @@ def build(
         "nodes": nodes,
         **({"clock_sync": clock_sync} if clock_sync else {}),
         "git_shas": git_shas(),
+        "git_dirty": git_dirty(),
         **({"f18_status": f18_status} if f18_status else {}),
         "validity": validity.to_dict(),
     }

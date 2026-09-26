@@ -233,6 +233,9 @@ def test_deterministic_cells_give_zero_width_intervals(tmp_path, capsys) -> None
     assert cell_intervals.main([*argv, "--draws", "50", "--out", str(out)]) == 0
 
     report = json.loads(out.read_text())
+    # The profile's mean prompt-to-output ratio, weighted by its bucket mix: 3 of p128_o64
+    # (2.0) to 1 of p512_o128 (4.0). results.md orders its K1 rows by it.
+    assert report["profiles"][0]["mean_rho"] == pytest.approx(2.5)
     cap = report["capability"]
     assert cap["fast"]["tok_s_of_service"] == 160.0
     assert cap["fast"]["ci95"] == [160.0, 160.0]

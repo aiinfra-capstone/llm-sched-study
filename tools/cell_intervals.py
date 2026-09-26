@@ -17,8 +17,9 @@ c - OCCUPANCY_TOLERANCE is dropped whole, and the report says how many batches a
 each cell lost. A sample logged before occupancy was recorded is kept, as the fit keeps it.
 
 It reports, per node class: capability (output tok/s of service at the lowest cell and
-c = 1, as com.sched.core.Capability) and, for each trace profile, R on service, prefill and
-decode at every concurrency the grid covers, weighted by the profile's bucket mix. The
+c = 1, as com.sched.core.Capability) and, for each trace profile, its mean prompt-to-output
+ratio and R on service, prefill and decode at every concurrency the grid covers, weighted by
+the profile's bucket mix. The
 concurrency the live runs operated at is not 1: under load the slots are mostly busy, so
 the c = 4 rows are the ones that describe the pool the policies faced.
 
@@ -159,7 +160,10 @@ def main(argv: list[str] | None = None) -> int:
     report["profiles"] = []
     for path in args.profile:
         mix = bucket_mix(json.loads(path.read_text())["length_dist"])
-        entry: dict = {"profile": path.stem, "by_concurrency": {}}
+        # The profile's mean prompt-to-output ratio, weighted by its bucket mix, as
+        # phase_ratio.py reports it, so a K1 row can say which workload shape it is.
+        mean_rho = sum(w * p / o for _, p, o, w in mix)
+        entry: dict = {"profile": path.stem, "mean_rho": mean_rho, "by_concurrency": {}}
         for c in concurrencies:
             vals, draws = {}, {}
             for side in ("fast", "slow"):

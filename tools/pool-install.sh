@@ -86,6 +86,7 @@ pkg_install() {
 }
 
 OSNAME="unknown"
+# shellcheck source=/dev/null
 [ -r /etc/os-release ] && OSNAME="$(. /etc/os-release; echo "$PRETTY_NAME")"
 
 # ------------------------------------------------------------------ plan

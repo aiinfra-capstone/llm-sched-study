@@ -54,6 +54,7 @@ HOSTNAME_="$(hostname)"
 kv "hostname" "$HOSTNAME_"
 
 OS="unknown"
+# shellcheck source=/dev/null
 [ -r /etc/os-release ] && OS="$(. /etc/os-release; echo "$PRETTY_NAME")"
 kv "os" "$OS"
 kv "kernel" "$(uname -r)"
@@ -174,8 +175,8 @@ printf '\n  %-20s %9s %9s %9s   %s\n' "model" "weights" "kv" "total" "verdict"
 
 FITS_1B=0
 for row in "${MODELS[@]}"; do
-  set -- $row
-  NAME=$1; W=$2; KVT=$3; LAYERS=$4
+  # The fourth column, the layer count, is for the reader; LAYERS_1B below is what -ngl uses.
+  read -r NAME W KVT _ <<< "$row"
   KV=$(( KVT * SLOTS * CTX_PER_SLOT ))
   TOTAL=$(( W + KV + OVERHEAD ))
   if [ "$TOTAL" -le "$BUDGET" ]; then
@@ -184,7 +185,7 @@ for row in "${MODELS[@]}"; do
   else
     VERDICT="does not fit"
   fi
-  printf '  %-20s %7s M %7s M %7s M   %s\n' "$NAME" "$(mib $W)" "$(mib $KV)" "$(mib $TOTAL)" "$VERDICT"
+  printf '  %-20s %7s M %7s M %7s M   %s\n' "$NAME" "$(mib "$W")" "$(mib "$KV")" "$(mib "$TOTAL")" "$VERDICT"
 done
 
 echo

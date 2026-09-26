@@ -25,6 +25,10 @@ jobs:
       # cannot execute a single point on Linux passed both workflows green.
       - run: uv run --with ruff ruff check contracts/check.py fixtures tools
       - run: uv run --with ruff ruff format --check contracts/check.py fixtures tools
+      # The shell scripts start the pool, install nodes and run the determinism test, and
+      # nothing else here reads them. Every finding at the default severity fails; one that
+      # does not apply is disabled on its line with the reason beside it.
+      - run: uv run --with shellcheck-py shellcheck tools/*.sh docs/uml/render.sh
       # Every generated table in results.md, against the run set it names. A number in the
       # document that no longer matches its summary.json is the failure mode nothing else
       # here can see: both files are valid, and the document is simply wrong.

@@ -21,7 +21,10 @@ uv run --project dataplane python tools/ensure_trace.py \
   --out "$TRACE" \
   --anchors runs/anchors
 
-MANIFEST=$(ls -d runs/anchors/anchor1b_light_*/manifest.json 2>/dev/null | head -1 || true)
+# The first match in glob order. Without a match the pattern stays literal and fails -e.
+LIGHT=(runs/anchors/anchor1b_light_*/manifest.json)
+MANIFEST=""
+[ -e "${LIGHT[0]}" ] && MANIFEST=${LIGHT[0]}
 if [ -z "$MANIFEST" ]; then
   echo "FAIL: no light anchor manifest under runs/anchors"
   exit 1

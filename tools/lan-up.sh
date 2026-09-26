@@ -260,6 +260,7 @@ if [ "$MODE" = "down" ]; then
     exit 0
   fi
   echo "Remove these connection profiles and give the radio back:"
+  # shellcheck disable=SC2001  # a prefix on every line, which ${var//} cannot anchor
   echo "$HOTSPOTS" | sed 's/^/  /'
   confirm
   echo "$HOTSPOTS" | while read -r c; do sudo nmcli connection delete "$c" >/dev/null && say "removed $c"; done

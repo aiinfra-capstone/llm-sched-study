@@ -1,19 +1,18 @@
 """H2's degenerate baseline, Threshold(T), and the curve it is supposed to appear on.
 
-Skipped until `plots.THRESHOLD_BASELINE` lands. The figure code is deliberately not
-written yet; this file is the contract it has to satisfy.
+Written before `plots.THRESHOLD_BASELINE` landed, as the contract it had to satisfy.
 
-H2 is two claims, and only the first of them is implemented today:
+H2 is two claims:
 
   1. the advantage of hardware-aware routing over hardware-blind routing is non-monotonic
      in *R*, rising to a peak and falling away again, and
   2. at high *R* the best policy converges toward `Threshold(T)`, which is round-robin
      over the nodes above a calibrated cutoff and is a one-line static rule.
 
-`h2_advantage_curve` answers the first. Nothing answers the second: `threshold` is in
-neither `CELLS`, `HARDWARE_AWARE` nor `HARDWARE_BLIND`, so a sweep that ran the policy has
-its rows silently dropped and the convergence half of H2 cannot be drawn from data we
-already paid to collect.
+`h2_advantage_curve` answers the first. Before this baseline, nothing answered the second:
+`threshold` was in neither `CELLS`, `HARDWARE_AWARE` nor `HARDWARE_BLIND`, so a sweep that
+ran the policy had its rows silently dropped and the convergence half of H2 could not be
+drawn from data we had already paid to collect.
 
 The trap this file exists to close is the obvious fix. `Threshold(T)` reads a calibrated
 cutoff, so adding it to `HARDWARE_AWARE` looks right and is wrong: `advantage_ms` is
@@ -36,16 +35,10 @@ from typing import Any
 
 import pandas as pd
 import pytest
-from conftest import pending
+
+from dataplane.figures import plots
 
 pytestmark = pytest.mark.forward
-
-plots = pending(
-    "dataplane.figures.plots",
-    "THRESHOLD_BASELINE",
-    week="Elevation 1",
-    deliverable="the Threshold(T) baseline on the H2 curve",
-)
 
 
 # --------------------------------------------------------------------------------------

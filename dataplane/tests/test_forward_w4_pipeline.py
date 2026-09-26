@@ -25,11 +25,11 @@ from __future__ import annotations
 import json
 
 import pytest
-from conftest import EXAMPLES, pending, read_jsonl
+from conftest import EXAMPLES, read_jsonl
+
+from dataplane.pipeline import join as join_mod
 
 pytestmark = pytest.mark.forward
-
-join_mod = pending("dataplane.pipeline.join", "join", week="Week 4", deliverable="results pipeline")
 
 MANIFEST = json.loads((EXAMPLES / "manifest.sample.json").read_text())
 CLIENT = read_jsonl(EXAMPLES / "client.sample.jsonl")
@@ -131,7 +131,16 @@ def test_a_missing_scheduler_record_becomes_null_not_zero() -> None:
     queue depth of zero — which is a plausible number that would go straight into a
     figure."""
     rows = _join(scheduler=[])
-    assert rows[0]["chosen_node"] is None or rows[0]["decide_us"] is None
+    for column in (
+        "chosen_node",
+        "decide_us",
+        "chosen_queue_depth",
+        "chosen_est_age_ms",
+        "best_alt_node",
+        "best_alt_est_service_ms",
+        "routing_error_ms",
+    ):
+        assert all(r[column] is None for r in rows), column
 
 
 def test_a_partial_f18_run_leaves_prefill_and_decode_null() -> None:

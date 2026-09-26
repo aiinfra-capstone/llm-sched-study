@@ -1,10 +1,9 @@
 """The join refuses a run whose scheduler did not run the policy the manifest claims.
 
-This guard exists because of a real finding rather than a hypothetical. F-1 requires all
-five policies to be selectable from a single configuration value, and while that is not
-yet true on the control plane, the scheduler writes a policy name into its own decision
-records that nothing was checking. Meanwhile every C-5 row takes its `policy` label from
-the manifest.
+This guard exists because of a real finding rather than a hypothetical. F-1 requires every
+policy (eight today) to be selectable from a single configuration value, and the scheduler
+writes a policy name into its own decision records that nothing was checking. Meanwhile
+every C-5 row takes its `policy` label from the manifest.
 
 Two labels, two authors, no comparison between them. A scheduler dispatching round-robin
 while writing "jsq" into its log, under a manifest that also says "jsq", produces a run

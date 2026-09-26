@@ -392,7 +392,9 @@ def main(argv: list[str] | None = None) -> int:
     for plan in repoints:
         if not args.dry_run:
             plan.path.write_text(plan.text, encoding="utf-8")
-        print(f"  {'would repoint' if args.dry_run else 'repointed'} {plan.path.relative_to(REPO_ROOT)}")
+        print(
+            f"  {'would repoint' if args.dry_run else 'repointed'} {plan.path.relative_to(REPO_ROOT)}"
+        )
         for line in plan.changed:
             print(f"    {'would rescale' if args.dry_run else 'rescaled'} {line}")
     if args.dry_run:

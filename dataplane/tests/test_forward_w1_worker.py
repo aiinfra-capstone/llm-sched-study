@@ -24,18 +24,11 @@ have to mean. Rewrite the call, keep the assertion.
 from __future__ import annotations
 
 import pytest
-from conftest import pending
 
-from dataplane.worker import heartbeat, log
+from dataplane.worker import adapter, heartbeat, llamacpp, log
 
 pytestmark = pytest.mark.forward
 
-adapter = pending(
-    "dataplane.worker.adapter", "ServiceResult", week="Week 1", deliverable="worker wrapper"
-)
-llamacpp = pending(
-    "dataplane.worker.llamacpp", "parse_timings", week="Week 1", deliverable="llama.cpp adapter"
-)
 
 # A real b10569 /completion response, trimmed to the block F-18 depends on. The CUDA
 # build was confirmed to emit both halves; this is the shape it emits.

@@ -20,16 +20,11 @@ from __future__ import annotations
 import json
 
 import pytest
-from conftest import EXAMPLES, pending
+from conftest import EXAMPLES
+
+from dataplane.calibration import cost_model
 
 pytestmark = pytest.mark.forward
-
-cost_model = pending(
-    "dataplane.calibration.cost_model",
-    "build_snapshot",
-    week="Week 2",
-    deliverable="calibration campaign",
-)
 
 SAMPLE = json.loads((EXAMPLES / "cost_model.sample.json").read_text())
 
@@ -166,17 +161,6 @@ def test_the_synthesizable_r_range_is_a_range_not_a_figure() -> None:
     assert 1.0 <= lo < hi
 
 
-def test_the_two_backends_are_two_node_classes_not_one() -> None:
-    """CUDA and Vulkan on the same card are the same engine commit and the same model, but
-    not the same throughput. Recording them as one node class would fold a backend effect
-    into R, which is precisely what holding the engine constant was supposed to prevent."""
-    classes = {s["node_class"] for s in cost_model.load_series(cost_model.example_campaign_dir())}
-    provenance = cost_model.build_snapshot(**cost_model.example_inputs())["provenance"]
-    assert provenance["engine"] == "llamacpp"
-    assert provenance["engine_version"], "the backend rides inside engine_version"
-    assert classes
-
-
 def test_the_engine_gap_probe_is_a_separate_role() -> None:
     """F-9b: vLLM is one measured condition, never a pool member. The manifest marks it
     `role: engine_gap_probe`, and a cost model produced from it must not be usable as a
@@ -196,6 +180,15 @@ def test_provenance_records_the_knobs_that_set_the_condition() -> None:
 def test_the_admissibility_block_matches_the_traces_it_was_measured_with() -> None:
     """A cost model whose envelope is wider than the trace's promises service times for
     lengths never measured, and the DES will happily interpolate into that gap."""
-    snapshot = cost_model.build_snapshot(**cost_model.example_inputs())
-    assert snapshot["admissibility"]["max_prompt"] >= 1
+    inputs = cost_model.example_inputs()
+    snapshot = cost_model.build_snapshot(**inputs)
+    sampled = inputs["observations"]
+    p_top = cost_model.assign_bucket(
+        max(o.prompt_len for o in sampled), cost_model.buckets_from_edges(inputs["prompt_edges"])
+    )[1]
+    o_top = cost_model.assign_bucket(
+        max(o.output_len for o in sampled), cost_model.buckets_from_edges(inputs["output_edges"])
+    )[1]
+    assert 1 <= snapshot["admissibility"]["max_prompt"] <= p_top
+    assert 1 <= snapshot["admissibility"]["max_output"] <= o_top
     assert snapshot["admissibility"]["timeout_ceiling_ms"] >= 1

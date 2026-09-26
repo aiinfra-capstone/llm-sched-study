@@ -1,10 +1,8 @@
 """F-17 — the replay client must stay open-loop, and must say so when it didn't.
 
 These run against an inline scheduler rather than `fixtures/fake_scheduler`, on purpose:
-the fixture gets deleted after Week 3 (a fake worker that survives into the measurement
-weeks is one somebody eventually calibrates against by accident), and a test suite that
-dies with it is a test suite that stops guarding the harness exactly when the harness
-starts producing real numbers.
+the fixture is a smoke-test stand-in that no measurement may depend on, and a test suite
+that depended on it would stop guarding the harness the day the fixture changes or goes.
 """
 
 from __future__ import annotations

@@ -15,12 +15,9 @@ Runs in CI on every PR. Four jobs:
      field plus a loader that rejects unknown versions loudly — this is the
      cheaper half: the wire schema is never merged in a state that does not build.
 
-  3. The second copy of C-1 is wire-identical to the frozen one. The control
-     plane's Maven build compiles its own `scheduling.proto`, so the repository
-     now holds the frozen artifact twice while `contract-v1` pins only one of
-     them by content hash. Two files that are meant to be one file will drift,
-     and the drift is invisible until a field number means different things on
-     the two ends of a socket.
+  3. No calibration config declares an envelope wider than the grid it samples. A
+     snapshot built from such a config would claim admissibility for shapes it never
+     measured.
 
   4. Every property a *strict* record on the far side of the seam has to accept
      is declared there. This is §12's failure mode 2 turned into a test: a C-3
@@ -59,10 +56,9 @@ REPO = ROOT.parent
 SCHEMAS = ROOT / "schemas"
 EXAMPLES = ROOT / "examples"
 
-# The frozen C-1 artifact, and the copy the control plane's Maven build compiles.
-# `contract-v1` hashes the first; the socket speaks the second.
+# The frozen C-1 artifact. The control plane's Maven build compiles this same file
+# (`protoSourceRoot` in controlplane/pom.xml), so there is no second copy to drift.
 PROTO = ROOT / "scheduling.proto"
-PROTO_COPIES: list[Path] = [REPO / "controlplane" / "src" / "main" / "proto" / "scheduling.proto"]
 
 # Records on the far side of the seam that bind one of our schemas by field name.
 # `strict` means the record has no @JsonIgnoreProperties(ignoreUnknown = true), so
@@ -139,90 +135,6 @@ def check_proto() -> list[str]:
         return ["scheduling.proto: does not compile (see protoc output above)"]
     print("  scheduling.proto             -> compiles")
     return []
-
-
-def _wire_shape(path: Path) -> dict[str, object]:
-    """Everything about a .proto that two ends of a socket have to agree on.
-
-    Comments, whitespace, field order, `package`, and every `option` are excluded
-    deliberately. The control plane's copy carries `java_package` and friends and
-    formats its fields differently, and neither of those changes a byte on the wire.
-    What does change bytes is a field number, a type, a repeated/optional label, or the
-    request or response type of an RPC — so those are what get compared.
-    """
-    from google.protobuf import descriptor_pb2
-    from grpc_tools import protoc
-
-    with tempfile.TemporaryDirectory() as out:
-        desc = Path(out) / "d.bin"
-        rc = protoc.main(["protoc", f"-I{path.parent}", f"--descriptor_set_out={desc}", str(path)])
-        if rc != 0:
-            raise ValueError(f"{path}: does not compile")
-        fds = descriptor_pb2.FileDescriptorSet()
-        fds.ParseFromString(desc.read_bytes())
-
-    messages: dict[str, dict[int, tuple[str, int, int, str]]] = {}
-    services: dict[str, dict[str, tuple[str, str, bool, bool]]] = {}
-    for f in fds.file:
-        for m in f.message_type:
-            messages[m.name] = {
-                fld.number: (fld.name, fld.type, fld.label, fld.type_name) for fld in m.field
-            }
-        for svc in f.service:
-            services[svc.name] = {
-                meth.name: (
-                    meth.input_type.rsplit(".", 1)[-1],
-                    meth.output_type.rsplit(".", 1)[-1],
-                    meth.client_streaming,
-                    meth.server_streaming,
-                )
-                for meth in svc.method
-            }
-    return {"messages": messages, "services": services}
-
-
-def check_proto_copies() -> list[str]:
-    """The frozen C-1 and the copy Maven compiles must describe the same wire.
-
-    `contract-v1` pins `contracts/scheduling.proto` by content hash. It cannot pin a
-    second file it does not know about, so without this the tag would keep certifying a
-    proto that nothing on the socket actually speaks.
-    """
-    failures: list[str] = []
-    try:
-        frozen = _wire_shape(PROTO)
-    except ValueError as exc:
-        return [str(exc)]
-
-    for copy in PROTO_COPIES:
-        rel = copy.relative_to(REPO)
-        if not copy.exists():
-            print(f"  {rel!s:28s} -> absent (nothing to drift)")
-            continue
-        try:
-            other = _wire_shape(copy)
-        except ValueError as exc:
-            failures.append(str(exc))
-            continue
-
-        for kind in ("messages", "services"):
-            mine, theirs = frozen[kind], other[kind]
-            for name in sorted(set(mine) | set(theirs)):
-                if name not in theirs:
-                    failures.append(f"{rel}: {kind[:-1]} {name!r} is missing")
-                elif name not in mine:
-                    failures.append(f"{rel}: {kind[:-1]} {name!r} is not in the frozen C-1")
-                elif mine[name] != theirs[name]:
-                    for key in sorted(set(mine[name]) | set(theirs[name])):
-                        a, b = mine[name].get(key), theirs[name].get(key)
-                        if a != b:
-                            failures.append(
-                                f"{rel}: {kind[:-1]} {name}[{key!r}] is {b!r}, frozen C-1 "
-                                f"says {a!r}"
-                            )
-        if not failures:
-            print(f"  {rel!s:28s} -> wire-identical to the frozen C-1")
-    return failures
 
 
 def _schema_property_names(node: object) -> set[str]:
@@ -487,7 +399,6 @@ def main(argv: list[str] | None = None) -> int:
     failures = check_examples()
     print("\nC-1 — wire schema:")
     failures += check_proto()
-    failures += check_proto_copies()
     print("\nC-3 — the envelope a snapshot is allowed to claim:")
     failures += check_calibration_envelopes()
     print("\nC-3 / C-6 — the seam's other reader:")

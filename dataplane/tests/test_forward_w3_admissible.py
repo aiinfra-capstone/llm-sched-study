@@ -18,18 +18,11 @@ into every trace config. Two things make it worth guarding with tests written in
 from __future__ import annotations
 
 import pytest
-from conftest import pending
 
+from dataplane.calibration import admissible
 from dataplane.harness import gen_trace
 
 pytestmark = pytest.mark.forward
-
-admissible = pending(
-    "dataplane.calibration.admissible",
-    "determine",
-    week="Week 3",
-    deliverable="admissible-set determination",
-)
 
 
 def test_the_envelope_is_the_intersection_across_the_pool() -> None:
@@ -92,11 +85,29 @@ def test_every_proposed_bucket_fits_the_envelope_it_came_from() -> None:
 
 def test_the_envelope_is_derived_from_measurement_not_from_a_constant() -> None:
     """F-13 says the envelope is what the pool can serve, which is a measured fact about
-    Week-2 data. A hardcoded 2048/256 would survive a pool change silently."""
-    source = admissible.__file__
-    with open(source) as fh:
-        text = fh.read()
-    assert "cost_model" in text or "service_ms" in text
+    Week-2 data. A hardcoded 2048/256 would survive a pool change silently, so two
+    snapshots that measured different p95s have to give two different envelopes."""
+
+    def snapshot(long_p95_ms: float) -> dict:
+        cells = {((1, 128), (1, 64)): 800.0, ((129, 512), (65, 128)): long_p95_ms}
+        return {
+            "node_class": "n1",
+            "entries": [
+                {
+                    "prompt_bucket": list(p),
+                    "output_bucket": list(o),
+                    "concurrency": c,
+                    "service_ms_p95": ms,
+                }
+                for (p, o), ms in cells.items()
+                for c in (1, 4)
+            ],
+        }
+
+    fast = admissible.node_limit_from_snapshot(snapshot(900.0), 1000)
+    slow = admissible.node_limit_from_snapshot(snapshot(5000.0), 1000)
+    assert (fast["max_prompt"], fast["max_output"]) == (512, 128)
+    assert (slow["max_prompt"], slow["max_output"]) == (128, 64)
 
 
 # --------------------------------------------------------------------------------------

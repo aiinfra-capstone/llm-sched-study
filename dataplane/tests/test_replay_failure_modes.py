@@ -10,8 +10,7 @@ A missing record is indistinguishable downstream from a request that was never s
 that difference is the whole of `validity.dropped_requests`.
 
 The scheduler is inline rather than `fixtures/fake_scheduler`, for the reason given in
-`test_replay_open_loop.py`: the fixture is deleted after Week 3 and this suite must
-outlive it.
+`test_replay_open_loop.py`: this suite must not depend on the fixture.
 """
 
 from __future__ import annotations

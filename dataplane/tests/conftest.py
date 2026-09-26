@@ -80,23 +80,3 @@ def assert_conforms(validator: Any, records: Iterable[Any], label: str = "record
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
-
-
-def pending(module: str, attr: str, *, week: str, deliverable: str):
-    """Import a module that a later week is supposed to deliver, or skip with the reason.
-
-    `pytest.importorskip` alone is not enough here. Several of these packages already
-    exist as a docstring and an empty `__all__` — `dataplane.figures` and
-    `dataplane.pipeline` were created with the repository layout — so importing succeeds
-    while nothing is implemented. Requiring one named entry point is what makes the skip
-    track the work rather than the directory.
-    """
-    mod = pytest.importorskip(
-        module, reason=f"{week}: {deliverable} not implemented yet ({module} is missing)"
-    )
-    if not hasattr(mod, attr):
-        pytest.skip(
-            f"{week}: {deliverable} not implemented yet ({module}.{attr} is missing)",
-            allow_module_level=True,
-        )
-    return mod

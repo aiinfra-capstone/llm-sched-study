@@ -71,7 +71,7 @@ pythonpath = ["../tools"]
 #     uv run pytest tests/test_manifest.py --no-cov
 addopts = "-rs -m \"not perf\" --cov --cov-report=term-missing"
 markers = [
-    "forward: guards a deliverable from a later week; skips until the implementation lands",
+    "forward: a contract test written before the deliverable it guards had landed",
     "integration: crosses a real process boundary or a real socket; slower than a unit test",
     "perf: a load measurement, not an assertion about correctness — see the note below",
 ]

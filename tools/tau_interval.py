@@ -16,8 +16,8 @@ moving-block bootstrap interval on each:
   lag-1        rho(1) itself, the number the fit mostly stands on
   n/tau        how many tau the segment spans; below about 40 a tau estimate is not stable
 
-The bootstrap resamples blocks of windows (block length ceil(n^(1/3)), at least 2) and
-refits. A draw whose ACF shows no decay counts as censored at one window.
+The bootstrap resamples blocks of windows (block length BLOCKS_PER_TAU times the fitted tau,
+at least 2 windows and at most a quarter of the series, see block_length) and refits. A draw whose ACF shows no decay counts as censored at one window.
 
 Usage:
   uv run --project dataplane python tools/tau_interval.py \\
@@ -39,10 +39,10 @@ from dataplane.calibration.stationarity import (
     windowed_throughput,
 )
 
-# Block length as a multiple of the fitted tau. Ten keeps the join bias at a few percent
-# while still leaving enough blocks for the interval to have any width. Measured against AR(1)
-# series with a known tau: coverage of a 95% interval goes 6 of 20 at the n^(1/3) rule, 15 at
-# ten tau per block and 17 at twenty-five.
+# Block length as a multiple of the fitted tau. Twenty-five keeps the join bias at a few
+# percent while still leaving enough blocks for the interval to have any width. Measured
+# against AR(1) series with a known tau: coverage of a 95% interval goes 6 of 20 at the
+# n^(1/3) rule, 15 at ten tau per block and 17 at twenty-five.
 BLOCKS_PER_TAU = 25.0
 
 

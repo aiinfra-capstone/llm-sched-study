@@ -1525,13 +1525,11 @@ def drawable(frame: pd.DataFrame) -> list[str]:
         if frame["R"].nunique() > 1:
             names += ["h2-advantage", "mpr2-range"]
         # Two workload shapes, not two R values: the phase figure varies the trace rather
-        # than the pool, so a single-R set can still draw it. The columns are guarded
-        # because a frame assembled by hand for one figure need not carry them, even
-        # though every real C-5 runset does.
-        # Shapes are counted by trace when the frame names one, because one trace mixes
-        # buckets of different ratios and counting per-request ratios offered this figure
-        # for a single-trace set. The guard is there because a frame assembled by hand for
-        # one figure need not carry these columns, even though every real C-5 runset does.
+        # than the pool, so a single-R set can still draw it. Shapes are counted by trace
+        # when the frame names one, because one trace mixes buckets of different ratios and
+        # counting per-request ratios offered this figure for a single-trace set. The
+        # columns are guarded because a frame assembled by hand for one figure need not
+        # carry them, even though every real C-5 runset does.
         if {"prompt_len", "output_len"} <= set(frame.columns):
             ratio = (frame["prompt_len"] / frame["output_len"]).round(3)
             shape = frame["trace_sha256"] if "trace_sha256" in frame.columns else ratio

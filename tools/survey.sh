@@ -325,7 +325,7 @@ if [ -n "$BENCH_MODEL" ]; then
   else
     if [ "$HAS_GPU" -eq 1 ]; then NGL_SWEEP="0,4,8,12,16"; else NGL_SWEEP="0"; fi
     echo "  llama-bench -m $BENCH_MODEL -ngl $NGL_SWEEP -p 512 -n 128 -t $SUGGEST_THREADS"
-    echo "  pp512 is prefill tokens/s, tg128 is decode tokens/s. Decode is what sets R."
+    echo "  pp512 is prefill tokens/s, tg128 is decode tokens/s. R is the ratio of service rates at the workload shape, so both set it."
     echo
     llama-bench -m "$BENCH_MODEL" -ngl "$NGL_SWEEP" -p 512 -n 128 -t "$SUGGEST_THREADS" 2>&1 | sed 's/^/  /'
     BENCH_RAN=1

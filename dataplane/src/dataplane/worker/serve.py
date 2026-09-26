@@ -372,9 +372,10 @@ class WorkerService(sched_grpc.WorkerServicer):
         because a slot is genuinely busy for a moment after its response is returned and
         before the engine releases it, and a single sample would call that a leak.
 
-        A confirmed leak makes the node report `degraded` — which is what C-1's
-        `engine_state` is for, and what lets the scheduler route around a node whose
-        capacity is no longer what the manifest says it is.
+        A confirmed leak makes the node report `degraded` in C-1's `engine_state`, so the
+        heartbeat log records that the node's capacity is no longer what the manifest says
+        it is. The control plane does not read `engine_state`, so it keeps routing to the
+        node; the flag is for reading the run afterwards, not for routing.
         """
         state = await self.adapter.live_state()
         if state.state != "ready":

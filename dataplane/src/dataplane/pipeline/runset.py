@@ -267,6 +267,9 @@ def aggregate(
     for run_dir in discover(root):
         try:
             frames.append(load_run(run_dir, index=index, allow_invalid=allow_invalid))
+        except json.JSONDecodeError:
+            # A ValueError too, but a broken file is not a stated reason to exclude a run.
+            raise
         except (ValueError, FileNotFoundError) as exc:
             excluded.append((run_dir.name, str(exc)))
             continue

@@ -221,3 +221,47 @@ def test_prefill_and_decode_are_nullable_in_the_joined_record() -> None:
     props = json.loads((SCHEMAS / "joined_record.schema.json").read_text())["properties"]
     for field in ("prefill_ms", "decode_ms"):
         assert "null" in props[field]["type"], f"{field} cannot express 'not measured'"
+
+
+def test_the_java_build_compiles_the_contract_proto() -> None:
+    """There is one C-1 file. Maven reads `contracts/scheduling.proto` through
+    `protoSourceRoot`, so a drift check against a second copy would compare nothing."""
+    pom = (REPO_ROOT / "controlplane" / "pom.xml").read_text()
+    root = re.search(r"<protoSourceRoot>\$\{project\.basedir\}/(.+?)</protoSourceRoot>", pom)
+    assert root, "controlplane/pom.xml sets no protoSourceRoot"
+    resolved = (REPO_ROOT / "controlplane" / root.group(1)).resolve()
+    assert resolved == CONTRACTS.resolve()
+    assert (CONTRACTS / "scheduling.proto").exists()
+    assert not (REPO_ROOT / "controlplane" / "src" / "main" / "proto").exists()
+    assert not hasattr(_load_checker(), "PROTO_COPIES")
+
+
+def test_c5_accepts_null_worker_columns(schema) -> None:
+    """No worker record means the worker-local columns were never measured. C-5 says so
+    with null, and the residual that needs them is null too."""
+    row = {
+        "run_id": "r",
+        "req_id": "r1",
+        "policy": "jsq",
+        "lambda": 1.0,
+        "staleness_s": 0.0,
+        "R": 1.0,
+        "node_count": 2,
+        "bucket_id": "p128_o64",
+        "prompt_len": 128,
+        "output_len": 64,
+        "priority": 0,
+        "intended_offset_s": 1.0,
+        "send_lag_ms": 0.1,
+        "e2e_ms": 900.0,
+        "status": "ok",
+        "chosen_node": "n1",
+        "decide_us": 12.0,
+        "chosen_queue_depth": 0,
+        "chosen_est_age_ms": 5,
+        "queue_wait_ms": None,
+        "service_ms": None,
+        "transport_residual_ms": None,
+        "is_warmup": False,
+    }
+    assert_conforms(schema("joined_record"), [row], "C-5 row")

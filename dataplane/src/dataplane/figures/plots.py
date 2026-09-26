@@ -170,8 +170,13 @@ def percentile(values: list[float], q: float) -> float:
     return ordered[rank - 1]
 
 
-def analysable(frame: pd.DataFrame) -> pd.DataFrame:
+def analysable(frame: pd.DataFrame, *, worker_local: bool) -> pd.DataFrame:
     """The rows a latency statistic may be computed from, and only those.
+
+    `worker_local` is required, so every caller says which kind of statistic it feeds.
+    Client-local statistics (e2e, achieved rate) keep a row that has no worker record: the
+    client measured it. Worker-local ones (service time, queue wait, anything that reads
+    `service_ms`) drop it.
 
     Three exclusions, each of which produces a plausible wrong number if skipped:
 
@@ -182,13 +187,13 @@ def analysable(frame: pd.DataFrame) -> pd.DataFrame:
     **Failures.** A timeout's `e2e_ms` is the timeout, not a service time. Failed requests
     stay as rows — the failure rate is a result — but never enter a latency percentile.
 
-    **Rows with no worker record.** `join` writes 0.0 rather than null for the worker-local
-    durations there, because C-5 types them as numbers. A zero service time averaged into
-    a service-time figure is the single most convincing wrong number this pipeline can
-    produce, so those rows are dropped from anything worker-local.
+    **Rows with no worker record**, for a worker-local statistic. `join` writes null for
+    the worker-local durations there, and they are dropped rather than averaged.
     """
     ok = frame[(~frame["is_warmup"]) & (frame["status"] == "ok")]
-    return ok[~((ok["service_ms"] == 0.0) & (ok["queue_wait_ms"] == 0.0))]
+    if not worker_local:
+        return ok
+    return ok[ok["service_ms"].notna() & ok["queue_wait_ms"].notna()]
 
 
 def achieved_rps(rows: pd.DataFrame) -> float:
@@ -215,9 +220,10 @@ def by_offered_load(frame: pd.DataFrame) -> pd.DataFrame:
     together, which is precisely the structure §5.5 needs kept apart.
     """
     out = []
-    for run_id, rows in analysable(frame).groupby("run_id", sort=False):
+    for run_id, rows in analysable(frame, worker_local=False).groupby("run_id", sort=False):
         e2e = rows["e2e_ms"].astype(float).tolist()
-        queue = rows["queue_wait_ms"].astype(float).tolist()
+        # Queue wait is worker-local, so it is read only from rows a worker logged.
+        queue = rows["queue_wait_ms"].dropna().astype(float).tolist()
         out.append(
             {
                 "run_id": run_id,
@@ -230,8 +236,8 @@ def by_offered_load(frame: pd.DataFrame) -> pd.DataFrame:
                 "p50_ms": percentile(e2e, 0.50),
                 "p95_ms": percentile(e2e, 0.95),
                 "p99_ms": percentile(e2e, 0.99),
-                "queue_wait_p50_ms": percentile(queue, 0.50),
-                "queue_wait_p95_ms": percentile(queue, 0.95),
+                "queue_wait_p50_ms": percentile(queue, 0.50) if queue else None,
+                "queue_wait_p95_ms": percentile(queue, 0.95) if queue else None,
                 "routing_error_rate": routing_error_rate(rows),
             }
         )
@@ -246,7 +252,8 @@ def routing_error_rate(rows: pd.DataFrame) -> float | None:
     would state that routing was perfect when in fact nothing about routing was observed.
     The two are opposite claims and they must not share a value.
     """
-    decided = rows[rows["routing_error_ms"].notna()]
+    # Materiality is judged against the request's own service time, which is worker-local.
+    decided = rows[rows["routing_error_ms"].notna() & rows["service_ms"].notna()]
     if decided.empty:
         return None
     material = decided["routing_error_ms"].astype(float) >= (
@@ -278,7 +285,7 @@ def per_node_utilization(frame: pd.DataFrame, *, slots_per_node: int | None = No
     proposed amendment rather than made here, because the six artifacts froze at the end
     of Week 1 and changing one is a joint decision.
     """
-    rows = analysable(frame)
+    rows = analysable(frame, worker_local=True)
     # Spans are measured per run and then summed. Every run's offsets start near zero, so
     # one span taken across a whole set is the length of a single run while the service
     # time summed under it is every run's, and a four-slot node read 24 in service at once.
@@ -498,7 +505,10 @@ def bootstrap_halfwidth(
     sample = np.asarray(values, dtype=float)
     draws_matrix = rng.choice(sample, size=(draws, len(sample)), replace=True)
     point = percentile(values, q)
-    low, high = np.percentile(np.percentile(draws_matrix, q * 100, axis=1), [2.5, 97.5])
+    # Nearest rank throughout, the same definition as `percentile`: numpy's "inverted_cdf"
+    # is the smallest sample whose empirical CDF reaches q, which is the ceil(q * n)-th.
+    per_draw = np.percentile(draws_matrix, q * 100, axis=1, method="inverted_cdf")
+    low, high = np.percentile(per_draw, [2.5, 97.5], method="inverted_cdf")
     return float(max(high - point, point - low) / point)
 
 
@@ -510,7 +520,8 @@ def _matched_points(frame: pd.DataFrame) -> list[tuple[float, pd.DataFrame, pd.D
     F-23 compares like with like, and a simulator point with no hardware twin is not a
     validation point.
     """
-    rows = analysable(frame)
+    # F-23 compares end-to-end latency, which the client measured on its own.
+    rows = analysable(frame, worker_local=False)
     hardware = rows[rows["vehicle"] == "hardware"]
     simulator = rows[rows["vehicle"] == "simulator"]
     paired = []
@@ -840,7 +851,7 @@ def sweep_from(frame: pd.DataFrame) -> pd.DataFrame:
     figures that report distribution shape rather than decompose it.
     """
     out = []
-    for run_id, rows in analysable(frame).groupby("run_id", sort=False):
+    for run_id, rows in analysable(frame, worker_local=False).groupby("run_id", sort=False):
         e2e = rows["e2e_ms"].astype(float)
         out.append(
             {
@@ -907,6 +918,17 @@ def _r_axis(ax: Any, r_values: list[float]) -> None:
     _ratio_axis(ax, r_values, "heterogeneity ratio R")
 
 
+def h1_verdict(interaction: float) -> str:
+    """The H1 interaction in a word. Positive: calibration buys less once the policy sees
+    queue depth, so the two signals overlap. Negative: it buys more, so they complement each
+    other. Zero: the two effects add."""
+    if interaction > 0:
+        return "redundant"
+    if interaction < 0:
+        return "complementary"
+    return "additive"
+
+
 def h1_decomposition(frame: pd.DataFrame, out_dir: Path) -> Path:
     """H1 as an interaction plot: two lines, and whether they are parallel.
 
@@ -945,7 +967,7 @@ def h1_decomposition(frame: pd.DataFrame, out_dir: Path) -> Path:
     ax.set_title("H1: what calibration buys, with and without queue-awareness")
     # The sign is the finding, so it is spelled out rather than left to the reader to
     # infer from two line slopes they have to eyeball.
-    verdict = "redundant" if interaction > 0 else "independent signal"
+    verdict = h1_verdict(interaction)
     ax.annotate(
         f"interaction = {interaction:+.1f} ms  ({verdict})",
         xy=(0.5, 0.02),
@@ -1059,7 +1081,7 @@ def phase_advantage_curve(frame: pd.DataFrame) -> list[dict[str, float]]:
     and pooling them across runs would let a long run outvote a short one inside a cell that
     is supposed to be one observation.
     """
-    rows = analysable(frame)
+    rows = analysable(frame, worker_local=False)
     per_run = []
     for run_id, group in rows.groupby("run_id", sort=False):
         output_len = group["output_len"].astype(float)
@@ -1363,7 +1385,7 @@ def render_many(frame: pd.DataFrame, *, manifests: list[dict[str, Any]]) -> Any:
         raise ValueError("a figure has to come from at least one run; no manifests were given")
     vehicles = [vehicle_of(m) for m in manifests]
 
-    rows = analysable(frame)
+    rows = analysable(frame, worker_local=False)
     fig, ax = plt.subplots(figsize=(6.5, 4.0))
     if len(rows):
         ax.plot(
@@ -1408,7 +1430,7 @@ def example_frame() -> pd.DataFrame:
         ("anchor_a", 12.0, 1200.0, "ok", 1000.0, 120.0, False),
         ("anchor_a", 13.0, 1350.0, "ok", 1100.0, 160.0, False),
         ("anchor_a", 14.0, 30000.0, "timeout", 0.0, 0.0, False),
-        ("anchor_a", 15.0, 1400.0, "ok", 0.0, 0.0, False),
+        ("anchor_a", 15.0, 1400.0, "ok", None, None, False),
         ("anchor_a", 16.0, 1500.0, "ok", 1180.0, 210.0, False),
     ]
     return pd.DataFrame(
@@ -1440,7 +1462,7 @@ def example_frame() -> pd.DataFrame:
                 "prefill_ms": None,
                 "decode_ms": None,
                 "service_ms": service,
-                "transport_residual_ms": e2e - service - queue,
+                "transport_residual_ms": None if service is None else e2e - service - queue,
                 "is_warmup": warmup,
                 "vehicle": "hardware",
                 "trace_sha256": "0" * 64,

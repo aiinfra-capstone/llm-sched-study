@@ -22,11 +22,10 @@ backwards would invert the headline result and still produce a plausible plot.
 from __future__ import annotations
 
 import pytest
-from conftest import pending
+
+from dataplane import figures
 
 pytestmark = pytest.mark.forward
-
-figures = pending("dataplane.figures", "render", week="Weeks 5-6", deliverable="figure scripts")
 
 
 # --------------------------------------------------------------------------------------
@@ -82,7 +81,7 @@ def test_warmup_rows_are_excluded() -> None:
     """`is_warmup` is computed identically in both vehicles precisely so this filter is
     the same filter on both sides of the F-23 comparison."""
     frame = figures.example_frame()
-    assert not figures.analysable(frame)["is_warmup"].any()
+    assert not figures.analysable(frame, worker_local=False)["is_warmup"].any()
 
 
 def test_figures_read_parquet_and_nothing_else() -> None:

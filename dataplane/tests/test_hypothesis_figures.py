@@ -630,3 +630,17 @@ def test_h3_says_on_the_figure_when_it_fell_back_to_routing_error(
     assert "routing error rate" in drawn[-1]
     assert "fallback measure" in drawn[-1]
     assert "WJSQ cannot register an error" in drawn[-1].replace("\n", " ")
+
+
+def test_the_h1_interaction_is_labelled_by_its_sign(tmp_path: Path, monkeypatch) -> None:
+    """Positive: calibration buys less once the policy sees queue depth, the two signals
+    overlap. Negative: it buys more, they complement each other. Zero: they add."""
+    assert plots.h1_verdict(12.5) == "redundant"
+    assert plots.h1_verdict(-3.0) == "complementary"
+    assert plots.h1_verdict(0.0) == "additive"
+    drawn = _rendered(monkeypatch)
+    frame = _sweep_frame()
+    plots.h1_decomposition(frame, tmp_path)
+    interaction = plots.h1_interaction(plots._cells_at(plots.sweep_from(frame)))
+    assert f"({plots.h1_verdict(interaction)})" in drawn[-1]
+    assert "independent signal" not in drawn[-1]

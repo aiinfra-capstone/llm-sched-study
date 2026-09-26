@@ -131,8 +131,11 @@
       "$comment": "from scheduler \u2014 derived; \u00a75.4 dependent variable"
     },
     "queue_wait_ms": {
-      "type": "number",
-      "$comment": "from worker \u2014 worker-local"
+      "type": [
+        "number",
+        "null"
+      ],
+      "$comment": "from worker \u2014 worker-local; null when no worker record exists for the request"
     },
     "prefill_ms": {
       "type": [
@@ -149,12 +152,18 @@
       "$comment": "from worker \u2014 null if F-18 partial"
     },
     "service_ms": {
-      "type": "number",
-      "$comment": "from worker \u2014 worker-local"
+      "type": [
+        "number",
+        "null"
+      ],
+      "$comment": "from worker \u2014 worker-local; null when no worker record exists for the request"
     },
     "transport_residual_ms": {
-      "type": "number",
-      "description": "DERIVED: e2e_ms - queue_wait_ms - service_ms - decide_us/1000. A residual, not a measurement."
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "DERIVED: e2e_ms - queue_wait_ms - service_ms - decide_us/1000. A residual, not a measurement. Null when there is no worker record, since the two worker-local durations it subtracts were never measured."
     },
     "is_warmup": {
       "type": "boolean",

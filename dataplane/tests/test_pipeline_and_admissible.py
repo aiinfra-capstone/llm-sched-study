@@ -7,6 +7,7 @@ refusals, and the rest are about which columns are allowed to be zero.
 
 from __future__ import annotations
 
+import hashlib
 import json
 
 import pandas as pd
@@ -196,11 +197,40 @@ def test_a_missing_scheduler_record_is_null_not_zero() -> None:
 
 
 def test_probe_node_rows_never_reach_the_record_set() -> None:
-    """F-9b: the probe is a measured condition and appears in no policy comparison."""
-    worker = [{**_WORKER[0], "node_id": "probe"}]
-    row = _join(worker=worker)[0]
-    assert row["service_ms"] == 0.0  # its worker record was dropped before the join
-    assert row["node_count"] == 2  # the probe is not counted as a pool member
+    """F-9b: the probe is a measured condition and appears in no policy comparison. A
+    request the probe served is not a row of this run at all, so it is dropped rather
+    than kept with its worker columns emptied."""
+    client = [*_CLIENT, {**_CLIENT[0], "req_id": "r2", "responding_node": "probe"}]
+    worker = [*_WORKER, {**_WORKER[0], "req_id": "r2", "node_id": "probe"}]
+    rows = _join(client=client, worker=worker)
+    assert [r["req_id"] for r in rows] == ["r1"]
+    assert rows[0]["node_count"] == 2  # the probe is not counted as a pool member
+
+
+def test_a_row_without_a_worker_record_has_null_worker_columns() -> None:
+    """No worker record means nobody measured the worker-local durations. A 0.0 would be
+    a measurement of an instantaneous service, and the residual cannot be computed."""
+    row = _join(worker=[])[0]
+    assert row["queue_wait_ms"] is None
+    assert row["service_ms"] is None
+    assert row["transport_residual_ms"] is None
+    assert row["e2e_ms"] == pytest.approx(2500.0)
+
+
+def test_summarize_counts_missing_worker_records_by_null() -> None:
+    """A worker that really reported 0.0 is a measurement, not a missing record."""
+    zero = [{**_WORKER[0], "queue_wait_ns": 0, "service_ns": 0}]
+    lines = join_mod.summarize(_join(worker=zero), _MANIFEST)
+    assert not any("no worker record" in x for x in lines)
+    lines = join_mod.summarize(_join(worker=[]), _MANIFEST)
+    assert any("1 request(s) have no worker record" in x for x in lines)
+
+
+def test_join_refuses_an_empty_client_log() -> None:
+    """The client saw every request, so a record set is one row per client record. With
+    none there is no run to describe."""
+    with pytest.raises(ValueError, match="client log"):
+        _join(client=[])
 
 
 def test_logs_from_two_different_runs_are_refused() -> None:
@@ -260,6 +290,8 @@ def test_cli_joins_a_run_directory(tmp_path, capsys) -> None:
     (run / "worker_n1_run_0142.jsonl").write_text("\n".join(json.dumps(r) for r in _WORKER))
     trace = tmp_path / "trace.jsonl"
     trace.write_text("\n".join(json.dumps(r) for r in _TRACE) + "\n\n")
+    sha = hashlib.sha256(trace.read_bytes()).hexdigest()
+    (run / "manifest.json").write_text(json.dumps({**_MANIFEST, "trace_sha256": sha}))
 
     assert join_mod.main([str(run), "--trace", str(trace), "--r", "12.5"]) == 0
     assert (run / "joined.parquet").exists()
@@ -270,10 +302,12 @@ def test_cli_joins_a_run_directory(tmp_path, capsys) -> None:
 def test_cli_returns_nonzero_for_an_invalid_run(tmp_path, capsys) -> None:
     run = tmp_path / "run_bad"
     run.mkdir()
-    (run / "manifest.json").write_text(json.dumps({**_MANIFEST, "validity": {"valid": False}}))
     (run / "client_run_0142.jsonl").write_text(json.dumps(_CLIENT[0]))
     trace = tmp_path / "t.jsonl"
     trace.write_text(json.dumps(_TRACE[1]))
+    sha = hashlib.sha256(trace.read_bytes()).hexdigest()
+    bad = {**_MANIFEST, "trace_sha256": sha, "validity": {"valid": False}}
+    (run / "manifest.json").write_text(json.dumps(bad))
 
     assert join_mod.main([str(run), "--trace", str(trace), "--force"]) == 1
     assert "do not analyse it" in capsys.readouterr().out
@@ -381,10 +415,10 @@ def test_the_cliff_is_read_from_the_samples_the_cost_model_discards() -> None:
     assert admissible.cliff_from_observations([], node_class="n").failure_rate == 0.0
 
 
-def test_anchors_are_empty_until_the_week3_runs_exist(tmp_path) -> None:
-    """F-23's anchors are live hardware runs at three operating points. Returning an empty
-    list is the correct answer before they are collected — validating a simulator against
-    nothing is worse than not validating it."""
+def test_a_missing_anchor_directory_is_empty_and_an_invalid_anchor_is_refused(tmp_path) -> None:
+    """F-23's anchors are live hardware runs at three operating points. A directory with
+    none in it gives an empty list rather than a guess, and a run marked invalid is refused
+    rather than used as ground truth."""
     assert admissible.load_anchors(tmp_path / "nope") == []
 
     good = tmp_path / "anchors" / "run_a"

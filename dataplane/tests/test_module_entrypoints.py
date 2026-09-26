@@ -131,3 +131,59 @@ def test_reimporting_proto_does_not_stack_the_generated_dir_on_sys_path() -> Non
 
     assert sys.path.count(entry) == 1, "reload re-inserted an entry that was already there"
     assert proto.sched_pb2 is sys.modules["scheduling_pb2"]
+
+
+# --------------------------------------------------------------------------------------
+# join, run as a module: the CLI checks the trace it is handed
+# --------------------------------------------------------------------------------------
+
+
+def _joinable_run(tmp_path: Path, trace_config, *, client: bool = True) -> tuple[Path, Path]:
+    from dataplane.harness import gen_trace
+
+    trace = tmp_path / "t.jsonl"
+    sha = gen_trace.generate(trace_config(), trace)
+    run = tmp_path / "run_1"
+    run.mkdir()
+    manifest = {
+        "run_id": "run_1",
+        "policy": "jsq",
+        "lambda": 1.0,
+        "staleness_s": 0.0,
+        "warmup_s": 0.0,
+        "trace_sha256": sha,
+        "validity": {"valid": True},
+        "nodes": [{"node_id": "n1", "host": "a", "role": "pool"}],
+    }
+    (run / "manifest.json").write_text(json.dumps(manifest))
+    if client:
+        record = {
+            "run_id": "run_1",
+            "req_id": "r000001",
+            "intended_offset_s": 1.0,
+            "send_lag_ms": 0.1,
+            "e2e_duration_ns": 900_000_000,
+            "status": "ok",
+            "responding_node": "n1",
+        }
+        (run / "client_run_1.jsonl").write_text(json.dumps(record) + "\n")
+    return run, trace
+
+
+def test_join_cli_refuses_a_trace_the_run_did_not_replay(
+    tmp_path: Path, trace_config, capsys
+) -> None:
+    run, trace = _joinable_run(tmp_path, trace_config)
+    other = tmp_path / "other.jsonl"
+    other.write_bytes(trace.read_bytes() + b"\n")
+    code = _run_module("dataplane.pipeline.join", [str(run), "--trace", str(other)])
+    assert code != 0
+    assert "the workload is not the one this run replayed" in capsys.readouterr().err
+    assert not (run / "joined.parquet").exists()
+    assert _run_module("dataplane.pipeline.join", [str(run), "--trace", str(trace)]) == 0
+
+
+def test_join_cli_without_a_client_log_is_an_error(tmp_path: Path, trace_config, capsys) -> None:
+    run, trace = _joinable_run(tmp_path, trace_config, client=False)
+    assert _run_module("dataplane.pipeline.join", [str(run), "--trace", str(trace)]) == 2
+    assert "no client_*.jsonl" in capsys.readouterr().err

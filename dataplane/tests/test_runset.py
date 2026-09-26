@@ -13,6 +13,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
 import pytest
 
 from dataplane.pipeline import runset
@@ -266,8 +267,21 @@ def test_a_manifest_naming_a_different_trace_is_refused(tmp_path, index) -> None
 def test_a_relative_trace_path_resolves_against_the_repository(tmp_path, index) -> None:
     """Manifests written by the harness carry a repo-relative path; an absolute one is
     equally acceptable, and both have to land on the same file."""
+    import hashlib
+
+    relative = "contracts/examples/trace.sample.jsonl"
+    absolute = runset.REPO_ROOT / relative
     run_dir = _make_run(tmp_path, "relative")
     manifest = json.loads((run_dir / "manifest.json").read_text())
+    manifest["trace_sha256"] = hashlib.sha256(absolute.read_bytes()).hexdigest()
+    frames = []
+    for path in (relative, str(absolute)):
+        manifest["trace_path"] = path
+        (run_dir / "manifest.json").write_text(json.dumps(manifest))
+        frames.append(runset.load_run(run_dir, index=index))
+    pd.testing.assert_frame_equal(frames[0], frames[1])
+    assert len(frames[0]) == 2
+
     manifest["trace_path"] = "no/such/trace.jsonl"
     (run_dir / "manifest.json").write_text(json.dumps(manifest))
     with pytest.raises(FileNotFoundError):
@@ -392,3 +406,13 @@ def test_a_heterogeneous_set_reports_its_r_without_the_h2_caveat(tmp_path, index
     lines = "\n".join(runset.aggregate(tmp_path, index=index).summary())
     assert "R: 2.00x" in lines
     assert "H2" not in lines
+
+
+def test_a_corrupt_manifest_propagates_instead_of_being_excluded(tmp_path, index) -> None:
+    """A manifest that is not JSON is a broken file, not a run excluded for a stated
+    reason. Excluding it would drop a run from the set on a disk error."""
+    _make_run(tmp_path / "runs", "run_good")
+    bad = _make_run(tmp_path / "runs", "run_bad")
+    (bad / "manifest.json").write_text("{not json")
+    with pytest.raises(json.JSONDecodeError):
+        runset.aggregate(tmp_path / "runs", index=index)

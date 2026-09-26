@@ -42,7 +42,9 @@ the difference between a rule and a habit.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -103,9 +105,11 @@ def summarize(rows: list[dict[str, Any]], manifest: dict[str, Any]) -> list[str]
     """What has to be said out loud about a joined record set before anyone averages it."""
     probes = sum(1 for n in manifest["nodes"] if n.get("role", "pool") != "pool")
     missing_decision = sum(1 for r in rows if r["decide_us"] is None)
-    missing_worker = sum(1 for r in rows if r["service_ms"] == 0.0 and r["queue_wait_ms"] == 0.0)
+    missing_worker = sum(1 for r in rows if r["service_ms"] is None)
     warmup = sum(1 for r in rows if r["is_warmup"])
-    negative = sum(1 for r in rows if r["transport_residual_ms"] < 0)
+    negative = sum(
+        1 for r in rows if r["transport_residual_ms"] is not None and r["transport_residual_ms"] < 0
+    )
 
     out = [f"{len(rows)} rows  ({warmup} warmup, {len(rows) - warmup} measured)"]
     if missing_decision:
@@ -116,7 +120,8 @@ def summarize(rows: list[dict[str, Any]], manifest: dict[str, Any]) -> list[str]
     if missing_worker:
         out.append(
             f"{missing_worker} request(s) have no worker record: their worker-local "
-            "durations are 0.0 and must not be averaged as service times"
+            "durations and the transport residual are null; e2e still counts, a service "
+            "time must not be averaged over them"
         )
     if negative:
         out.append(
@@ -170,7 +175,14 @@ def _clock_lines(rows: list[dict[str, Any]], manifest: dict[str, Any]) -> list[s
         )
     factors = _node_rate_factors(manifest)
     if factors:
-        worst_ms = max((r["service_ms"] for r in rows if r["chosen_node"] in factors), default=0.0)
+        worst_ms = max(
+            (
+                r["service_ms"]
+                for r in rows
+                if r["chosen_node"] in factors and r["service_ms"] is not None
+            ),
+            default=0.0,
+        )
         worst_factor = max(abs(1.0 - 1.0 / f) for f in factors.values())
         out.append(
             f"rate correction applied to {len(factors)} node(s): at most "
@@ -361,7 +373,17 @@ def join(
     `trace` is optional because the per-request length fields are the only thing it
     supplies, and a run can be joined without it — a fake-scheduler smoke run, say. The
     length columns are then zero rather than absent, since C-5 types them as integers.
+
+    A request the engine-gap probe answered (`responding_node` names a node that is not in
+    the pool) is dropped: it belongs to no policy comparison (F-9b). A request with no
+    worker record keeps its row, since the client saw it, and its worker-local columns
+    and the transport residual are null: nobody measured them.
     """
+    if not client:
+        raise ValueError(
+            f"run {manifest['run_id']!r} has an empty client log. The client saw every "
+            "request, so there is no run here to join"
+        )
     _check_inputs(
         manifest=manifest,
         client=client,
@@ -383,6 +405,9 @@ def join(
     rows: list[dict[str, Any]] = []
 
     for c in client:
+        responder = c.get("responding_node")
+        if responder and responder not in pool_ids:
+            continue
         req_id = c["req_id"]
         t = by_req.get(req_id, {})
         d = decisions.get(req_id)
@@ -410,8 +435,8 @@ def join(
         # Worker-local durations onto the client's timebase. 1.0 unless the manifest
         # measured this node's host as ticking at a different rate from the reference.
         rate = node_rate.get(w["node_id"], 1.0) if w else 1.0
-        queue_wait_ms = (w["queue_wait_ns"] / 1e6 / rate) if w else 0.0
-        service_ms = (w["service_ns"] / 1e6 / rate) if w else 0.0
+        queue_wait_ms = (w["queue_wait_ns"] / 1e6 / rate) if w else None
+        service_ms = (w["service_ns"] / 1e6 / rate) if w else None
 
         rows.append(
             {
@@ -438,8 +463,10 @@ def join(
                 "decode_ms": (w["decode_ns"] / 1e6 / rate) if w and "decode_ns" in w else None,
                 "service_ms": service_ms,
                 # The one honest residual: everything the three hosts did not account for.
-                "transport_residual_ms": e2e_ms
-                - ((decide_us or 0.0) / 1e3 + queue_wait_ms + service_ms),
+                # It needs the worker's two durations, so without them it is null too.
+                "transport_residual_ms": (
+                    e2e_ms - ((decide_us or 0.0) / 1e3 + queue_wait_ms + service_ms) if w else None
+                ),
                 "is_warmup": bool(c["intended_offset_s"] < warmup_s),
             }
         )
@@ -494,15 +521,25 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     manifest = json.loads((args.run_dir / "manifest.json").read_text())
-    rows = join(
-        manifest=manifest,
-        trace=load_jsonl(args.trace),
-        client=_one(args.run_dir, "client_*.jsonl"),
-        scheduler=_one(args.run_dir, "scheduler_*.jsonl"),
-        worker=_one(args.run_dir, "worker_*.jsonl"),
-        r_value=args.r,
-        allow_invalid=args.force,
-    )
+    client = _one(args.run_dir, "client_*.jsonl")
+    if not client:
+        print(f"no client_*.jsonl in {args.run_dir}: nothing to join", file=sys.stderr)
+        return 2
+    try:
+        rows = join(
+            manifest=manifest,
+            trace=load_jsonl(args.trace),
+            # Hashed here so the manifest's trace check runs from the command line too.
+            trace_sha256=hashlib.sha256(args.trace.read_bytes()).hexdigest(),
+            client=client,
+            scheduler=_one(args.run_dir, "scheduler_*.jsonl"),
+            worker=_one(args.run_dir, "worker_*.jsonl"),
+            r_value=args.r,
+            allow_invalid=args.force,
+        )
+    except ValueError as exc:
+        print(f"refusing: {exc}", file=sys.stderr)
+        return 2
     out = write_parquet(to_frame(rows), args.out or args.run_dir / "joined.parquet")
     print(out)
     for line in summarize(rows, manifest):

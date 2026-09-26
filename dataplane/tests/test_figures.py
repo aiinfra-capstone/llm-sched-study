@@ -62,12 +62,29 @@ def _set(vehicle: str = "hardware") -> pd.DataFrame:
 def test_analysable_drops_warmup_failures_and_rows_with_no_worker_record() -> None:
     """Three exclusions, each of which produces a plausible wrong number if skipped: a
     cold cache averaged as steady state, a timeout averaged as a service time, and a
-    zero service time from a request no worker ever logged."""
-    kept = plots.analysable(figures.example_frame())
+    request no worker ever logged, whose worker columns are null."""
+    kept = plots.analysable(figures.example_frame(), worker_local=True)
     assert not kept["is_warmup"].any()
     assert set(kept["status"]) == {"ok"}
-    assert not ((kept["service_ms"] == 0.0) & (kept["queue_wait_ms"] == 0.0)).any()
+    assert kept["service_ms"].notna().all() and kept["queue_wait_ms"].notna().all()
     assert len(kept) == 3
+
+
+def test_analysable_keeps_rows_without_a_worker_record_for_client_statistics() -> None:
+    """e2e is the client's own number and exists whether or not a worker logged the
+    request, so a client-local statistic keeps the row. A worker-local one cannot."""
+    frame = figures.example_frame()
+    client = plots.analysable(frame, worker_local=False)
+    worker = plots.analysable(frame, worker_local=True)
+    assert len(client) == 4
+    missing = client[client["service_ms"].isna()]
+    assert len(missing) == 1 and missing["e2e_ms"].iloc[0] == 1400.0
+    assert set(worker["req_id"]) == set(client["req_id"]) - set(missing["req_id"])
+
+
+def test_analysable_needs_the_caller_to_say_which() -> None:
+    with pytest.raises(TypeError):
+        plots.analysable(figures.example_frame())
 
 
 def test_the_percentile_is_nearest_rank_and_agrees_with_the_load_band() -> None:
@@ -90,18 +107,23 @@ def test_a_percentile_of_nothing_is_an_error_not_a_zero() -> None:
 def test_achieved_rate_needs_more_than_one_completion() -> None:
     """A single completion spans no window, so any rate computed from it is division by a
     number I made up."""
-    assert plots.achieved_rps(plots.analysable(figures.example_frame()).head(1)) == 0.0
+    assert (
+        plots.achieved_rps(plots.analysable(figures.example_frame(), worker_local=False).head(1))
+        == 0.0
+    )
 
 
 def test_achieved_rate_is_client_local_end_to_end() -> None:
     """First intended offset to last delivery, both the client's own numbers — so this
     survives hosts whose clocks were never synchronised."""
-    rows = plots.analysable(_run("r", offered=1.0, latencies=[1000.0, 1000.0, 1000.0]))
+    rows = plots.analysable(
+        _run("r", offered=1.0, latencies=[1000.0, 1000.0, 1000.0]), worker_local=False
+    )
     assert plots.achieved_rps(rows) > 0
 
 
 def test_a_zero_span_reports_no_rate_rather_than_dividing_by_it() -> None:
-    rows = plots.analysable(_run("r", offered=1.0, latencies=[0.0, 0.0]))
+    rows = plots.analysable(_run("r", offered=1.0, latencies=[0.0, 0.0]), worker_local=False)
     rows = rows.assign(intended_offset_s=0.0, e2e_ms=0.0)
     assert plots.achieved_rps(rows) == 0.0
 
@@ -333,13 +355,13 @@ def test_a_run_with_no_scheduler_decisions_reports_no_routing_error_rate() -> No
     """`None`, never `0.0`. A run driven by the fixture scheduler observed nothing about
     routing; reporting zero would claim routing was perfect. Opposite claims, so they must
     not share a value."""
-    assert plots.routing_error_rate(plots.analysable(_set())) is None
+    assert plots.routing_error_rate(plots.analysable(_set(), worker_local=True)) is None
 
 
 def test_the_routing_error_rate_counts_only_material_ones() -> None:
     """ "Materially sooner" needs a threshold or every floating-point difference counts.
     A saving worth 10% of the request's own service time is the line."""
-    rows = plots.analysable(_set()).copy()
+    rows = plots.analysable(_set(), worker_local=True).copy()
     service = rows["service_ms"].astype(float)
     # One clearly material, one clearly not, the rest unobserved.
     rows["routing_error_ms"] = None
@@ -508,3 +530,20 @@ def test_utilization_is_empty_when_no_decision_record_names_a_node() -> None:
     """C-5's only node identity is `chosen_node`, which the fixture scheduler never
     writes. Empty is the honest answer — the alternative would be inventing a node."""
     assert plots.per_node_utilization(_set().assign(chosen_node=None)).empty
+
+
+def test_bootstrap_halfwidth_uses_nearest_rank() -> None:
+    """One percentile definition in the figure layer. Every bootstrap draw's percentile and
+    the interval taken over the draws are nearest rank, as `percentile` is."""
+    import numpy as np
+
+    # Uneven gaps, so an interpolated percentile lands between two samples and differs.
+    values = [1000.0, 1010.0, 1020.0, 1500.0, 1600.0, 3000.0, 3100.0, 5000.0]
+    q, draws, seed = 0.95, 400, 3
+    rng = np.random.default_rng(seed)
+    matrix = rng.choice(np.asarray(values), size=(draws, len(values)), replace=True)
+    per_draw = [plots.percentile(list(row), q) for row in matrix]
+    point = plots.percentile(values, q)
+    low, high = plots.percentile(per_draw, 0.025), plots.percentile(per_draw, 0.975)
+    expected = max(high - point, point - low) / point
+    assert plots.bootstrap_halfwidth(values, q, draws=draws, seed=seed) == pytest.approx(expected)

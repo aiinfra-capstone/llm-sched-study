@@ -117,6 +117,20 @@ def _generator_git_sha() -> str:
         return "unknown"
 
 
+def mean_rate(arrival: dict[str, Any]) -> float:
+    """Long-run arrival rate of a C-2 arrival block, before any rate_scale.
+
+    For a two-state MMPP that is the dwell-weighted mean of the two rates, which is what a
+    utilisation target has to be set against; `lambda_base` alone is the quiet rate.
+    """
+    if arrival["process"] == "poisson":
+        return float(arrival["lambda_base"])
+    if arrival["process"] == "mmpp":
+        q, b = float(arrival["quiet_mean_s"]), float(arrival["burst_mean_s"])
+        return (float(arrival["lambda_base"]) * q + float(arrival["burst_lambda"]) * b) / (q + b)
+    raise ValueError(f"unknown arrival process {arrival['process']!r}")
+
+
 def _check_model(config: dict[str, Any]) -> None:
     """If a config names a model, its tokenizer facts must match the table.
 
@@ -196,11 +210,17 @@ def _arrival_offsets(
     return offsets
 
 
-def generate(config: dict[str, Any], path: str | Path) -> str:
+def generate(
+    config: dict[str, Any], path: str | Path, *, generator_git_sha: str | None = None
+) -> str:
     """Write a C-2 trace file and return its SHA-256.
 
     The return value is the trace's identity: it goes into `manifest.trace_sha256`, and
-    the replay client refuses to start against a file whose hash does not match.
+    the replay client refuses to start against a file whose hash does not match. The
+    header's `generator_git_sha` is inside the hashed bytes, so the hash identifies
+    (config, seed, generator commit). `generator_git_sha` stamps a recorded commit instead
+    of the current HEAD: the file is then byte-identical to the original exactly when the
+    generator still produces the same stream.
     """
     path = Path(path)
     _check_model(config)
@@ -259,7 +279,9 @@ def generate(config: dict[str, Any], path: str | Path) -> str:
         # A claim about vocab_size, not a filter applied anywhere. Honest per model —
         # see MODELS above and the docstring in harness/prompts.py.
         "reserved_ids_excluded": bool(config.get("reserved_ids_excluded", True)),
-        "generator_git_sha": _generator_git_sha(),
+        "generator_git_sha": (
+            generator_git_sha if generator_git_sha is not None else _generator_git_sha()
+        ),
     }
     assert tuple(header) == _HEADER_FIELDS, "header field order drifted from the C-2 sample"
 

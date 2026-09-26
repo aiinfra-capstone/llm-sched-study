@@ -104,6 +104,42 @@ def test_generate_creates_missing_parent_directories(trace_config, tmp_path: Pat
 
 
 # --------------------------------------------------------------------------------------
+# Provenance inside the hash
+# --------------------------------------------------------------------------------------
+
+
+def test_an_explicit_generator_sha_is_stamped_into_the_header(trace_config, tmp_path) -> None:
+    path = tmp_path / "t.jsonl"
+    gen_trace.generate(trace_config(), path, generator_git_sha="d70b6d0")
+    header, _ = gen_trace.load(path)
+    assert header["generator_git_sha"] == "d70b6d0"
+
+
+def test_the_same_config_seed_and_generator_sha_write_identical_bytes_whatever_head_is(
+    trace_config, tmp_path, monkeypatch
+) -> None:
+    """The hash covers the generator sha. Given the recorded sha, a later commit that did
+    not change the stream writes the same bytes, so the hash proves the stream matches."""
+    a, b = tmp_path / "a.jsonl", tmp_path / "b.jsonl"
+    monkeypatch.setattr(gen_trace, "_generator_git_sha", lambda: "1111111")
+    sha_a = gen_trace.generate(trace_config(), a, generator_git_sha="abc1234")
+    monkeypatch.setattr(gen_trace, "_generator_git_sha", lambda: "2222222")
+    sha_b = gen_trace.generate(trace_config(), b, generator_git_sha="abc1234")
+    assert a.read_bytes() == b.read_bytes()
+    assert sha_a == sha_b
+
+
+def test_without_a_generator_sha_the_header_carries_the_current_head(
+    trace_config, tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(gen_trace, "_generator_git_sha", lambda: "feedbee")
+    path = tmp_path / "t.jsonl"
+    gen_trace.generate(trace_config(), path)
+    header, _ = gen_trace.load(path)
+    assert header["generator_git_sha"] == "feedbee"
+
+
+# --------------------------------------------------------------------------------------
 # The CLI
 # --------------------------------------------------------------------------------------
 

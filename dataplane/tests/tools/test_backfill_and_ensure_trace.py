@@ -149,14 +149,28 @@ def _anchor_config() -> dict:
     return json.loads((CONFIGS / "trace_anchor_1b.json").read_text())
 
 
-def _anchors(root, config: dict, *, sha: str = "0" * 64, **config_over) -> None:
+RECORDED_SHA = "abc1234"
+
+
+def _anchors(
+    root, config: dict, *, sha: str = "0" * 64, generator_git_sha=RECORDED_SHA, **config_over
+) -> None:
     for name in ("anchor1b_light_1", "anchor1b_heavy_2"):
         (root / name).mkdir(parents=True)
         recorded = {k: config[k] for k in ensure_trace.STREAM_FIELDS} | config_over
         recorded["duration_s"] = 193.04  # compressed by rate_scale; never compared
+        if generator_git_sha is not None:
+            recorded["generator_git_sha"] = generator_git_sha
         (root / name / "manifest.json").write_text(
             json.dumps({"trace_sha256": sha, "config": recorded})
         )
+
+
+def _sha_at(tmp_path, config: dict, generator_git_sha: str = RECORDED_SHA) -> str:
+    """The hash the anchors would have recorded, had they been replayed at that commit."""
+    return gen_trace.generate(
+        config, tmp_path / "scratch" / "t.jsonl", generator_git_sha=generator_git_sha
+    )
 
 
 def _run(monkeypatch, config, out, anchors) -> int:
@@ -183,7 +197,7 @@ def test_a_missing_trace_is_regenerated_from_its_config(tmp_path, monkeypatch, c
     config = _anchor_config()
     config_path = tmp_path / "trace_anchor_1b.json"
     config_path.write_text(json.dumps(config))
-    _anchors(tmp_path / "anchors", config)
+    _anchors(tmp_path / "anchors", config, sha=_sha_at(tmp_path, config))
     out = tmp_path / "runs" / "traces" / "anchor_1b.trace.jsonl"
 
     assert _run(monkeypatch, config_path, out, tmp_path / "anchors") == 0
@@ -192,6 +206,46 @@ def test_a_missing_trace_is_regenerated_from_its_config(tmp_path, monkeypatch, c
     assert header["gen_seed"] == config["gen_seed"]
     assert len(body) == config["n_requests"]
     assert "regenerated" in capsys.readouterr().out
+
+
+def test_regeneration_uses_the_sha_the_anchors_recorded(tmp_path, monkeypatch) -> None:
+    config = _anchor_config()
+    config_path = tmp_path / "c.json"
+    config_path.write_text(json.dumps(config))
+    expected = _sha_at(tmp_path, config, "d70b6d0")
+    _anchors(tmp_path / "anchors", config, sha=expected, generator_git_sha="d70b6d0")
+    out = tmp_path / "anchor.trace.jsonl"
+
+    assert _run(monkeypatch, config_path, out, tmp_path / "anchors") == 0
+
+    header, _ = gen_trace.load(out, expect_sha256=expected)
+    assert header["generator_git_sha"] == "d70b6d0"
+
+
+def test_a_regenerated_trace_that_does_not_match_exits_nonzero_and_writes_nothing(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    config = _anchor_config()
+    config_path = tmp_path / "c.json"
+    config_path.write_text(json.dumps(config))
+    _anchors(tmp_path / "anchors", config, sha="0" * 64)
+    out = tmp_path / "anchor.trace.jsonl"
+
+    assert _run(monkeypatch, config_path, out, tmp_path / "anchors") == 1
+    assert not out.exists()
+    assert list(tmp_path.glob("*.jsonl*")) == []
+    assert "0000000000" in capsys.readouterr().err
+
+
+def test_anchors_without_a_generator_sha_or_with_two_are_refused() -> None:
+    with_sha = {"config": {"generator_git_sha": "abc1234"}}
+    assert ensure_trace.recorded_generator_sha([with_sha, with_sha]) == "abc1234"
+    with pytest.raises(ValueError, match="generator_git_sha"):
+        ensure_trace.recorded_generator_sha([with_sha, {"config": {}}])
+    with pytest.raises(ValueError, match="generator_git_sha"):
+        ensure_trace.recorded_generator_sha(
+            [with_sha, {"config": {"generator_git_sha": "fff0000"}}]
+        )
 
 
 def test_a_config_that_no_longer_describes_the_anchors_is_not_regenerated(
@@ -209,8 +263,8 @@ def test_a_config_that_no_longer_describes_the_anchors_is_not_regenerated(
 
 
 def test_a_trace_already_on_disk_is_never_overwritten(tmp_path, monkeypatch, capsys) -> None:
-    """A developer's own trace stays, whether or not its hash matches the anchors, since the
-    hash also covers the generator's git sha and moves with every commit."""
+    """A trace on disk is checked, never replaced. One the anchors did not replay is a stop:
+    nothing downstream may run against it."""
     config = _anchor_config()
     out = tmp_path / "anchor.trace.jsonl"
     out.write_text("a developer's own trace\n")
@@ -223,8 +277,8 @@ def test_a_trace_already_on_disk_is_never_overwritten(tmp_path, monkeypatch, cap
     assert "matches the anchors" in capsys.readouterr().out
 
     _anchors(tmp_path / "other", config)
-    assert _run(monkeypatch, config_path, out, tmp_path / "other") == 0
-    assert "continuing: provenance is inside the hash" in capsys.readouterr().out
+    assert _run(monkeypatch, config_path, out, tmp_path / "other") == 1
+    assert sha[:12] in capsys.readouterr().err
     assert out.read_text() == "a developer's own trace\n"
 
 
@@ -232,3 +286,13 @@ def test_no_anchors_is_refused(tmp_path, monkeypatch, capsys) -> None:
     (tmp_path / "anchors").mkdir()
     assert _run(monkeypatch, tmp_path / "c.json", tmp_path / "t.jsonl", tmp_path / "anchors") == 1
     assert "no anchor manifests" in capsys.readouterr().err
+
+
+def test_ensure_checks_a_trace_on_disk_and_never_regenerates_it(tmp_path) -> None:
+    out = tmp_path / "t.jsonl"
+    out.write_text("on disk\n")
+    sha = hashlib.sha256(out.read_bytes()).hexdigest()
+    assert ensure_trace.ensure({}, out, [{"trace_sha256": sha}]) == sha
+    with pytest.raises(ensure_trace.TraceMismatch, match="left as it is"):
+        ensure_trace.ensure({}, out, [{"trace_sha256": "0" * 64}])
+    assert out.read_text() == "on disk\n"

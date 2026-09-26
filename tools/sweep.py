@@ -49,6 +49,7 @@ from dataplane.harness import gen_trace
 # so the sibling tools are not importable by name without saying where they are.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import ensure_trace as trace_check
 import pool_load
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -151,24 +152,35 @@ def synthesize_snapshot(
     return new
 
 
-def ensure_trace(trace_path: Path, trace_config: Path, anchors_dir: Path | None = None) -> str:
-    """Ensure trace exists, regenerating from config if needed (like ensure_trace.py)."""
-    if trace_path.exists():
-        # Verify hash if anchors exist
-        if anchors_dir and anchors_dir.exists():
-            manifests = sorted(anchors_dir.glob("*/manifest.json"))
-            if manifests:
-                expected = {json.loads(p.read_text())["trace_sha256"] for p in manifests}
-                actual = hashlib.sha256(trace_path.read_bytes()).hexdigest()
-                if actual in expected:
-                    print(f"trace present and matches anchors: {trace_path} {actual[:12]}")
-                    return actual
-        return hashlib.sha256(trace_path.read_bytes()).hexdigest()
-    # Regenerate
-    from dataplane.harness.gen_trace import generate
+def ensure_trace(
+    trace_path: Path,
+    trace_config: Path,
+    anchors_dir: Path | None = None,
+    *,
+    base_manifest: dict[str, Any] | None = None,
+) -> str:
+    """Return the sha256 of a trace the base manifest (or the anchors) replayed.
 
+    A missing trace is regenerated at the generator commit those manifests recorded, and
+    kept only when its hash matches. A trace that does not match raises
+    `ensure_trace.TraceMismatch`: a sweep over a workload the base never ran would compare
+    the simulator against a different arrival process. With no manifest to check against,
+    a trace on disk is hashed as it stands.
+    """
+    if base_manifest is not None:
+        manifests = [base_manifest]
+    elif anchors_dir is not None and anchors_dir.exists():
+        manifests = [json.loads(p.read_text()) for p in sorted(anchors_dir.glob("*/manifest.json"))]
+    else:
+        manifests = []
+    if trace_path.exists():
+        if not manifests:
+            return hashlib.sha256(trace_path.read_bytes()).hexdigest()
+        sha = trace_check.verify_present(trace_path, manifests)
+        print(f"trace present and matches its manifests: {trace_path} {sha[:12]}")
+        return sha
     config = json.loads(trace_config.read_text())
-    sha = generate(config, trace_path)
+    sha = trace_check.ensure(config, trace_path, manifests)
     print(f"regenerated {trace_path} from {trace_config} sha {sha[:12]}")
     return sha
 
@@ -183,8 +195,14 @@ def build_sweep_manifest(
     trace_sha256: str | None = None,
     trace_path: Path | None = None,
     phase_skew: float = 1.0,
+    base_rate: float | None = None,
 ) -> dict[str, Any]:
-    """Build a C-6 manifest for one sweep point, reusing anchors' manifest builder shape."""
+    """Build a C-6 manifest for one sweep point, reusing anchors' manifest builder shape.
+
+    `base_rate` is the trace's long-run arrival rate (`gen_trace.mean_rate`), so `lambda`
+    is the rate the point offers. Without it the base config's `lambda_base` is used,
+    which is only right for a Poisson trace.
+    """
     config = dict(base_manifest.get("config", {}))
     new_config = dict(config)
     new_config["staleness_s"] = staleness_s
@@ -195,9 +213,10 @@ def build_sweep_manifest(
     new_manifest = dict(base_manifest)
     new_manifest["policy"] = policy
     new_manifest["staleness_s"] = staleness_s
-    arrival = base_manifest.get("config", {}).get("arrival", {})
-    lambda_base = float(arrival.get("lambda_base", 0.9)) if isinstance(arrival, dict) else 0.9
-    new_manifest["lambda"] = round(lambda_base * rate_scale, 6)
+    if base_rate is None:
+        arrival = base_manifest.get("config", {}).get("arrival", {})
+        base_rate = float(arrival.get("lambda_base", 0.9)) if isinstance(arrival, dict) else 0.9
+    new_manifest["lambda"] = round(base_rate * rate_scale, 6)
     if synthesized_snapshots:
         new_manifest["cost_model_snapshots"] = synthesized_snapshots
     new_manifest["config"] = new_config
@@ -260,8 +279,14 @@ def run_one_des(
     cost_models_dir: Path = SNAPSHOT_ROOT,
     extra_snapshots: list[dict[str, Any]] | None = None,
     overlay_cache: dict[str, Path] | None = None,
+    *,
+    deterministic: bool = True,
 ) -> Path:
-    """Run SimApp for one manifest (DES, not hardware) and return the run dir."""
+    """Run SimApp for one manifest (DES, not hardware) and return the run dir.
+
+    Deterministic by default, for F-20 parity. `deterministic=False` lets SimApp draw its
+    i.i.d. lognormal service noise from the snapshot's `stochastic.sigma`.
+    """
     # Write manifest to temp file
     with tempfile.NamedTemporaryFile(
         mode="w", suffix=".json", delete=False, encoding="utf-8"
@@ -276,8 +301,8 @@ def run_one_des(
         cost_models_arg = cost_models_dir
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    # Use --deterministic for reproducibility (F-20).
     # Plain argument list with no shell, so this runs the same on Linux and Windows.
+    noise = " --deterministic" if deterministic else ""
     cmd = [
         find_mvn(),
         "-q",
@@ -285,7 +310,7 @@ def run_one_des(
         str(REPO_ROOT / "controlplane" / "pom.xml"),
         "exec:java",
         "-Dexec.mainClass=com.sched.sim.SimApp",
-        f"-Dexec.args={trace} {manifest_path} {out_dir} --deterministic --cost-models {cost_models_arg}",
+        f"-Dexec.args={trace} {manifest_path} {out_dir}{noise} --cost-models {cost_models_arg}",
     ]
     result = subprocess.run(
         cmd,
@@ -348,6 +373,11 @@ def main(argv: list[str] | None = None) -> int:
         help="run remaining points after a failure instead of stopping at the first one",
     )
     ap.add_argument(
+        "--stochastic",
+        action="store_true",
+        help="let SimApp draw its lognormal service noise; the default is --deterministic",
+    )
+    ap.add_argument(
         "--k-slow",
         type=int,
         default=1,
@@ -358,114 +388,35 @@ def main(argv: list[str] | None = None) -> int:
     # Load sweep grid. The config is read once here and again per point, for k_slow, so
     # it is bound on both paths: without one, every lookup falls back to the flag.
     sweep_cfg: dict[str, Any] = {}
+    grid = DEFAULT_GRID
     if args.config and args.config.exists():
         sweep_cfg = json.loads(args.config.read_text())
         # Merged over the default rather than replacing it, so a config that overrides
         # one axis ("just sweep R further") keeps the other three instead of raising
         # KeyError on the first axis it does not mention.
         grid = {**DEFAULT_GRID, **sweep_cfg.get("grid", {})}
-        base_manifest_path = sweep_cfg.get("base_manifest")
-        if base_manifest_path:
-            base_manifest = json.loads(Path(base_manifest_path).read_text())
-        else:
-            # Use first anchor manifest as base
-            anchor_manifests = (
-                sorted(Path(args.anchors).glob("*/manifest.json"))
-                if Path(args.anchors).exists()
-                else []
-            )
-            if not anchor_manifests:
-                print(f"no anchor manifests under {args.anchors}, using minimal base", flush=True)
-                base_manifest = {
-                    "run_id": "sweep_base",
-                    "trace_path": str(args.trace),
-                    "trace_sha256": "unknown",
-                    "policy": "round_robin",
-                    "lambda": 1.0,
-                    "staleness_s": 0.0,
-                    "warmup_s": 10.0,
-                    "duration_s": 193.0,
-                    "cost_model_snapshots": {
-                        "gtx1650ti": "cm_gtx1650ti_ngl99_p4_q4km_llama32_1b_20260831T153652Z_008"
-                    },
-                    "nodes": [
-                        {
-                            "node_id": "gtx1650ti",
-                            "host": "fedora",
-                            "role": "pool",
-                            "engine": "llamacpp",
-                            "engine_version": "b10569+p1+cuda13.2",
-                            "model": "Llama-3.2-1B-Instruct",
-                            "quant": "Q4_K_M",
-                            "gpu": "NVIDIA GeForce GTX 1650 Ti",
-                            "driver": "580.173.02",
-                            "prefix_caching": False,
-                            "max_batch": 4,
-                            "engine_config": {"ngl": 99, "threads": 6, "parallel": 4},
-                        }
-                    ],
-                    "config": {"arrival": {"lambda_base": 0.9}, "gen_seed": 20260830},
-                    "git_shas": {
-                        "worker": "unknown",
-                        "scheduler": "unknown",
-                        "harness": "unknown",
-                        "sim": "unknown",
-                    },
-                    "validity": {"valid": True},
-                }
-            else:
-                base_manifest = json.loads(anchor_manifests[0].read_text())
-        # If sweep_cfg has cost_model_snapshots, use it
-        if "cost_model_snapshots" in sweep_cfg:
-            base_manifest["cost_model_snapshots"] = sweep_cfg["cost_model_snapshots"]
+
+    # The base is a measured run: the config's base_manifest, else the first anchor. With
+    # neither there is no pool to sweep, and a made-up base would name a snapshot, a host
+    # and a trace hash that no run ever had.
+    base_manifest_path = sweep_cfg.get("base_manifest")
+    if base_manifest_path:
+        base_manifest = json.loads(Path(base_manifest_path).read_text())
     else:
-        grid = DEFAULT_GRID
-        # Fallback base
         anchor_manifests = (
             sorted(Path(args.anchors).glob("*/manifest.json"))
             if Path(args.anchors).exists()
             else []
         )
-        if anchor_manifests:
-            base_manifest = json.loads(anchor_manifests[0].read_text())
-        else:
-            base_manifest = {
-                "run_id": "sweep_base",
-                "trace_path": str(args.trace),
-                "trace_sha256": "unknown",
-                "policy": "round_robin",
-                "lambda": 1.0,
-                "staleness_s": 0.0,
-                "warmup_s": 10.0,
-                "duration_s": 193.0,
-                "cost_model_snapshots": {
-                    "gtx1650ti": "cm_gtx1650ti_ngl99_p4_q4km_llama32_1b_20260831T153652Z_008"
-                },
-                "nodes": [
-                    {
-                        "node_id": "gtx1650ti",
-                        "host": "fedora",
-                        "role": "pool",
-                        "engine": "llamacpp",
-                        "engine_version": "b10569+p1+cuda13.2",
-                        "model": "Llama-3.2-1B-Instruct",
-                        "quant": "Q4_K_M",
-                        "gpu": "NVIDIA GeForce GTX 1650 Ti",
-                        "driver": "580.173.02",
-                        "prefix_caching": False,
-                        "max_batch": 4,
-                        "engine_config": {"ngl": 99, "threads": 6, "parallel": 4},
-                    }
-                ],
-                "config": {"arrival": {"lambda_base": 0.9}, "gen_seed": 20260830},
-                "git_shas": {
-                    "worker": "unknown",
-                    "scheduler": "unknown",
-                    "harness": "unknown",
-                    "sim": "unknown",
-                },
-                "validity": {"valid": True},
-            }
+        if not anchor_manifests:
+            print(
+                f"refusing: no base manifest in the config and no anchor manifests under "
+                f"{args.anchors}"
+            )
+            return 1
+        base_manifest = json.loads(anchor_manifests[0].read_text())
+    if "cost_model_snapshots" in sweep_cfg:
+        base_manifest["cost_model_snapshots"] = sweep_cfg["cost_model_snapshots"]
 
     print(
         f"Sweep grid: policies={grid['policies']} R={grid['R']} phase_skew={grid['phase_skew']} "
@@ -481,21 +432,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     print(f"Total points: {total} -> {args.out}")
 
-    # Ensure trace exists (like ensure_trace.py, but simpler)
     if not args.trace.exists():
         print(f"Trace missing at {args.trace}, regenerating from {args.trace_config}")
-        ensure_trace(
-            args.trace,
-            args.trace_config,
-            Path(args.anchors) if Path(args.anchors).exists() else None,
-        )
-    else:
-        # Verify hash once, like anchors.py
-        if Path(args.anchors).exists():
-            try:
-                gen_trace.load(args.trace, expect_sha256=base_manifest.get("trace_sha256"))
-            except ValueError as e:
-                print(f"Trace hash check warning (will continue): {e}")
+    try:
+        trace_sha256 = ensure_trace(args.trace, args.trace_config, base_manifest=base_manifest)
+    except ValueError as e:  # TraceMismatch, or manifests that record no generator sha
+        print(f"refusing: {e}")
+        return 1
 
     if args.dry_run:
         print("Dry run, not executing")
@@ -503,12 +446,6 @@ def main(argv: list[str] | None = None) -> int:
 
     args.out.mkdir(parents=True, exist_ok=True)
     index = load_snapshots_by_id(args.cost_models)
-    # Compute actual trace SHA for manifests (regenerated trace has new SHA)
-    trace_sha256 = (
-        hashlib.sha256(args.trace.read_bytes()).hexdigest()
-        if args.trace.exists()
-        else base_manifest.get("trace_sha256", "unknown")
-    )
     print(f"Using trace {args.trace} sha {trace_sha256[:12]}")
 
     # Flat grid sorted by rate_scale so the slowest load runs first. Anchors.py
@@ -529,13 +466,11 @@ def main(argv: list[str] | None = None) -> int:
     ]
 
     # A utilisation point needs the trace's length mix, to price a request against the
-    # pool's cost models, and the trace's own arrival rate, to turn a target into a scale.
-    length_dist: dict[str, Any] = {}
-    base_rate = 1.0
-    if any(kind == "pool_utilisation" for kind, _ in loads):
-        header, _ = gen_trace.load(args.trace)
-        length_dist = header["length_dist"]
-        base_rate = pool_load.mean_rate(header["arrival"])
+    # pool's cost models. Every point needs the trace's long-run arrival rate: it turns a
+    # target into a scale, and a scale into the `lambda` the manifest reports.
+    header, _ = gen_trace.load(args.trace, expect_sha256=trace_sha256)
+    length_dist: dict[str, Any] = header["length_dist"]
+    base_rate = gen_trace.mean_rate(header["arrival"])
 
     run_dirs: list[Path] = []
     failures: list[str] = []
@@ -613,6 +548,7 @@ def main(argv: list[str] | None = None) -> int:
             trace_sha256,
             args.trace,
             phase_skew=float(skew),
+            base_rate=base_rate,
         )
         manifest["config"]["load_target"] = {load_kind: load_value}
         manifest["config"]["operating_point"] = (
@@ -637,6 +573,7 @@ def main(argv: list[str] | None = None) -> int:
                 cost_models_dir=args.cost_models,
                 extra_snapshots=extra_for_this_run,
                 overlay_cache=overlay_cache,
+                deterministic=not args.stochastic,
             )
             run_dirs.append(run_dir)
         except RuntimeError as e:

@@ -21,6 +21,7 @@ import json
 import tempfile
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 import pytest
 from conftest import BASE_TRACE_CONFIG, SCHEMAS, read_jsonl
@@ -130,7 +131,7 @@ def _shuffled(value: Any, rotate: int) -> Any:
     return value
 
 
-def _generate(config: dict[str, Any], path: Path) -> str:
+def _generate(config: dict[str, Any], path: Path, **kwargs: Any) -> str:
     """`gen_trace.generate`, with the one refusal that is out of scope here discarded.
 
     A Poisson process over a finite window can legitimately produce nothing, and
@@ -149,16 +150,18 @@ def _generate(config: dict[str, Any], path: Path) -> str:
     — and that coincidence is not something to build on. So everything else re-raises.
     """
     try:
-        return gen_trace.generate(config, path)
+        return gen_trace.generate(config, path, **kwargs)
     except ValueError as exc:
         assume("produced no requests" not in str(exc))
         raise
 
 
-def _write(config: dict[str, Any], name: str = "t.jsonl") -> tuple[str, list[dict[str, Any]]]:
+def _write(
+    config: dict[str, Any], name: str = "t.jsonl", **kwargs: Any
+) -> tuple[str, list[dict[str, Any]]]:
     with tempfile.TemporaryDirectory() as d:
         path = Path(d) / name
-        sha = _generate(config, path)
+        sha = _generate(config, path, **kwargs)
         return sha, read_jsonl(path)
 
 
@@ -313,7 +316,8 @@ def test_a_run_is_valid_exactly_when_it_has_no_reasons_to_be_rejected(
 @CHEAP
 @given(gaps=counts, max_lag=st.floats(min_value=0, max_value=1e4, allow_nan=False))
 def test_heartbeat_gaps_alone_never_invalidate_a_run(gaps: int, max_lag: float) -> None:
-    """A missed heartbeat degrades the scheduler's estimate — which is what H3 studies."""
+    """A missed heartbeat degrades the scheduler's estimate of a node. It is reported, and
+    it does not make the measurement of the run wrong."""
     v = manifest.Validity(max_send_lag_ms=max_lag, heartbeat_gaps=gaps)
 
     assert v.valid
@@ -327,13 +331,17 @@ def test_heartbeat_gaps_alone_never_invalidate_a_run(gaps: int, max_lag: float) 
 
 @TRACE
 @given(config=trace_configs())
-def test_a_trace_is_a_pure_function_of_its_config(config: dict) -> None:
-    """Byte-identical regeneration — the discipline the whole reproducibility story rests on."""
-    sha_a, records_a = _write(config)
-    sha_b, records_b = _write(config, name="again.jsonl")
+def test_the_trace_the_run_used_regenerates_byte_for_byte(config: dict) -> None:
+    """A run records `trace_sha256` and the header's `generator_git_sha`. Regenerating at a
+    later commit with that recorded sha reproduces the hash the manifest names."""
+    manifest_sha256, (header, *_) = _write(config)
+    recorded = header["generator_git_sha"]
 
-    assert sha_a == sha_b
-    assert records_a == records_b
+    with mock.patch.object(gen_trace, "_generator_git_sha", lambda: "later00"):
+        sha, records = _write(config, name="again.jsonl", generator_git_sha=recorded)
+
+    assert sha == manifest_sha256
+    assert records[0]["generator_git_sha"] == recorded
 
 
 @TRACE

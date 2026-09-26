@@ -9,7 +9,9 @@ the hardware/simulator boundary) does not hold.
 Float formatting is the usual culprit. `arrival_offset_s` is fixed at 4 decimal
 places in the schema for exactly this reason.
 
-Currently skipped: unskip the moment `gen_trace` exists.
+The hash covers the header's `generator_git_sha`, so byte-identical regeneration holds for
+one generator commit, or for a later one given the recorded sha
+(`gen_trace.generate(..., generator_git_sha=...)`).
 """
 
 from __future__ import annotations

@@ -20,6 +20,7 @@ import shutil
 import subprocess
 from types import SimpleNamespace
 
+import ensure_trace
 import pool_load
 import pytest
 import sweep
@@ -27,6 +28,7 @@ import sweep
 from dataplane.harness import gen_trace
 
 BASE = "cm_base_ngl99_p4_q4km_llama32_1b_x"
+RECORDED_SHA = "abc1234"
 
 
 def _entry(pb, ob, c, service, prefill=None, decode=None, tok=100.0) -> dict:
@@ -164,7 +166,7 @@ def test_an_overlay_holds_the_real_tree_and_the_synthesised_ones_and_is_built_on
         shutil.rmtree(path)
 
 
-def test_the_sweeps_own_trace_helper_keeps_regenerates_or_matches(tmp_path, capsys) -> None:
+def test_the_sweeps_own_trace_helper_regenerates_matches_or_refuses(tmp_path, capsys) -> None:
     config = tmp_path / "trace.json"
     cfg = {
         "gen_seed": 3,
@@ -177,19 +179,26 @@ def test_the_sweeps_own_trace_helper_keeps_regenerates_or_matches(tmp_path, caps
         "vocab_size": 1000,
     }
     config.write_text(json.dumps(cfg))
+    recorded = gen_trace.generate(cfg, tmp_path / "orig.jsonl", generator_git_sha="abc1234")
+    base = {"trace_sha256": recorded, "config": {"generator_git_sha": "abc1234"}}
+
     trace = tmp_path / "t.jsonl"
-    sha = sweep.ensure_trace(trace, config)
+    assert sweep.ensure_trace(trace, config, base_manifest=base) == recorded
     assert "regenerated" in capsys.readouterr().out
-    assert sweep.ensure_trace(trace, config) == sha  # present, no anchors
+    assert sweep.ensure_trace(trace, config) == recorded  # present, nothing to check against
+
     anchors = tmp_path / "anchors"
     (anchors / "a").mkdir(parents=True)
-    (anchors / "a" / "manifest.json").write_text(json.dumps({"trace_sha256": sha}))
-    assert sweep.ensure_trace(trace, config, anchors) == sha
-    assert "matches anchors" in capsys.readouterr().out
+    (anchors / "a" / "manifest.json").write_text(json.dumps(base))
+    assert sweep.ensure_trace(trace, config, anchors) == recorded
+    assert "matches" in capsys.readouterr().out
+
     (anchors / "a" / "manifest.json").write_text(json.dumps({"trace_sha256": "0" * 64}))
-    assert sweep.ensure_trace(trace, config, anchors) == sha
-    (anchors / "a" / "manifest.json").unlink()
-    assert sweep.ensure_trace(trace, config, anchors) == sha
+    with pytest.raises(ensure_trace.TraceMismatch):
+        sweep.ensure_trace(trace, config, anchors)
+    with pytest.raises(ensure_trace.TraceMismatch):
+        sweep.ensure_trace(trace, config, base_manifest={"trace_sha256": "0" * 64})
+    assert trace.read_bytes() == (tmp_path / "orig.jsonl").read_bytes()
 
 
 # ------------------------------------------------------------------------- run_one_des
@@ -216,9 +225,23 @@ def test_run_one_des_runs_simapp_deterministically_and_cleans_up(tmp_path, monke
     out = sweep.run_one_des(tmp_path / "t.jsonl", {"run_id": "r1"}, tmp_path / "out", tmp_path)
     assert out == tmp_path / "out"
     args = calls[0][-1]
-    assert "--deterministic" in args and f"--cost-models {tmp_path}" in args
+    assert "--deterministic" in args.split() and f"--cost-models {tmp_path}" in args
     manifest_path = sweep.Path(args.split()[1])
     assert not manifest_path.exists()
+
+
+def test_stochastic_drops_the_deterministic_flag(tmp_path, monkeypatch) -> None:
+    calls = _fake_simapp(monkeypatch)
+    sweep.run_one_des(
+        tmp_path / "t.jsonl", {"run_id": "r1"}, tmp_path / "out", tmp_path, deterministic=False
+    )
+    assert "--deterministic" not in calls[0][-1].split()
+
+
+def test_the_stochastic_flag_reaches_every_point(world) -> None:
+    assert _sweep(world, _config(world, rate_scale=[1.0])) == 0
+    assert _sweep(world, _config(world, rate_scale=[1.0]), "--stochastic") == 0
+    assert [m["_deterministic"] for m in world.runs] == [True, False]
 
 
 def test_run_one_des_with_synthesised_snapshots_points_simapp_at_an_overlay(
@@ -264,22 +287,24 @@ def world(tmp_path, monkeypatch):
     (models / "base" / "000.json").write_text(json.dumps(_base_snapshot()))
 
     trace = tmp_path / "trace.jsonl"
-    gen_trace.generate(
-        {
-            "gen_seed": 3,
-            "n_requests": 8,
-            "duration_s": 20,
-            "arrival": {"process": "poisson", "lambda_base": 0.5},
-            "length_dist": {"buckets": ["p128_o64"], "weights": [1.0]},
-            "priority_mix": {"0": 1.0},
-            "admissible": {"max_prompt": 512, "max_output": 128, "timeout_ceiling_ms": 60000},
-            "vocab_size": 1000,
-        },
-        trace,
-    )
+    trace_config = {
+        "gen_seed": 3,
+        "n_requests": 8,
+        "duration_s": 20,
+        "arrival": {"process": "poisson", "lambda_base": 0.5},
+        "length_dist": {"buckets": ["p128_o64"], "weights": [1.0]},
+        "priority_mix": {"0": 1.0},
+        "admissible": {"max_prompt": 512, "max_output": 128, "timeout_ceiling_ms": 60000},
+        "vocab_size": 1000,
+    }
+    trace_config_path = tmp_path / "trace_cfg.json"
+    trace_config_path.write_text(json.dumps(trace_config))
+    # The base manifest names the trace it replayed and the generator commit that wrote it,
+    # as every manifest hw_runs and anchors write does.
+    sha = gen_trace.generate(trace_config, trace, generator_git_sha=RECORDED_SHA)
     base = {
         "run_id": "base",
-        "trace_sha256": "0" * 64,
+        "trace_sha256": sha,
         "policy": "round_robin",
         "cost_model_snapshots": {"n1": BASE},
         "nodes": [
@@ -291,7 +316,10 @@ def world(tmp_path, monkeypatch):
                 "engine_config": {"parallel": 4},
             }
         ],
-        "config": {"arrival": {"lambda_base": 0.5}},
+        "config": {
+            "arrival": {"process": "poisson", "lambda_base": 0.5},
+            "generator_git_sha": RECORDED_SHA,
+        },
     }
     base_path = tmp_path / "base.json"
     base_path.write_text(json.dumps(base))
@@ -299,10 +327,13 @@ def world(tmp_path, monkeypatch):
     runs: list[dict] = []
     fail: set[str] = set()
 
-    def fake_run(trace, manifest, out_dir, cost_models_dir, extra_snapshots, overlay_cache):
+    def fake_run(
+        trace, manifest, out_dir, cost_models_dir, extra_snapshots, overlay_cache, deterministic
+    ):
         runs.append(
             json.loads(json.dumps(manifest))
             | {"_extra": [s["snapshot_id"] for s in extra_snapshots]}
+            | {"_deterministic": deterministic}
         )
         sweep.overlay_dir(extra_snapshots, cost_models_dir, overlay_cache)
         if any(tag in manifest["run_id"] for tag in fail):
@@ -329,6 +360,8 @@ def world(tmp_path, monkeypatch):
     return SimpleNamespace(
         models=models,
         trace=trace,
+        trace_config=trace_config,
+        trace_config_path=trace_config_path,
         base=base,
         base_path=base_path,
         runs=runs,
@@ -530,31 +563,33 @@ def test_a_config_overriding_one_axis_keeps_the_defaults_for_the_rest(world, cap
     assert f"Total points: {total}" in out
 
 
-def test_a_missing_trace_is_regenerated_from_its_config(world, capsys) -> None:
-    trace_cfg = world.tmp / "trace_cfg.json"
-    trace_cfg.write_text(
-        json.dumps(
-            {
-                "gen_seed": 5,
-                "n_requests": 4,
-                "duration_s": 10,
-                "arrival": {"process": "poisson", "lambda_base": 0.5},
-                "length_dist": {"buckets": ["p128_o64"], "weights": [1.0]},
-                "priority_mix": {"0": 1.0},
-                "admissible": {"max_prompt": 512, "max_output": 128, "timeout_ceiling_ms": 60000},
-                "vocab_size": 1000,
-            }
-        )
-    )
+def test_a_missing_trace_is_regenerated_at_the_recorded_sha(world, monkeypatch, capsys) -> None:
+    calls = []
+    real = gen_trace.generate
+
+    def spy(config, path, **kw):
+        calls.append(kw)
+        return real(config, path, **kw)
+
+    monkeypatch.setattr(gen_trace, "generate", spy)
     world.trace.unlink()
-    assert (
-        _sweep(
-            world, _config(world, rate_scale=[1.0]), "--trace-config", str(trace_cfg), "--dry-run"
-        )
-        == 0
-    )
+    cfg = _config(world, rate_scale=[1.0])
+    assert _sweep(world, cfg, "--trace-config", str(world.trace_config_path), "--dry-run") == 0
     assert "Trace missing" in capsys.readouterr().out
-    assert world.trace.is_file()
+    assert calls == [{"generator_git_sha": RECORDED_SHA}]
+    header, _ = gen_trace.load(world.trace, expect_sha256=world.base["trace_sha256"])
+    assert header["generator_git_sha"] == RECORDED_SHA
+
+
+def test_a_regenerated_trace_the_base_did_not_replay_stops_the_sweep(world, capsys) -> None:
+    world.trace.unlink()
+    moved = world.trace_config | {"gen_seed": 4}
+    world.trace_config_path.write_text(json.dumps(moved))
+    cfg = _config(world, rate_scale=[1.0])
+    assert _sweep(world, cfg, "--trace-config", str(world.trace_config_path)) == 1
+    assert "refusing" in capsys.readouterr().out
+    assert not world.trace.exists()
+    assert world.runs == []
 
 
 def _anchor(world, sha: str) -> sweep.Path:
@@ -566,7 +601,6 @@ def _anchor(world, sha: str) -> sweep.Path:
 
 
 def test_the_first_anchor_manifest_is_the_base_when_the_config_names_none(world, capsys) -> None:
-    anchors = _anchor(world, "0" * 64)
     cfg = world.tmp / "no_base.json"
     cfg.write_text(
         json.dumps(
@@ -576,47 +610,52 @@ def test_the_first_anchor_manifest_is_the_base_when_the_config_names_none(world,
             }
         )
     )
-    argv = [
-        "--config",
-        str(cfg),
-        "--out",
-        str(world.out),
-        "--trace",
-        str(world.trace),
-        "--cost-models",
-        str(world.models),
-        "--anchors",
-        str(anchors),
-    ]
-    assert sweep.main(argv) == 0
-    out = capsys.readouterr().out
-    assert "Trace hash check warning" in out
+
+    def argv(anchors):
+        return [
+            "--config",
+            str(cfg),
+            "--out",
+            str(world.out),
+            "--trace",
+            str(world.trace),
+            "--cost-models",
+            str(world.models),
+            "--anchors",
+            str(anchors),
+        ]
+
+    assert sweep.main(argv(_anchor(world, world.base["trace_sha256"]))) == 0
     (m,) = world.runs
     assert m["cost_model_snapshots"]["n1"] == BASE
 
+    world.runs.clear()
+    shutil.rmtree(world.tmp / "anchors")
+    assert sweep.main(argv(_anchor(world, "0" * 64))) == 1
+    assert "refusing" in capsys.readouterr().out
+    assert world.runs == []
 
-def test_with_no_anchors_and_no_base_the_minimal_base_is_used(world, capsys) -> None:
+
+def test_a_sweep_without_a_base_manifest_refuses(world, capsys) -> None:
+    """No base means no measured pool to sweep. A made-up base would name a snapshot, a
+    host and a trace hash that no run ever had."""
     cfg = world.tmp / "minimal.json"
     cfg.write_text(json.dumps({"grid": {"R": [2]}}))
-    argv = [
-        "--config",
-        str(cfg),
-        "--out",
-        str(world.out),
-        "--trace",
-        str(world.trace),
-        "--anchors",
-        str(world.tmp / "none"),
-        "--dry-run",
-    ]
-    assert sweep.main(argv) == 0
-    assert "using minimal base" in capsys.readouterr().out
+    common = ["--out", str(world.out), "--trace", str(world.trace)]
+    common += ["--anchors", str(world.tmp / "none")]
+    assert sweep.main(["--config", str(cfg), *common]) != 0
+    assert sweep.main(common) != 0
+    out = capsys.readouterr().out
+    assert "no base manifest" in out
+    assert "fedora" not in out
+    assert world.runs == []
+    assert not list(world.tmp.rglob("*/manifest.json"))
 
 
 def test_a_sweep_with_no_config_runs_the_default_grid(world, capsys) -> None:
     """The documented dry run takes no --config, and neither does a sweep run as it stands.
     Without a config it replays the default grid against the first anchor manifest."""
-    anchors = _anchor(world, "0" * 64)
+    anchors = _anchor(world, world.base["trace_sha256"])
     argv = [
         "--out",
         str(world.out),
@@ -635,20 +674,6 @@ def test_a_sweep_with_no_config_runs_the_default_grid(world, capsys) -> None:
     assert f"Total points: {total}" in capsys.readouterr().out
     assert sweep.main(argv) == 0
     assert len(world.runs) == total
-
-
-def test_with_no_config_and_no_anchors_the_minimal_base_is_used(world, capsys) -> None:
-    argv = [
-        "--out",
-        str(world.out),
-        "--trace",
-        str(world.trace),
-        "--anchors",
-        str(world.tmp / "none"),
-        "--dry-run",
-    ]
-    assert sweep.main(argv) == 0
-    assert "Dry run, not executing" in capsys.readouterr().out
 
 
 def test_the_overlays_are_removed_when_the_sweep_ends(world) -> None:
@@ -680,3 +705,26 @@ def test_a_base_with_no_node_blocks_still_names_the_slow_snapshot(world) -> None
     (m,) = world.runs
     assert m["nodes"] == []
     assert m["cost_model_snapshots"]["slow_2x"] == f"synth_{BASE}__x2"
+
+
+def test_an_mmpp_sweep_point_carries_the_mean_rate(world) -> None:
+    """`lambda` is the offered rate. For an MMPP that is the dwell-weighted mean, not the
+    quiet rate, so a bursty point is not labelled with a load it never offered."""
+    arrival = {
+        "process": "mmpp",
+        "lambda_base": 0.5,
+        "burst_lambda": 2.0,
+        "quiet_mean_s": 10.0,
+        "burst_mean_s": 5.0,
+    }
+    world.trace_config["arrival"] = arrival
+    sha = gen_trace.generate(world.trace_config, world.trace, generator_git_sha=RECORDED_SHA)
+    world.base_path.write_text(
+        json.dumps(
+            world.base
+            | {"trace_sha256": sha, "config": world.base["config"] | {"arrival": arrival}}
+        )
+    )
+    assert _sweep(world, _config(world, rate_scale=[2.0])) == 0
+    (m,) = world.runs
+    assert m["lambda"] == pytest.approx((0.5 * 10 + 2.0 * 5) / 15 * 2.0)

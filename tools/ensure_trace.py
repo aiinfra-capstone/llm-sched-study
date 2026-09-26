@@ -3,24 +3,21 @@
 
 `runs/**` is gitignored, so a fresh checkout carries no trace and both cross-seam
 scripts have nothing to hand SimApp. Committing 32 KB of JSONL would be the wrong fix.
-C-2 already says a trace is a pure function of (config, seed), and
-`dataplane/configs/trace_anchor_1b.json` is committed, so every one of the 200 request
-lines comes back from the config that made it.
+`dataplane/configs/trace_anchor_1b.json` is committed, and the anchors record the
+generator commit that wrote their trace, so the file comes back byte for byte.
 
-What does not come back is the file's SHA-256. `gen_trace` stamps `generator_git_sha`
-into the header, and the header sits inside the hashed blob, so a trace's identity moves
-whenever the repo moves even though its request stream does not. The committed anchors
-name `bea0546...`, written at d70b6d0; the same config at any later commit hashes
-something else. Fixing that means moving provenance outside the hashed region, which is
-a C-2 change and not one to make from a CI helper. So this script performs the two
-checks that committed artifacts can support, and says plainly which one it cannot:
+A trace's SHA-256 identifies (config, seed, generator commit): `gen_trace` stamps
+`generator_git_sha` into the header, and the header sits inside the hashed blob. So I
+regenerate at the commit the anchors recorded (`config.generator_git_sha`), and the hash
+check then proves the generator still writes the same stream. The checks, in order:
 
   1. the trace config still agrees with the anchor manifests that were replayed against
      it, on the fields that decide the request stream;
-  2. the regenerated trace loads and carries the request count the anchors saw.
+  2. the regenerated trace hashes to one of the anchors' `trace_sha256`. On a mismatch
+     nothing is written and the exit code is 1.
 
-When the real trace is already on disk its hash is verified against the manifest and
-nothing is regenerated, so a developer's own runs are never overwritten.
+When a trace is already on disk it is never overwritten. Its hash is checked against the
+anchors, and a trace they did not replay is a stop, not a warning.
 """
 
 from __future__ import annotations
@@ -28,7 +25,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import sys
+import tempfile
 from pathlib import Path
 
 # The fields that decide which requests exist and when they arrive. `duration_s` is
@@ -58,6 +57,61 @@ def stream_mismatches(config: dict, manifest: dict) -> list[str]:
     return out
 
 
+class TraceMismatch(ValueError):
+    """The trace on disk, or the one regenerated, is not the one the manifests replayed."""
+
+
+def recorded_generator_sha(manifests: list[dict]) -> str:
+    """The generator commit every manifest recorded for its trace. They must agree."""
+    shas = {m.get("config", {}).get("generator_git_sha") for m in manifests}
+    if None in shas:
+        raise ValueError("a manifest records no config.generator_git_sha")
+    if len(shas) != 1:
+        raise ValueError(f"the manifests record different generator_git_sha: {sorted(shas)}")
+    return shas.pop()
+
+
+def verify_present(out: Path, manifests: list[dict]) -> str:
+    """Hash a trace already on disk and require it to be one the manifests name."""
+    actual = hashlib.sha256(out.read_bytes()).hexdigest()
+    expected = {m["trace_sha256"] for m in manifests}
+    if actual not in expected:
+        raise TraceMismatch(
+            f"{out} has sha256 {actual[:12]}, the manifests name "
+            f"{sorted(e[:12] for e in expected)}; left as it is"
+        )
+    return actual
+
+
+def ensure(config: dict, out: Path, manifests: list[dict]) -> str:
+    """Return the sha256 of a trace at `out` that the manifests replayed.
+
+    A trace already there is only checked. A missing one is generated at the recorded
+    generator commit into a temporary file, and moved into place only when its hash is one
+    the manifests name, so a mismatch leaves nothing behind.
+    """
+    if out.exists():
+        return verify_present(out, manifests)
+    generator_git_sha = recorded_generator_sha(manifests)
+    expected = {m["trace_sha256"] for m in manifests}
+
+    # Imported here rather than at module scope so that the checks in main still run under
+    # a bare `python3`, and only the generation step needs the dataplane environment.
+    from dataplane.harness.gen_trace import generate
+
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=out.parent) as tmp:
+        staged = Path(tmp) / out.name
+        sha = generate(config, staged, generator_git_sha=generator_git_sha)
+        if sha not in expected:
+            raise TraceMismatch(
+                f"regenerated at {generator_git_sha}, the trace hashes to {sha[:12]}, the "
+                f"manifests name {sorted(e[:12] for e in expected)}; nothing written"
+            )
+        os.replace(staged, out)
+    return sha
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Regenerate the anchor trace for cross-seam CI")
     ap.add_argument("--config", type=Path, required=True, help="committed C-2 trace config")
@@ -72,16 +126,12 @@ def main() -> int:
     loaded = [json.loads(p.read_text()) for p in manifests]
 
     if args.out.exists():
-        actual = hashlib.sha256(args.out.read_bytes()).hexdigest()
-        expected = {m["trace_sha256"] for m in loaded}
-        if actual in expected:
-            print(f"trace present and matches the anchors: {args.out} {actual[:12]}")
-        else:
-            print(f"trace present at {args.out}")
-            print(
-                f"  its sha256 is {actual[:12]}, the anchors name {sorted(e[:12] for e in expected)}"
-            )
-            print("  continuing: provenance is inside the hash, see this script's docstring")
+        try:
+            sha = verify_present(args.out, loaded)
+        except TraceMismatch as exc:
+            print(f"refusing: {exc}", file=sys.stderr)
+            return 1
+        print(f"trace present and matches the anchors: {args.out} {sha[:12]}")
         return 0
 
     config = json.loads(args.config.read_text())
@@ -96,18 +146,17 @@ def main() -> int:
                 print(f"  {line}", file=sys.stderr)
             return 1
 
-    # Imported here rather than at module scope so that the checks above still run under a
-    # bare `python3`, and only the generation step needs the dataplane environment.
-    from dataplane.harness.gen_trace import generate, load
+    from dataplane.harness.gen_trace import load
 
-    sha = generate(config, args.out)
+    try:
+        sha = ensure(config, args.out, loaded)
+    except (TraceMismatch, ValueError) as exc:
+        print(f"refusing: {exc}", file=sys.stderr)
+        return 1
     header, body = load(args.out)
     print(f"regenerated {args.out} from {args.config}")
     print(f"  {len(body)} requests over {header['duration_s']}s, gen_seed {header['gen_seed']}")
-    print(f"  sha256 {sha[:12]}, anchors name {sorted({m['trace_sha256'][:12] for m in loaded})}")
-    print(
-        "  the two differ only in the header's generator_git_sha; the request stream is reproduced"
-    )
+    print(f"  sha256 {sha[:12]} at generator {header['generator_git_sha']}, as the anchors name")
     return 0
 
 

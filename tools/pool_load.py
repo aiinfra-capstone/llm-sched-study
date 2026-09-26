@@ -18,6 +18,10 @@ import json
 from pathlib import Path
 from typing import Any
 
+# The long-run rate of an arrival block lives beside the generator that draws it, so the
+# data plane (loadband, the sweep's manifests) and this tool read one definition.
+from dataplane.harness.gen_trace import mean_rate  # noqa: F401  (re-exported)
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SNAPSHOT_ROOT = REPO_ROOT / "contracts" / "cost_models"
 
@@ -98,20 +102,6 @@ def pool_capacity(
             "capacity_rps": slots / (sfull / 1000.0),
         }
     return out
-
-
-def mean_rate(arrival: dict) -> float:
-    """Long-run arrival rate of a C-2 arrival block, before any rate_scale.
-
-    For a two-state MMPP that is the dwell-weighted mean of the two rates, which is what a
-    utilisation target has to be set against; `lambda_base` alone is the quiet rate.
-    """
-    if arrival["process"] == "poisson":
-        return float(arrival["lambda_base"])
-    if arrival["process"] == "mmpp":
-        q, b = float(arrival["quiet_mean_s"]), float(arrival["burst_mean_s"])
-        return (float(arrival["lambda_base"]) * q + float(arrival["burst_lambda"]) * b) / (q + b)
-    raise ValueError(f"unknown arrival process {arrival['process']!r}")
 
 
 def rate_for(target: dict[str, float], capacity: dict[str, dict[str, float]]) -> tuple[float, str]:

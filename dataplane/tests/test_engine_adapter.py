@@ -245,3 +245,20 @@ def test_adapter_closes_only_the_client_it_created() -> None:
         return still_open, owned._client.is_closed
 
     assert asyncio.run(go()) == (True, True)
+
+
+def test_a_short_output_is_an_engine_error_with_both_counts() -> None:
+    """Output length is forced (`ignore_eos`), so it is an independent variable. A response
+    with fewer tokens than asked for is a request that did not run as specified, and its
+    service time belongs to a different cell of the cost model."""
+    c = _complete(lambda r: httpx.Response(200, json=_ok_body(tokens_predicted=11)))
+    assert c.status == "engine_error"
+    assert "16" in c.error and "11" in c.error
+    assert c.output_tokens == 11
+
+
+def test_a_200_with_a_body_that_is_not_json_is_an_engine_error() -> None:
+    c = _complete(lambda r: httpx.Response(200, text="<html>proxy error</html>"))
+    assert c.status == "engine_error"
+    assert "not JSON" in c.error
+    assert c.output_tokens == 0

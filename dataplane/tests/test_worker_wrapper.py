@@ -227,3 +227,17 @@ def test_a_probe_slower_than_the_interval_does_not_stall_the_stream() -> None:
         return seen
 
     assert asyncio.run(go()) == [1, 2, 3]
+
+
+def test_the_emitted_history_is_bounded() -> None:
+    """A worker beats once a second for the life of the process. Keeping every beat grows
+    without limit on a node that runs a whole campaign."""
+    from dataplane.worker import heartbeat
+
+    em = HeartbeatEmitter(run_id="r", node_id="n1")
+    for _ in range(heartbeat.EMITTED_KEEP + 10):
+        em.next()
+    kept = em.emitted
+    assert len(kept) == heartbeat.EMITTED_KEEP
+    assert kept[-1].seq == heartbeat.EMITTED_KEEP + 10
+    assert [hb.seq for hb in kept] == list(range(11, heartbeat.EMITTED_KEEP + 11))

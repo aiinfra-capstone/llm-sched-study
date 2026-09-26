@@ -45,6 +45,8 @@ figure in Week 6.
 
 from __future__ import annotations
 
+import dataclasses
+import json
 import time
 from typing import Any, Self
 
@@ -184,7 +186,30 @@ class LlamaCppAdapter:
                 output_tokens=0,
                 error=f"HTTP {r.status_code}: {r.text[:200]}",
             )
-        return parse_timings(r.json(), service_ns=service_ns, prompt_len=len(prompt_tokens))
+        try:
+            payload = r.json()
+        except json.JSONDecodeError as exc:
+            return ServiceResult(
+                status="engine_error",
+                service_ns=service_ns,
+                prompt_tokens=len(prompt_tokens),
+                output_tokens=0,
+                error=f"HTTP 200 with a body that is not JSON ({exc}): {r.text[:200]}",
+            )
+        result = parse_timings(payload, service_ns=service_ns, prompt_len=len(prompt_tokens))
+        if result.status == "ok" and result.output_tokens != output_len:
+            # Output length is forced, so it is an independent variable. A request that
+            # produced a different count did not run as the trace specified, and its service
+            # time belongs to a different cell of the cost model.
+            return dataclasses.replace(
+                result,
+                status="engine_error",
+                error=(
+                    f"asked for {output_len} output tokens, the engine produced "
+                    f"{result.output_tokens}"
+                ),
+            )
+        return result
 
     def worker_record(
         self,

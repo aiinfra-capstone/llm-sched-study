@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -40,6 +41,11 @@ DEFAULT_INTERVAL_S = 1.0
 # is short enough to track a node falling behind and long enough that one slow request
 # does not make a healthy node look broken.
 _EWMA_ALPHA = 0.3
+
+# How many emitted heartbeats the emitter keeps for inspection. It beats once a second for
+# the life of the process, so an unbounded history grows through a whole campaign. An hour
+# of beats at the default interval is more than any test or debugging session reads back.
+EMITTED_KEEP = 3600
 
 
 @dataclass(frozen=True)
@@ -104,7 +110,7 @@ class HeartbeatEmitter:
     _seq: int = 0
     _tok_s: float = 0.0
     _queue_depth: int = 0
-    _emitted: list[Heartbeat] = field(default_factory=list)
+    _emitted: deque[Heartbeat] = field(default_factory=lambda: deque(maxlen=EMITTED_KEEP))
 
     def start_run(self, run_id: str) -> None:
         """Point the stream at a new run **without restarting the sequence**.

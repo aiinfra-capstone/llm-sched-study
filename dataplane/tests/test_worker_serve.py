@@ -788,3 +788,122 @@ def test_the_shutdown_line_counts_every_outcome(tmp_path, monkeypatch, stub, cap
 
     assert asyncio.run(go()) == 0
     assert "worker n1: 3 served, 1 failed, 1 undelivered" in capsys.readouterr().out
+
+
+# ------------------------------------------------------------- unreported completions
+#
+# A completion the scheduler never heard about leaves that request counted in flight on its
+# side for the rest of the run. The worker cannot fix that, but it can count it where a
+# person will see it, as it does for an undelivered response.
+
+
+class _NoReports(sched_grpc.SchedulerStub):
+    """The real scheduler stub, except that every completion report fails."""
+
+    def __init__(self, channel) -> None:
+        super().__init__(channel)
+
+        async def refused(*args, **kwargs):
+            raise _rpc_error()
+
+        self.ReportCompletion = refused
+
+
+def test_a_completion_report_that_fails_is_counted_as_unreported(
+    tmp_path, monkeypatch, stub, capsys
+) -> None:
+    monkeypatch.setattr(serve.sched_grpc, "SchedulerStub", _NoReports)
+    svc, sched, outcomes = _serve_through_execute(
+        tmp_path, [_request("r0001", client_endpoint="c:1")]
+    )
+    assert svc.counters.unreported_completions == 1
+    assert outcomes == [None]
+    assert len(svc.records) == 1
+    assert sched.completions == []
+
+    adapter = _FakeAdapter(service_s=0.01)
+    monkeypatch.setattr(serve, "LlamaCppAdapter", lambda *a, **k: adapter)
+
+    async def go():
+        sched = _Scheduler()
+        sched_server, sched_ep = await _start(sched, sched_grpc.add_SchedulerServicer_to_server)
+        stop = asyncio.Event()
+        task = asyncio.create_task(
+            serve.run_worker(
+                _config(tmp_path / "live", scheduler_endpoint=sched_ep),
+                bind="127.0.0.1:0",
+                stop=stop,
+            )
+        )
+        port = await _serving_port(capsys, task)
+        async with grpc.aio.insecure_channel(f"127.0.0.1:{port}") as ch:
+            await sched_grpc.WorkerStub(ch).Execute(_request("r0001", client_endpoint="c:1"))
+        stop.set()
+        code = await task
+        await sched_server.stop(None)
+        return code
+
+    assert asyncio.run(go()) == 0
+    assert "1 served, 0 failed, 0 undelivered, 1 unreported" in capsys.readouterr().out
+
+
+# ------------------------------------------------------------------ a run that ends early
+#
+# `begin()` for a new run while the previous run's requests are still in the engine. Those
+# requests belong to a run that is over. They are cancelled and counted, and none of them
+# writes a record into the new run's log.
+
+
+def test_a_straggler_from_the_previous_run_never_writes_into_the_new_log(tmp_path, stub) -> None:
+    async def go():
+        svc = serve.WorkerService(_config(tmp_path), _FakeAdapter(service_s=0.5))
+        await svc.Execute(_request("r0001", run_id="run_a", client_endpoint="c:1"), None)
+        (straggler,) = svc._tasks
+        await _until(lambda: svc.counters.inflight == 1, what="the request to reach the engine")
+        svc.begin("run_b")
+        await svc.Execute(_request("r0002", run_id="run_b", client_endpoint="c:1"), None)
+        await asyncio.wait({straggler})
+        await svc.drain()
+        return svc, straggler
+
+    svc, straggler = asyncio.run(go())
+    assert straggler.cancelled()
+    assert svc.counters.abandoned == 1
+    assert (svc.counters.queued, svc.counters.inflight) == (0, 0)
+    new = [json.loads(x) for x in (tmp_path / "worker_n1_run_b.jsonl").read_text().splitlines()]
+    assert [r["req_id"] for r in new] == ["r0002"]
+    assert (tmp_path / "worker_n1_run_a.jsonl").read_text() == ""
+
+
+def test_a_request_still_waiting_for_a_slot_is_abandoned_with_its_queue_count(
+    tmp_path, stub
+) -> None:
+    async def go():
+        svc = serve.WorkerService(_config(tmp_path, slots=1), _FakeAdapter(service_s=0.5))
+        await svc.Execute(_request("r0001", run_id="run_a", client_endpoint="c:1"), None)
+        await svc.Execute(_request("r0002", run_id="run_a", client_endpoint="c:1"), None)
+        await _until(lambda: svc.counters.queued == 1, what="the second request to queue")
+        svc.begin("run_b")
+        await svc.drain()
+        return svc
+
+    svc = asyncio.run(go())
+    assert svc.counters.abandoned == 2
+    assert (svc.counters.queued, svc.counters.inflight) == (0, 0)
+
+
+def test_a_drain_that_times_out_cancels_what_is_left(tmp_path, stub) -> None:
+    """A task that outlives the drain would otherwise reach a closed log."""
+
+    async def go():
+        svc = serve.WorkerService(_config(tmp_path), _FakeAdapter(service_s=5.0))
+        await svc.Execute(_request("r0001", client_endpoint="c:1"), None)
+        (task,) = svc._tasks
+        await svc.drain(timeout_s=0.05)
+        await asyncio.wait({task})
+        return svc, task
+
+    svc, task = asyncio.run(go())
+    assert task.cancelled()
+    assert svc.counters.abandoned == 1
+    assert svc.records == []

@@ -119,6 +119,12 @@ class _Counters:
     served: int = 0
     failed: int = 0
     undelivered: int = 0
+    # Completions the scheduler never heard about. Each one leaves that request counted in
+    # flight on the scheduler's side for the rest of the run.
+    unreported_completions: int = 0
+    # Requests cancelled because their run was over: `begin()` for a new run, or a drain
+    # that timed out. A cancelled request writes no record.
+    abandoned: int = 0
     leaked_slots: int = 0
 
 
@@ -162,6 +168,10 @@ class WorkerService(sched_grpc.WorkerServicer):
         """
         if run_id == self.run_id and self._log is not None:
             return
+        # Whatever is still running belongs to a run that is over. Cancelled rather than
+        # awaited, so this stays synchronous for `Execute`, and a cancelled request writes
+        # nothing: it can neither land in the new run's log nor reach a closed one.
+        self._abandon()
         if self._log is not None:
             self._log.close()
         self.run_id = run_id
@@ -171,6 +181,12 @@ class WorkerService(sched_grpc.WorkerServicer):
         # that just ended while the queue depth the request path updates went to an object
         # nobody was reading.
         self._emitter.start_run(run_id)
+
+    def _abandon(self) -> None:
+        pending = [t for t in self._tasks if not t.done()]
+        for task in pending:
+            task.cancel()
+        self.counters.abandoned += len(pending)
 
     async def drain(self, timeout_s: float = 120.0) -> None:
         """Let every admitted request finish before the log closes.
@@ -182,6 +198,9 @@ class WorkerService(sched_grpc.WorkerServicer):
         """
         if self._tasks:
             await asyncio.wait(set(self._tasks), timeout=timeout_s)
+        # A task that outlived the drain would reach a closed log. It is cancelled and
+        # counted instead, and the shutdown line says how many.
+        self._abandon()
         for ch in self._channels.values():
             await ch.close()
         self._channels.clear()
@@ -214,10 +233,14 @@ class WorkerService(sched_grpc.WorkerServicer):
         admitted_ns = time.monotonic_ns()
         self.counters.queued += 1
         self._emitter.set_queue_depth(self.counters.queued)
-
-        async with self._sem:
+        try:
+            await self._sem.acquire()
+        finally:
+            # Also on cancellation while waiting for a slot, so an abandoned request does
+            # not stay in the queue depth the heartbeat reports.
             self.counters.queued -= 1
             self._emitter.set_queue_depth(self.counters.queued)
+        try:
             # Stamped before the /slots read, so the probe's cost is not billed to the
             # queue. It is not billed to service either — the adapter stamps its own span.
             queue_wait_ns = time.monotonic_ns() - admitted_ns
@@ -229,6 +252,8 @@ class WorkerService(sched_grpc.WorkerServicer):
                 )
             finally:
                 self.counters.inflight -= 1
+        finally:
+            self._sem.release()
 
         self._emitter.observe_completion(result.decode_tokens_per_s)
         self.counters.served += 1
@@ -312,8 +337,13 @@ class WorkerService(sched_grpc.WorkerServicer):
                 timeout=COMPLETION_REPORT_TIMEOUT_S,
                 wait_for_ready=True,
             )
-        except grpc.aio.AioRpcError:
-            pass
+        except grpc.aio.AioRpcError as exc:
+            self.counters.unreported_completions += 1
+            print(
+                f"could not report {request.req_id} to {self.config.scheduler_endpoint}: "
+                f"{exc.code().name}",
+                flush=True,
+            )
 
     def _channel(self, endpoint: str) -> grpc.aio.Channel:
         if endpoint not in self._channels:
@@ -519,7 +549,9 @@ async def run_worker(
         await adapter.aclose()
     print(
         f"worker {config.node_id}: {service.counters.served} served, "
-        f"{service.counters.failed} failed, {service.counters.undelivered} undelivered"
+        f"{service.counters.failed} failed, {service.counters.undelivered} undelivered, "
+        f"{service.counters.unreported_completions} unreported, "
+        f"{service.counters.abandoned} abandoned"
         + (
             f", {service.counters.leaked_slots} ENGINE SLOT(S) LEAKED — this node was not "
             "running at the --parallel the manifest claims"

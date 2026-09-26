@@ -1,9 +1,9 @@
 {
   "_comment": "MPR-2 on the GTX 1650 Ti laptop and the RTX 3050 laptop. The points are set against this pool, not the 1650 Ti's one-node load band (0.72 to 1.31 req/s), which would leave both nodes lightly loaded. The 1650 Ti's own onset is 1.31 req/s; the 3050 serves the anchor trace's mix 1.76x faster at one slot and 2.45x at four, so we take about 2x and put the pool near 3.9 req/s. light, mid and heavy are about 0.33, 0.6 and 0.8 of that (1.3, 2.4 and 3.2 req/s on lambda_base 0.9). round_robin alone crosses the 1650 Ti's onset at heavy. threshold_t sits between the two classes' capability (103.9 and 163.6 output tok/s of service at the lowest cell and one slot, com.sched.core.Capability), so threshold serves the 3050 alone.",
-  "tag": "mpr2_1650ti_3050",
+  "tag": "mpr2_1650ti_3050_v2",
   "trace": "runs/traces/anchor_1b.trace.jsonl",
   "trace_sha256": "bea054628d197527a530f04dc95f4170686c3b7651941698558e145f02c540cf",
-  "out_root": "runs/exp/mpr2_1650ti_3050",
+  "out_root": "runs/exp/mpr2_1650ti_3050_v2",
   "nodes": [
     {
       "node_id": "gtx1650ti",
@@ -82,6 +82,7 @@
   ],
   "threshold_t": 130.0,
   "repeats": 3,
+  "scheduler_seeds": [42, 42, 42],
   "warmup_s": 10.0,
   "settle_s": 20.0,
   "scheduler_port": 50051,

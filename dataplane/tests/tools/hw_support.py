@@ -55,6 +55,9 @@ class Pool:
     # The order of the Maven steps main() takes: "compile", then "exec:java" per run.
     maven: list[str] = field(default_factory=list)
     compile_fails: bool = False
+    # What the scheduler leaves in `scheduler_<run_id>.jsonl` when it stops. None writes no
+    # log at all, as a scheduler that never got to open its file would.
+    scheduler_log: list[dict[str, Any]] | None = None
 
     # ------------------------------------------------------------------ engine reads
 
@@ -97,6 +100,7 @@ class Pool:
         class FakeScheduler:
             def __init__(self, c, pre_path, run_dir) -> None:
                 self.pre_path = pre_path
+                self.run_dir = run_dir
 
             def start(self, timeout_s: float = 300.0) -> None:
                 pool.maven.append("exec:java")
@@ -105,6 +109,9 @@ class Pool:
 
             def stop(self, timeout_s: float = 30.0) -> None:
                 pool.phase = "after"
+                if pool.scheduler_log is not None:
+                    log = self.run_dir / f"scheduler_{self.run_dir.name}.jsonl"
+                    log.write_text("".join(json.dumps(r) + "\n" for r in pool.scheduler_log))
 
         return FakeScheduler
 

@@ -23,6 +23,7 @@
     }
   ],
   "policy": "round_robin",
+  "scheduler_seed": 42,
   "warmup_s": 10.0,
   "bind": "127.0.0.1:0",
   "settle_s": 20.0,

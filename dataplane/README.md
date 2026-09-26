@@ -487,8 +487,10 @@ artifact, and a committed copy is a second thing that can disagree with it.
 
 ### The config set
 
-Everything a determination needs is a committed config, so a run is reproducible from the
-repo rather than from a shell history. Four groups.
+Everything a campaign needs is a committed config, so a campaign can be started from the
+repo rather than from a shell history. A config describes the next campaign, and it moves on
+when a calibration is promoted. A run already recorded is described by its own manifest, which
+carries the config verbatim, the snapshot ids and the trace and generator shas. Four groups.
 
 **Calibration.** `calibration_1b*.json` and `calibration_8b*.json`, one per node class, plus
 `calibration_smoke.json` for timing a single cell before committing to a full grid.
@@ -524,7 +526,13 @@ thing in all three. The construction and its caveat, that the matching holds at 
 [`../docs/results.md`](../docs/results.md).
 
 **Anchors.** `anchors_1b.json` names the trace, its sha256, the pool and the four rate
-scales. A trace's sha256 covers the generator's git sha in its header, so a fresh
+scales. It also names `scheduler_seed`, the `config.seed` the operator starts the scheduler
+with, which every anchor manifest records as `config.seed`, and optionally `scheduler_log`,
+the scheduler's log that `heartbeat_gaps` is read from. The scheduler writes its
+`heartbeat_summary` records only at shutdown, and one scheduler serves every anchor point, so
+anchor manifests record `heartbeat_gaps: null` under `unmeasured`. We accept that: the count is
+non-fatal, and `hw_runs` stops the scheduler after every run, so campaign runs get a real
+count. A trace's sha256 covers the generator's git sha in its header, so a fresh
 generation at a later commit hashes differently. `tools/ensure_trace.py` regenerates at the
 sha the anchor manifests recorded and keeps the file only if it hashes to a value the
 anchors name; on a mismatch it exits 1 and leaves the disk alone.

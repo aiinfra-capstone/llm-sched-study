@@ -439,3 +439,61 @@ def test_a_manifest_says_whether_the_tree_was_dirty(monkeypatch) -> None:
 
     monkeypatch.setattr(manifest_mod, "git_dirty", lambda root=None: {"worker": True})
     assert _manifest()["git_dirty"] == {"worker": True}
+
+
+# --------------------------------------------------------------------------------------
+# heartbeat_gaps from the scheduler's heartbeat_summary records (0.2, D2)
+# --------------------------------------------------------------------------------------
+
+
+def _summary(node: str, missed: int, at: str = "shutdown", **kw) -> dict:
+    """One C-4 `heartbeat_summary` record, as the scheduler writes it."""
+    return {
+        "type": "heartbeat_summary",
+        "run_id": "run_0001",
+        "node_id": node,
+        "last_seq": 100,
+        "missed_beats": missed,
+        "seq_regressions": 0,
+        "at": at,
+    } | kw
+
+
+def test_heartbeat_gaps_sums_missed_beats_across_nodes() -> None:
+    """A decision record in the same log is not a summary and adds nothing."""
+    from dataplane.harness import manifest as manifest_mod
+
+    records = [{"type": "decision", "req_id": "r1"}, _summary("n1", 2), _summary("n2", 3)]
+    assert manifest_mod.heartbeat_gaps_from(records) == 5
+
+
+def test_the_last_summary_per_node_wins() -> None:
+    """The simulator writes a summary at `end_run` and the scheduler another at shutdown.
+    The later one covers the whole run, so adding the two would count the same beats twice."""
+    from dataplane.harness import manifest as manifest_mod
+
+    records = [
+        _summary("n1", 2, at="end_run"),
+        _summary("n2", 1),
+        _summary("n1", 4, at="shutdown"),
+    ]
+    assert manifest_mod.heartbeat_gaps_from(records) == 5
+
+
+def test_no_summary_record_means_null_not_zero() -> None:
+    """Zero says the beats were counted and none were missed. A log with no summary says
+    nobody counted, and that is None."""
+    from dataplane.harness import manifest as manifest_mod
+
+    assert manifest_mod.heartbeat_gaps_from([]) is None
+    assert manifest_mod.heartbeat_gaps_from([{"type": "decision", "req_id": "r1"}]) is None
+
+
+def test_a_null_heartbeat_count_is_noted_but_does_not_invalidate() -> None:
+    v = Validity(heartbeat_gaps=None, unmeasured=("heartbeat_gaps",))
+    assert v.valid
+    assert v.reasons() == []
+    assert v.to_dict()["heartbeat_gaps"] is None
+    assert v.to_dict()["unmeasured"] == ["heartbeat_gaps"]
+    assert any("heartbeat" in line for line in v.notes())
+    assert Validity(heartbeat_gaps=0).notes() == []

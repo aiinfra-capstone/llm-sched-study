@@ -728,3 +728,104 @@ def test_an_mmpp_sweep_point_carries_the_mean_rate(world) -> None:
     assert _sweep(world, _config(world, rate_scale=[2.0])) == 0
     (m,) = world.runs
     assert m["lambda"] == pytest.approx((0.5 * 10 + 2.0 * 5) / 15 * 2.0)
+
+
+# ------------------------------------------------------------------------------ ECT mode
+
+
+def test_an_ect_point_carries_the_mode_it_was_given() -> None:
+    """The base is usually an anchor run under some other policy, so it has no mode of its
+    own, and the control plane refuses ECT without one."""
+    base = {"config": {"arrival": {"lambda_base": 0.9}}, "policy": "round_robin"}
+    man = sweep.build_sweep_manifest(base, "ect", 0.0, 1.0, 1.0, ect_mode="unknown")
+    assert man["config"]["ect_mode"] == "unknown"
+    assert "ect_mode" not in base["config"], "the base manifest must not be mutated"
+
+
+def test_an_ect_point_with_no_mode_anywhere_is_refused_and_a_base_mode_is_kept() -> None:
+    base = {"config": {"arrival": {"lambda_base": 0.9}}, "policy": "round_robin"}
+    with pytest.raises(ValueError, match="ect_mode"):
+        sweep.build_sweep_manifest(base, "ect", 0.0, 1.0, 1.0)
+    ect_base = {"config": {"arrival": {"lambda_base": 0.9}, "ect_mode": "known"}, "policy": "ect"}
+    assert sweep.build_sweep_manifest(ect_base, "ect", 0.0, 1.0, 1.0)["config"]["ect_mode"] == (
+        "known"
+    )
+    # Only ECT needs one.
+    assert "ect_mode" not in sweep.build_sweep_manifest(base, "jsq", 0.0, 1.0, 1.0)["config"]
+
+
+def test_the_default_grid_gives_every_ect_point_a_mode_over_a_base_that_has_none(world) -> None:
+    assert "ect" in sweep.DEFAULT_GRID["policies"]
+    assert "ect_mode" not in world.base["config"]
+    assert _sweep(world, _config(world, policies=["jsq", "ect"], rate_scale=[1.0])) == 0
+    modes = {r["policy"]: r["config"].get("ect_mode") for r in world.runs}
+    assert modes == {"jsq": None, "ect": sweep.DEFAULT_ECT_MODE}
+    assert sweep.DEFAULT_ECT_MODE == "known"
+
+
+def test_a_sweep_config_names_the_ect_mode(world) -> None:
+    cfg = _config(world, policies=["ect"], rate_scale=[1.0])
+    data = json.loads(cfg.read_text()) | {"ect_mode": "unknown", "ect_prior_output_len": 64}
+    cfg.write_text(json.dumps(data))
+    assert _sweep(world, cfg) == 0
+    (run,) = world.runs
+    assert run["config"]["ect_mode"] == "unknown"
+    assert run["config"]["ect_prior_output_len"] == 64
+
+
+@pytest.mark.parametrize(
+    ("extra", "match"),
+    [
+        ({"ect_mode": "prior"}, "ect_mode must be one of"),
+        ({"ect_mode": "unknown"}, "needs a positive integer ect_prior_output_len"),
+        ({"ect_mode": "unknown", "ect_prior_output_len": 0}, "got 0"),
+        ({"ect_mode": "unknown", "ect_prior_output_len": True}, "got True"),
+    ],
+    ids=["bad-mode", "unknown-no-prior", "zero-prior", "bool-prior"],
+)
+def test_a_sweep_refuses_an_ect_mode_ect_would_refuse_before_any_point_runs(
+    world, capsys, extra, match
+) -> None:
+    """SimApp refuses these at every ECT point. Refused once, up front, the sweep runs nothing
+    rather than writing a failed point per ECT cell."""
+    cfg = _config(world, policies=["jsq", "ect"], rate_scale=[1.0])
+    cfg.write_text(json.dumps(json.loads(cfg.read_text()) | extra))
+    assert _sweep(world, cfg) == 1
+    out = capsys.readouterr().out
+    assert "refusing:" in out and match in out
+    assert world.runs == []
+
+
+def test_a_sweep_without_ect_ignores_the_ect_mode() -> None:
+    """The check is for ECT points. A config naming a mode no ECT run will read is harmless."""
+    base = {"config": {"arrival": {"lambda_base": 0.9}}, "policy": "round_robin"}
+    man = sweep.build_sweep_manifest(base, "wjsq", 0.0, 1.0, 1.0, ect_mode="prior")
+    assert "ect_mode" not in man["config"]
+
+
+def test_an_ect_base_leaves_no_stale_ect_keys_on_other_policies(world) -> None:
+    """The base is often an ECT run. Its mode and prior are ECT's alone: carried onto a JSQ
+    point they would describe a setting that point never used, and a run set grouping on
+    config keys would split JSQ by a value JSQ does not read."""
+    ect_base = {
+        "config": {
+            "arrival": {"lambda_base": 0.9},
+            "ect_mode": "unknown",
+            "ect_prior_output_len": 44,
+        },
+        "policy": "ect",
+    }
+    for policy in ("jsq", "round_robin", "wjsq"):
+        man = sweep.build_sweep_manifest(ect_base, policy, 0.0, 1.0, 1.0)
+        assert "ect_mode" not in man["config"], policy
+        assert "ect_prior_output_len" not in man["config"], policy
+    assert ect_base["config"]["ect_mode"] == "unknown", "the base manifest must not be mutated"
+
+    # The same through main(): the base run's ECT settings reach its ECT points only.
+    world.base["config"] |= {"ect_mode": "unknown", "ect_prior_output_len": 44}
+    world.base_path.write_text(json.dumps(world.base))
+    assert _sweep(world, _config(world, policies=["jsq", "ect"], rate_scale=[1.0])) == 0
+    by_policy = {r["policy"]: r["config"] for r in world.runs}
+    assert "ect_mode" not in by_policy["jsq"] and "ect_prior_output_len" not in by_policy["jsq"]
+    assert by_policy["ect"]["ect_mode"] == "unknown"
+    assert by_policy["ect"]["ect_prior_output_len"] == 44

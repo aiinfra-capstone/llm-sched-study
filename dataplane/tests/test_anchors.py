@@ -34,6 +34,10 @@ NODES = [
 ]
 
 
+# The seed the scheduler under the anchors was started with. SimApp replays an anchor
+# manifest with it, so the manifest has to carry it.
+SEED = 20260926
+
 LINE = "4242 Mon Sep 15 10:00:00 2026 /opt/llama/bin/llama-server -m /m/1b.gguf"
 OTHER_PID = "5151 Mon Sep 15 10:07:00 2026 /opt/llama/bin/llama-server -m /m/1b.gguf"
 
@@ -65,6 +69,7 @@ def _config(trace_path, sha, tmp_path, **over):
             "trace": str(trace_path),
             "trace_sha256": sha,
             "scheduler": "127.0.0.1:50051",
+            "scheduler_seed": SEED,
             "nodes": NODES,
             "points": [
                 {"name": "light", "rate_scale": 1.0},
@@ -272,6 +277,7 @@ def test_two_operating_points_are_not_an_anchor_set(tmp_path, trace) -> None:
                 "trace": str(path),
                 "trace_sha256": sha,
                 "scheduler": "x:1",
+                "scheduler_seed": SEED,
                 "nodes": NODES,
                 "points": [
                     {"name": "a", "rate_scale": 1.0},
@@ -291,6 +297,7 @@ def test_operating_point_names_have_to_be_unique_because_they_name_run_dirs(
                 "trace": str(path),
                 "trace_sha256": sha,
                 "scheduler": "x:1",
+                "scheduler_seed": SEED,
                 "nodes": NODES,
                 "points": [{"name": "a", "rate_scale": r} for r in (1.0, 2.0, 3.0)],
             }
@@ -326,6 +333,7 @@ def test_cli_reports_the_anchor_count_and_fails_below_the_floor(
                 "trace": str(path),
                 "trace_sha256": sha,
                 "scheduler": "127.0.0.1:50051",
+                "scheduler_seed": SEED,
                 "nodes": NODES,
                 "settle_s": 0.0,
                 "out_root": str(tmp_path / "from_config"),
@@ -388,6 +396,7 @@ def test_cli_records_the_measured_clock_on_every_anchor(
                 "trace": str(path),
                 "trace_sha256": sha,
                 "scheduler": "127.0.0.1:50051",
+                "scheduler_seed": SEED,
                 "nodes": NODES,
                 "settle_s": 0.0,
                 "out_root": str(out_root),
@@ -446,6 +455,7 @@ def test_without_the_flag_an_anchor_manifest_carries_no_clock_claim(
                 "trace": str(path),
                 "trace_sha256": sha,
                 "scheduler": "127.0.0.1:50051",
+                "scheduler_seed": SEED,
                 "nodes": NODES,
                 "settle_s": 0.0,
                 "out_root": str(out_root),
@@ -475,3 +485,109 @@ def test_an_anchor_manifest_records_the_generator_sha(tmp_path, trace, monkeypat
     assert {r.manifest["config"]["generator_git_sha"] for r in results} == {
         header["generator_git_sha"]
     }
+
+
+def test_anchor_heartbeat_gaps_come_from_the_scheduler_log(tmp_path, trace) -> None:
+    """With the scheduler's records the count is theirs. Without them nobody counted, and
+    the manifest says so with null and an `unmeasured` entry rather than a zero."""
+    path, sha = trace
+    header, _ = gen_trace.load(path)
+    point = anchors.AnchorPoint("light", 1.0)
+    log = tmp_path / "scheduler_anchor.jsonl"
+    config = _config(path, sha, tmp_path, scheduler_log=str(log))
+    assert config.scheduler_log == log
+    assert _config(path, sha, tmp_path).scheduler_log is None
+
+    summaries = [
+        {
+            "type": "heartbeat_summary",
+            "run_id": "r",
+            "node_id": "n1",
+            "last_seq": 90,
+            "missed_beats": 4,
+            "seq_regressions": 0,
+            "at": "shutdown",
+        }
+    ]
+    counted = anchors.build_manifest(
+        config,
+        point,
+        _result(header),
+        run_id="r",
+        started_unix=1,
+        engine_check="disabled",
+        scheduler_records=summaries,
+    )
+    assert counted["validity"]["heartbeat_gaps"] == 4
+    assert "heartbeat_gaps" not in counted["validity"].get("unmeasured", [])
+
+    uncounted = anchors.build_manifest(
+        config, point, _result(header), run_id="r", started_unix=1, engine_check="disabled"
+    )
+    assert uncounted["validity"]["heartbeat_gaps"] is None
+    assert "heartbeat_gaps" in uncounted["validity"]["unmeasured"]
+    assert uncounted["validity"]["valid"] is True
+
+
+def test_an_anchor_manifest_records_the_scheduler_seed_as_config_seed(
+    tmp_path, trace, monkeypatch
+) -> None:
+    """SimApp reads `config.seed` for its tie-break and weighted-draw stream, and a sweep
+    uses an anchor manifest as its base. Without the seed the anchor cannot be replayed."""
+    path, sha = trace
+    header, _ = gen_trace.load(path)
+    replay, _ = _fake_replay(header)
+    monkeypatch.setattr(anchors.replay_mod, "replay", replay)
+    results = asyncio.run(anchors.run_anchors(_config(path, sha, tmp_path)))
+    assert [r.manifest["config"]["seed"] for r in results] == [SEED] * 3
+    assert all(r.manifest["config"]["gen_seed"] == header["gen_seed"] for r in results)
+
+
+@pytest.mark.parametrize("seed", [None, 2**31, -(2**31) - 1])
+def test_an_anchor_config_without_a_usable_scheduler_seed_is_refused(tmp_path, trace, seed) -> None:
+    """Missing, or too wide for the Java int the scheduler reads it into."""
+    path, sha = trace
+    d = {
+        "trace": str(path),
+        "trace_sha256": sha,
+        "scheduler": "x:1",
+        "nodes": NODES,
+        "points": [{"name": n, "rate_scale": r} for n, r in (("a", 1.0), ("b", 2.0), ("c", 3.0))],
+    }
+    if seed is not None:
+        d["scheduler_seed"] = seed
+    with pytest.raises(ValueError, match="scheduler_seed"):
+        anchors.AnchorConfig.from_dict(d)
+
+
+def test_run_anchors_reads_the_scheduler_log_it_is_given(tmp_path, trace, monkeypatch) -> None:
+    """The file named in the config is read after each point. Before the scheduler has
+    written a summary, or with no file there yet, every anchor records null, not 0."""
+    path, sha = trace
+    header, _ = gen_trace.load(path)
+    replay, _ = _fake_replay(header)
+    monkeypatch.setattr(anchors.replay_mod, "replay", replay)
+    log = tmp_path / "scheduler_anchor.jsonl"
+
+    missing = asyncio.run(
+        anchors.run_anchors(_config(path, sha, tmp_path / "missing", scheduler_log=str(log)))
+    )
+    assert [r.manifest["validity"]["heartbeat_gaps"] for r in missing] == [None] * 3
+
+    summary = {
+        "type": "heartbeat_summary",
+        "run_id": "sched",
+        "node_id": "n1",
+        "last_seq": 50,
+        "missed_beats": 2,
+        "seq_regressions": 0,
+        "at": "shutdown",
+    }
+    log.write_text(
+        json.dumps({"type": "decision", "req_id": "r0001"}) + "\n\n" + json.dumps(summary) + "\n"
+    )
+    counted = asyncio.run(
+        anchors.run_anchors(_config(path, sha, tmp_path / "counted", scheduler_log=str(log)))
+    )
+    assert [r.manifest["validity"]["heartbeat_gaps"] for r in counted] == [2] * 3
+    assert all("unmeasured" not in r.manifest["validity"] for r in counted)

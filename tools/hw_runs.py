@@ -361,6 +361,14 @@ def check_campaign(
             )
         if len(set(c.repeat_seeds)) != len(c.repeat_seeds):
             raise ValueError("repeat_seeds repeats a seed, so two repeats would share arrivals")
+    if c.scheduler_seeds is None and c.repeat_seeds is None:
+        # LiveSchedulerApp draws its tie-breaks and weighted picks from config.seed. With no
+        # seed stated the run could not say which stream it drew, and a repeat could not
+        # reproduce it.
+        raise ValueError(
+            "the campaign gives the scheduler no seed: set scheduler_seeds (one per repeat), "
+            "or repeat_seeds, which the scheduler seed is taken from"
+        )
     if c.scheduler_seeds is not None:
         if len(c.scheduler_seeds) != c.repeats:
             raise ValueError(
@@ -381,6 +389,7 @@ def check_campaign(
                 f"capability arm {arm.name!r} names {unknown_policies}, which the campaign "
                 "does not run"
             )
+    _check_ect_modes(c)
     arm_names = [a.name for a in c.arms]
     if len(set(arm_names)) != len(arm_names):
         raise ValueError(f"capability arm names must be distinct, got {arm_names}")
@@ -432,6 +441,42 @@ def check_campaign(
             raise ValueError(
                 f"{node_id!r} names {snap_id}, but the newest snapshot in {node_class} is "
                 f"{newest['snapshot_id']}, so this config missed a promotion; name that one"
+            )
+
+
+ECT_MODES = ("known", "unknown")
+
+
+def _check_ect_modes(c: Campaign) -> None:
+    """Every ECT run states its mode, and every stated mode is one ECT accepts.
+
+    The scheduler refuses an ECT run with no `ect_mode` rather than defaulting one, so a
+    campaign that leaves it out would fail at its first ECT run, hours in. An arm's setting
+    wins over the campaign's, the same order `pre_run_manifest` writes them in.
+    """
+    stated = [("the campaign", c.ect_mode)] + [
+        (f"capability arm {a.name!r}", a.config.get("ect_mode")) for a in c.arms
+    ]
+    for where, mode in stated:
+        if mode is not None and mode not in ECT_MODES:
+            raise ValueError(f"{where} sets ect_mode {mode!r}; ECT accepts {list(ECT_MODES)}")
+    for arm in c.arms:
+        if "ect" not in (arm.policies if arm.policies is not None else c.policies):
+            continue
+        mode = arm.config.get("ect_mode", c.ect_mode)
+        prior = arm.config.get("ect_prior_output_len", c.ect_prior_output_len)
+        label = f"capability arm {arm.name!r}" if arm.name else "the campaign"
+        if mode is None:
+            raise ValueError(
+                f"{label} runs ect with no ect_mode; set ect_mode ({' or '.join(ECT_MODES)}) "
+                "on the campaign or on the arm"
+            )
+        if mode == "unknown" and (
+            not isinstance(prior, int) or isinstance(prior, bool) or prior <= 0
+        ):
+            raise ValueError(
+                f"{label} runs ect in unknown mode, which needs a positive integer "
+                f"ect_prior_output_len; got {prior!r}"
             )
 
 
@@ -668,9 +713,9 @@ def pre_run_manifest(
     if run.point.target is not None:
         config["load_target"] = run.point.target
     config["mean_lambda"] = round(pool_load.mean_rate(header["arrival"]) * run.point.rate_scale, 6)
-    if run.scheduler_seed is not None:
-        # LiveSchedulerApp reads config.seed for its tie-break and weighted-draw stream.
-        config["seed"] = run.scheduler_seed
+    # LiveSchedulerApp reads config.seed for its tie-break and weighted-draw stream, and
+    # refuses to start without one. check_campaign makes sure every run has one.
+    config["seed"] = run.scheduler_seed
     if run.workload is not None and run.workload.name:
         config["workload"] = run.workload.name
     if c.allow_dirty:
@@ -906,6 +951,17 @@ def run_one(c: Campaign, run: Run, header: dict[str, Any], trace: TraceFile | No
     if incomplete:
         result.validity = replace(result.validity, worker_log_incomplete=len(incomplete))
 
+    # The scheduler writes its heartbeat_summary records from its shutdown hook, so they are
+    # in its log once stop() has returned. No record means nobody counted: null, never 0.
+    scheduler_records = [
+        json.loads(line)
+        for log in sorted(run_dir.glob("scheduler_*.jsonl"))
+        for line in log.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    gaps = manifest_mod.heartbeat_gaps_from(scheduler_records)
+    result.validity = replace(result.validity, heartbeat_gaps=gaps)
+
     # replay() counts failures inside the measurement window only. A response lost during
     # warmup is still a lost response, and on the first pair three of them (a summarisation
     # run, jsq, heavy, r3) left the run marked valid, so a campaign counts the whole run.
@@ -971,6 +1027,10 @@ def run_one(c: Campaign, run: Run, header: dict[str, Any], trace: TraceFile | No
         )
     if incomplete:
         print("    the worker log does not account for every dispatch; the join will be partial")
+    if gaps is None:
+        print("    no heartbeat_summary in the scheduler log; heartbeat_gaps is null")
+    else:
+        print(f"    {gaps} missed heartbeat(s) over the pool (reported, not fatal)")
     return bool(v["valid"])
 
 
@@ -1054,10 +1114,17 @@ def main(argv: list[str] | None = None) -> int:
     roots = ", ".join(str(w.out_root) for w in c.workloads)
     print(f"{len(runs)} runs, about {minutes:.0f} min of replay and settling, into {roots}")
     if c.repeat_seeds is None and c.repeats > 1:
-        print(
-            "  every repeat replays one trace with one scheduler seed: repeats sample hardware "
-            "jitter only, not arrivals or routing draws. Set repeat_seeds and trace_config."
-        )
+        if len(set(c.scheduler_seeds or [])) <= 1:
+            print(
+                "  every repeat replays one trace with one scheduler seed: repeats sample "
+                "hardware jitter only, not arrivals or routing draws. Set repeat_seeds and "
+                "trace_config."
+            )
+        else:
+            print(
+                "  every repeat replays one trace: repeats sample hardware jitter and routing "
+                "draws, not arrivals. Set repeat_seeds and trace_config."
+            )
     if c.clock_sync is None and len({n["host"] for n in c.nodes}) > 1:
         print("  no --clock-sync: every manifest will record that nobody measured the clocks")
     if args.dry_run:

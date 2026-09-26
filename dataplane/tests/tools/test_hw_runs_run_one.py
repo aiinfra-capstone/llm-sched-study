@@ -299,3 +299,51 @@ def test_run_one_generates_its_own_trace_and_skips_undispatched_requests(pool, t
     assert man["trace_sha256"] == hw_runs.trace_for(run.workload, run.gen_seed).sha256
     assert man["validity"]["dropped_requests"] == 1
     assert ok is False
+
+
+# ------------------------------------------------------------------- heartbeat gaps
+
+
+def _summary(node: str, missed: int) -> dict:
+    return {
+        "type": "heartbeat_summary",
+        "run_id": "r",
+        "node_id": node,
+        "last_seq": 400,
+        "missed_beats": missed,
+        "seq_regressions": 0,
+        "at": "shutdown",
+    }
+
+
+def test_the_scheduler_summary_reaches_validity_heartbeat_gaps(pool, tmp_path, schema) -> None:
+    """The live scheduler writes one summary per node at shutdown. The run's count is their
+    sum, and a counted run has nothing unmeasured to report."""
+    pool.scheduler_log = [
+        {"type": "completion_observed", "req_id": "r000001", "node_id": NODE},
+        _summary(OTHER, 2),
+        _summary(NODE, 3),
+    ]
+    ok, man, _ = _run_one(_campaign(tmp_path, check_engine_restarts=False))
+    assert ok is True
+    assert man["validity"]["heartbeat_gaps"] == 5
+    assert "heartbeat_gaps" not in man["validity"].get("unmeasured", [])
+    assert_conforms(schema("manifest"), [man], "manifest")
+
+
+@pytest.mark.parametrize(
+    "log",
+    [None, [{"type": "completion_observed", "req_id": "r000001", "node_id": NODE}]],
+    ids=["no-log", "no-summary"],
+)
+def test_a_scheduler_log_without_a_summary_writes_null_and_an_unmeasured_entry(
+    pool, tmp_path, schema, log
+) -> None:
+    """Null, not 0, and never fatal: the run is still a valid measurement of the pool, it
+    just cannot say how stale the scheduler's view of it was."""
+    pool.scheduler_log = log
+    ok, man, _ = _run_one(_campaign(tmp_path, check_engine_restarts=False))
+    assert ok is True
+    assert man["validity"]["heartbeat_gaps"] is None
+    assert "heartbeat_gaps" in man["validity"]["unmeasured"]
+    assert_conforms(schema("manifest"), [man], "manifest")

@@ -29,6 +29,14 @@ owned them would hide an engine restart inside a Python traceback. They are star
 operator (README), and this connects to them. Each node's llama-server is read before and
 after every point, as `hw_runs` does, so `engine_restarts` and `engine_unchecked` in the
 validity block are counted from those reads, and `config.engine_check` records them.
+
+Because the operator starts the scheduler, its seed and its log are named in the anchor
+config: `scheduler_seed` is the `config.seed` the scheduler was started with, recorded as
+`config.seed` in every anchor manifest, and `scheduler_log` is the file its
+`heartbeat_summary` records are read from. The scheduler writes those only at shutdown and
+serves every point, so a log that holds none yet leaves `heartbeat_gaps` null and named in
+`unmeasured`. That is accepted (2026-09-26): the count is non-fatal, and `hw_runs`, which
+stops the scheduler after each run, is where campaigns get it.
 """
 
 from __future__ import annotations
@@ -48,6 +56,9 @@ from dataplane.harness import manifest as manifest_mod
 from dataplane.harness import replay as replay_mod
 
 __all__ = ["AnchorConfig", "AnchorPoint", "AnchorResult", "main", "run_anchors"]
+
+# LiveSchedulerApp reads config.seed as a Java int.
+_JAVA_INT = (-(2**31), 2**31 - 1)
 
 # F-23 says "at least 3". Three is the floor, not the target, and the floor is asserted
 # here as well as in the test so a campaign that lost a run to a send-lag violation says
@@ -92,6 +103,23 @@ class AnchorConfig:
     check_engine_restarts: bool = True
     # node_id -> ssh destination for the engine read. A node not named is read locally.
     ssh: dict[str, str] = field(default_factory=dict)
+    # The config.seed the operator started the scheduler with. Required: the scheduler
+    # refuses to start without one, and a manifest that did not record it could not say
+    # which tie-break stream the run drew. Defaulted only so the field can sit here.
+    scheduler_seed: int | None = None
+    # The scheduler's C-4 log, read for its heartbeat_summary records.
+    scheduler_log: Path | None = None
+
+    def __post_init__(self) -> None:
+        seed = self.scheduler_seed
+        if (
+            not isinstance(seed, int)
+            or isinstance(seed, bool)
+            or not _JAVA_INT[0] <= seed <= _JAVA_INT[1]
+        ):
+            raise ValueError(
+                f"scheduler_seed must be the Java int the scheduler was started with, got {seed!r}"
+            )
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> AnchorConfig:
@@ -121,6 +149,8 @@ class AnchorConfig:
             tag=d.get("tag", "anchor"),
             check_engine_restarts=bool(d.get("check_engine_restarts", True)),
             ssh=dict(d.get("ssh", {})),
+            scheduler_seed=d.get("scheduler_seed"),
+            scheduler_log=Path(d["scheduler_log"]) if d.get("scheduler_log") else None,
         )
 
     def read_engines(self) -> dict[str, str | None]:
@@ -172,6 +202,15 @@ def _reasons(validity: dict[str, Any]) -> list[str]:
     return out
 
 
+def _scheduler_records(path: Path | None) -> list[dict[str, Any]] | None:
+    """The scheduler's C-4 log as records, or None when there is no log to read."""
+    if path is None or not path.is_file():
+        return None
+    return [
+        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
+    ]
+
+
 def build_manifest(
     config: AnchorConfig,
     point: AnchorPoint,
@@ -180,8 +219,13 @@ def build_manifest(
     run_id: str,
     started_unix: int,
     engine_check: dict[str, dict[str, str | None]] | Literal["disabled"],
+    scheduler_records: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """A C-6 manifest for one anchor, with the operating point recorded as `lambda`.
+
+    `scheduler_records` is the scheduler's C-4 log. `heartbeat_gaps` is summed from its
+    `heartbeat_summary` records, and is null (named in `unmeasured`) when there are none or
+    no log was given.
 
     `engine_check` is node_id -> {before, after, verdict}, from `launch.engine_verdict`,
     and the restart and unchecked counts are taken from it. "disabled" says in words that
@@ -199,7 +243,7 @@ def build_manifest(
         max_send_lag_ms=result.validity.max_send_lag_ms,
         send_lag_violations=result.validity.send_lag_violations,
         dropped_requests=result.validity.dropped_requests,
-        heartbeat_gaps=result.validity.heartbeat_gaps,
+        heartbeat_gaps=manifest_mod.heartbeat_gaps_from(scheduler_records or []),
         engine_restarts=result.validity.engine_restarts
         + sum(v in ("changed", "died") for v in verdicts),
         engine_unchecked=result.validity.engine_unchecked + verdicts.count("unknown"),
@@ -222,6 +266,8 @@ def build_manifest(
         # The trace hash covers the generator commit, so this is what regenerates it byte for
         # byte (`tools/ensure_trace.py`).
         "generator_git_sha": header["generator_git_sha"],
+        # LiveSchedulerApp reads config.seed for its tie-break and weighted-draw stream.
+        "seed": config.scheduler_seed,
     }
     return manifest_mod.build(
         run_id=run_id,
@@ -293,6 +339,7 @@ async def run_anchors(
             run_id=run_id,
             started_unix=started_unix,
             engine_check=engine_check,
+            scheduler_records=_scheduler_records(config.scheduler_log),
         )
         run_dir = config.out_root / run_id
         run_dir.mkdir(parents=True, exist_ok=True)

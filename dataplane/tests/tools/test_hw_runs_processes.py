@@ -268,7 +268,7 @@ def test_repeats_that_replay_one_trace_are_warned_about(tmp_path, monkeypatch, c
 
     trace = tmp_path / "t.jsonl"
     sha = gen_trace.generate(json.loads((CONFIGS / "trace_anchor_1b.json").read_text()), trace)
-    d = _tiny(tmp_path, repeats=2, trace=str(trace), trace_sha256=sha)
+    d = _tiny(tmp_path, repeats=2, trace=str(trace), trace_sha256=sha, scheduler_seeds=[5, 5])
     d.pop("trace_config")
     d.pop("repeat_seeds")
     clock = tmp_path / "clock.json"
@@ -278,6 +278,25 @@ def test_repeats_that_replay_one_trace_are_warned_about(tmp_path, monkeypatch, c
     assert rc == 0
     assert "every repeat replays one trace with one scheduler seed" in out
     assert "no --clock-sync" not in out
+
+
+def test_repeats_on_one_trace_with_distinct_scheduler_seeds_sample_routing_draws(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """One trace, a seed per repeat: the repeats differ in the scheduler's random draws but
+    not in the arrivals, and the warning says which of the two they sample."""
+    install(monkeypatch, tmp_path)
+    from dataplane.harness import gen_trace
+
+    trace = tmp_path / "t.jsonl"
+    sha = gen_trace.generate(json.loads((CONFIGS / "trace_anchor_1b.json").read_text()), trace)
+    d = _tiny(tmp_path, repeats=2, trace=str(trace), trace_sha256=sha, scheduler_seeds=[5, 6])
+    d.pop("trace_config")
+    d.pop("repeat_seeds")
+    assert hw_runs.main([_write(tmp_path, d), "--dry-run"]) == 0
+    out = capsys.readouterr().out
+    assert "repeats sample hardware jitter and routing draws, not arrivals" in out
+    assert "with one scheduler seed" not in out
 
 
 def test_a_config_that_fails_its_checks_is_refused_with_exit_2(

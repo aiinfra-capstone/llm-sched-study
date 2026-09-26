@@ -28,6 +28,7 @@ __all__ = [
     "config_hash",
     "git_dirty",
     "git_shas",
+    "heartbeat_gaps_from",
 ]
 
 # The four components C-6 records a sha for.
@@ -37,6 +38,15 @@ COMPONENTS = ("worker", "scheduler", "harness", "sim")
 # measurement window is marked invalid rather than analysed, because a load generator
 # that fell behind was not generating the load the manifest claims it was.
 SEND_LAG_THRESHOLD_MS = 50.0
+
+
+# The console line for each validity field a run may leave unmeasured.
+_UNMEASURED_NOTES = {
+    "heartbeat_gaps": (
+        "heartbeat_gaps not counted: no heartbeat_summary record from the scheduler, so "
+        "missed heartbeats are unknown (written as null, not 0)"
+    ),
+}
 
 
 @dataclass
@@ -55,7 +65,9 @@ class Validity:
     each engine's process before and after a run can now say which of the two it is, and a
     run where it could not look is not a measurement of the pool the manifest names.
     `heartbeat_gaps` is reported but not fatal: a missed heartbeat degrades the scheduler's
-    estimate of a node, and does not make the measurement of the run wrong.
+    estimate of a node, and does not make the measurement of the run wrong. It is None when
+    nothing counted it (no `heartbeat_summary` record reached the harness, or the vehicle has
+    no heartbeats), and a None is written as null and named in `unmeasured`, never as 0.
 
     `clock_unsynced_hosts` is reported and not fatal either, and the arithmetic is why.
     The only clock term the pipeline acts on is the rate error, because a constant offset
@@ -70,7 +82,7 @@ class Validity:
     max_send_lag_ms: float = 0.0
     send_lag_violations: int = 0
     dropped_requests: int = 0
-    heartbeat_gaps: int = 0
+    heartbeat_gaps: int | None = None
     engine_restarts: int = 0
     engine_unchecked: int = 0
     colocated_nodes: int = 0
@@ -104,8 +116,22 @@ class Validity:
             "colocated_nodes": self.colocated_nodes,
             "clock_unsynced_hosts": self.clock_unsynced_hosts,
             "worker_log_incomplete": self.worker_log_incomplete,
-            **({"unmeasured": list(self.unmeasured)} if self.unmeasured else {}),
+            **({"unmeasured": self.unmeasured_fields()} if self.unmeasured_fields() else {}),
         }
+
+    def unmeasured_fields(self) -> list[str]:
+        """`unmeasured` as written: a null heartbeat count is always named in it."""
+        out = list(self.unmeasured)
+        if self.heartbeat_gaps is None and "heartbeat_gaps" not in out:
+            out.append("heartbeat_gaps")
+        return out
+
+    def notes(self) -> list[str]:
+        """What this run could not measure, in words, for the console. Never invalidates."""
+        return [
+            _UNMEASURED_NOTES.get(name, f"{name} not measured in this run")
+            for name in self.unmeasured_fields()
+        ]
 
     def reasons(self) -> list[str]:
         """Why a run was rejected, in words, for the console. Empty when valid."""
@@ -139,6 +165,23 @@ class Validity:
                 "the end"
             )
         return out
+
+
+def heartbeat_gaps_from(scheduler_records: list[dict[str, Any]]) -> int | None:
+    """Missed heartbeats over the pool, from the scheduler's `heartbeat_summary` records (C-4).
+
+    The live scheduler writes one record per node when it shuts down. C-4 also allows an
+    `end_run` record, and every record is a running total, so the last record per node is
+    the count and any earlier one is not added to it. None when there is no summary record:
+    nobody counted, which is not 0.
+    """
+    last: dict[str, dict[str, Any]] = {}
+    for r in scheduler_records:
+        if r.get("type") == "heartbeat_summary":
+            last[r["node_id"]] = r
+    if not last:
+        return None
+    return sum(int(r["missed_beats"]) for r in last.values())
 
 
 def unsynced_hosts(clock_sync: dict[str, Any] | None) -> int:

@@ -1,9 +1,9 @@
 {
   "_comment": "One of the first pair's three shape campaigns (docs/experiment-plan.md section 8, 2026-09-15), and one of the held-out run sets docs/analysis-plan.md section 6.6 validates the simulator against: the summarisation workload shape through the same five policies on the 1650 Ti and 3050 pool. The three shape traces share arrivals and priorities and differ only in lengths, so the comparison is paired. Points are the anchor campaign's mid and heavy (mpr2_1650ti_3050); its light point separated no policy. threshold_t and the snapshots are the anchor campaign's.",
-  "tag": "phase_summarisation_1650ti_3050",
+  "tag": "phase_summarisation_1650ti_3050_v2",
   "trace": "runs/traces/summarisation_1b.trace.jsonl",
   "trace_sha256": "395377119e11f68923fb88ae6e226a61a3cc84d873bb593a40957e2632434192",
-  "out_root": "runs/exp/phase_summarisation_1650ti_3050",
+  "out_root": "runs/exp/phase_summarisation_1650ti_3050_v2",
   "nodes": [
     {
       "node_id": "gtx1650ti",
@@ -78,6 +78,7 @@
   ],
   "threshold_t": 130.0,
   "repeats": 3,
+  "scheduler_seeds": [42, 42, 42],
   "warmup_s": 10.0,
   "settle_s": 20.0,
   "scheduler_port": 50051,

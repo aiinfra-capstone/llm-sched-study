@@ -77,6 +77,14 @@ DEFAULT_GRID = {
 }
 
 
+# The ECT mode a sweep gives its ECT points when neither the sweep config nor the base
+# manifest names one. The scheduler refuses an ECT run with no mode, so a sweep states it.
+DEFAULT_ECT_MODE = "known"
+ECT_MODES = ("known", "unknown")
+# Config keys that only ECT reads. Other policies do not carry them.
+_ECT_KEYS = ("ect_mode", "ect_prior_output_len")
+
+
 def load_snapshots_by_id(root: Path = SNAPSHOT_ROOT) -> dict[str, dict[str, Any]]:
     index: dict[str, dict[str, Any]] = {}
     for p in sorted(root.glob("*/*.json")):
@@ -196,15 +204,31 @@ def build_sweep_manifest(
     trace_path: Path | None = None,
     phase_skew: float = 1.0,
     base_rate: float | None = None,
+    ect_mode: str | None = None,
 ) -> dict[str, Any]:
     """Build a C-6 manifest for one sweep point, reusing anchors' manifest builder shape.
 
     `base_rate` is the trace's long-run arrival rate (`gen_trace.mean_rate`), so `lambda`
     is the rate the point offers. Without it the base config's `lambda_base` is used,
     which is only right for a Poisson trace.
+
+    An ECT point carries `ect_mode`: the one passed, else the base config's. With neither
+    it is refused, since SimApp refuses an ECT run with no mode. Other policies carry no
+    ECT keys, whatever the base run was. main() checks the mode's value before any point.
     """
     config = dict(base_manifest.get("config", {}))
     new_config = dict(config)
+    if policy == "ect":
+        mode = ect_mode if ect_mode is not None else config.get("ect_mode")
+        if mode is None:
+            raise ValueError(
+                "an ECT sweep point needs an ect_mode: name one in the sweep config, or "
+                "sweep from a base manifest that has one"
+            )
+        new_config["ect_mode"] = mode
+    else:
+        for key in _ECT_KEYS:
+            new_config.pop(key, None)
     new_config["staleness_s"] = staleness_s
     new_config["policy"] = policy
     new_config["R_target"] = R
@@ -418,6 +442,24 @@ def main(argv: list[str] | None = None) -> int:
     if "cost_model_snapshots" in sweep_cfg:
         base_manifest["cost_model_snapshots"] = sweep_cfg["cost_model_snapshots"]
 
+    # The mode every ECT point runs in: the sweep config's, else the base run's, else the
+    # default. Checked here, before any point runs, rather than failing every ECT point.
+    base_config = base_manifest.get("config", {})
+    ect_mode = sweep_cfg.get("ect_mode") or base_config.get("ect_mode") or DEFAULT_ECT_MODE
+    ect_prior = sweep_cfg.get("ect_prior_output_len", base_config.get("ect_prior_output_len"))
+    if "ect" in grid["policies"]:
+        if ect_mode not in ECT_MODES:
+            print(f"refusing: ect_mode must be one of {list(ECT_MODES)}, got {ect_mode!r}")
+            return 1
+        if ect_mode == "unknown" and not (
+            isinstance(ect_prior, int) and not isinstance(ect_prior, bool) and ect_prior > 0
+        ):
+            print(
+                "refusing: ect_mode unknown needs a positive integer ect_prior_output_len, "
+                f"got {ect_prior!r}"
+            )
+            return 1
+
     print(
         f"Sweep grid: policies={grid['policies']} R={grid['R']} phase_skew={grid['phase_skew']} "
         f"staleness={grid['staleness_s']} rate_scale={grid['rate_scale']} "
@@ -549,7 +591,10 @@ def main(argv: list[str] | None = None) -> int:
             args.trace,
             phase_skew=float(skew),
             base_rate=base_rate,
+            ect_mode=ect_mode,
         )
+        if policy == "ect" and ect_prior is not None:
+            manifest["config"]["ect_prior_output_len"] = ect_prior
         manifest["config"]["load_target"] = {load_kind: load_value}
         manifest["config"]["operating_point"] = (
             f"r{load_value:g}" if load_kind == "rate_scale" else f"u{load_value:g}"

@@ -30,6 +30,15 @@ from dataplane.harness import gen_trace
 
 GOLDEN = Path(__file__).parent / "golden" / "single_trace_run_ids.json"
 
+# Configs whose tag moved to `_v2` (2.10). Their golden lists hold the `_v2` ids, and these
+# are the tags the first run set on disk was planned under.
+RENAMED_TAGS = {
+    "hw_mpr2_lan_3050.json": "mpr2_1650ti_3050",
+    "hw_phase_balanced_3050.json": "phase_balanced_1650ti_3050",
+    "hw_phase_generation_3050.json": "phase_generation_1650ti_3050",
+    "hw_phase_summarisation_3050.json": "phase_summarisation_1650ti_3050",
+}
+
 
 def _campaign(tmp_path, **over) -> hw_runs.Campaign:
     return hw_runs.Campaign.from_dict(campaign_dict(tmp_path, **over))
@@ -81,6 +90,20 @@ def test_a_single_trace_config_plans_the_run_ids_it_planned_before_workloads(con
     assert [r.run_id for r in hw_runs.plan(c)] == json.loads(GOLDEN.read_text())[config]
 
 
+@pytest.mark.parametrize("config", sorted(RENAMED_TAGS))
+def test_a_renamed_config_plans_the_same_runs_under_its_v2_tag(config) -> None:
+    """The rename moved the tag and nothing else: the same runs, with `_v2` after the old tag.
+    The order is a new shuffle, since the tag seeds it."""
+    old = RENAMED_TAGS[config]
+    d = json.loads((CONFIGS / config).read_text())
+    c = hw_runs.Campaign.from_dict(d)
+    assert c.tag == f"{old}_v2"
+    assert c.out_root.name == c.tag
+    before = hw_runs.Campaign.from_dict({**d, "tag": old})
+    planned = [r.run_id for r in hw_runs.plan(c)]
+    assert sorted(planned) == sorted(r.run_id.replace(old, c.tag, 1) for r in hw_runs.plan(before))
+
+
 def test_a_single_trace_config_keeps_its_trace_and_out_root() -> None:
     d = json.loads((CONFIGS / "hw_mpr2_lan_3050.json").read_text())
     c = hw_runs.Campaign.from_dict(d)
@@ -116,9 +139,14 @@ def test_without_scheduler_seeds_the_seed_is_the_arrival_seed_as_a_java_int(tmp_
     assert all(isinstance(s, int) and 0 <= s < 2**31 for s in sched)
 
 
-def test_a_single_trace_campaign_has_no_seeds(tmp_path) -> None:
-    c = hw_runs.Campaign.from_dict(json.loads((CONFIGS / "hw_mpr2_lan_3050.json").read_text()))
-    assert {(r.gen_seed, r.scheduler_seed) for r in hw_runs.plan(c)} == {(None, None)}
+def test_a_single_trace_campaign_has_no_arrival_seed_but_states_its_scheduler_seed(
+    tmp_path,
+) -> None:
+    d = json.loads((CONFIGS / "hw_mpr2_lan_3050.json").read_text())
+    c = hw_runs.Campaign.from_dict(d)
+    assert {(r.gen_seed, r.scheduler_seed) for r in hw_runs.plan(c)} == {
+        (None, s) for s in d["scheduler_seeds"]
+    }
 
 
 def test_the_same_config_plans_the_same_runs_twice(tmp_path) -> None:
@@ -205,7 +233,9 @@ def test_the_pre_run_manifest_carries_the_seed_the_java_scheduler_reads(
     assert man["config_hash"] == hw_runs.manifest_mod.config_hash(cfg)
 
 
-def test_a_single_trace_pre_run_manifest_has_no_seed_workload_or_target(tmp_path) -> None:
+def test_a_single_trace_pre_run_manifest_has_its_seed_but_no_workload_or_target(
+    tmp_path,
+) -> None:
     trace = tmp_path / "t.jsonl"
     cfg = json.loads((CONFIGS / "trace_anchor_1b.json").read_text())
     sha = gen_trace.generate(cfg, trace)
@@ -215,7 +245,8 @@ def test_a_single_trace_pre_run_manifest_has_no_seed_workload_or_target(tmp_path
     run = next(r for r in hw_runs.plan(c) if r.policy == "jsq")
     man = hw_runs.pre_run_manifest(c, run, gen_trace.load(trace)[0])
     assert man["trace_path"] == str(trace)
-    for key in ("seed", "workload", "load_target", "threshold_t"):
+    assert man["config"]["seed"] == d["scheduler_seeds"][run.repeat - 1]
+    for key in ("workload", "load_target", "threshold_t"):
         assert key not in man["config"]
 
 
@@ -257,6 +288,48 @@ def test_scheduler_seeds_at_the_java_int_bounds_are_accepted(tmp_path, seed) -> 
 @pytest.mark.parametrize("seed", [2**31, -(2**31) - 1])
 def test_scheduler_seeds_past_the_java_int_bounds_are_refused(tmp_path, seed) -> None:
     _refused(_campaign(tmp_path, repeats=1, repeat_seeds=[1], scheduler_seeds=[seed]), "Java int")
+
+
+def _single_trace(tmp_path, **over) -> hw_runs.Campaign:
+    """The seeded campaign on one fixed trace, so no repeat seed stands in for a scheduler seed."""
+    d = campaign_dict(tmp_path, **over)
+    d.pop("trace_config")
+    d.pop("repeat_seeds")
+    d.update(trace=str(tmp_path / "t.jsonl"), trace_sha256="0" * 64)
+    return hw_runs.Campaign.from_dict(d)
+
+
+def test_a_campaign_that_gives_the_scheduler_no_seed_is_refused(tmp_path) -> None:
+    """LiveSchedulerApp and SimApp both read `config.seed`. A run without one draws its tie
+    breaks from a stream nobody recorded, so it cannot be replayed in the simulator."""
+    _refused(_single_trace(tmp_path), "scheduler_seeds")
+    c = _single_trace(tmp_path)
+    c.scheduler_seeds = [7] * c.repeats
+    _check(c)
+
+
+def test_an_ect_run_without_ect_mode_is_refused(tmp_path) -> None:
+    """The control plane no longer defaults ECT's mode, so a campaign that leaves it out
+    would stop at the first ECT run. The mode can come from the campaign or from every arm."""
+    _refused(_campaign(tmp_path, policies=["jsq", "ect"]), "ect_mode")
+    _check(_campaign(tmp_path, policies=["jsq", "ect"], ect_mode="known"))
+    _check(_arms(tmp_path, [{"name": "e", "ect_mode": "known"}], policies=["ect"]))
+    _refused(
+        _arms(
+            tmp_path,
+            [{"name": "e", "ect_mode": "known"}, {"name": "d", "capability_mode": "decode"}],
+            policies=["ect"],
+        ),
+        "ect_mode",
+    )
+    # A campaign without ECT needs no mode.
+    _check(_campaign(tmp_path, policies=["jsq"]))
+
+
+def test_an_ect_mode_must_be_known_or_unknown_and_unknown_needs_a_prior(tmp_path) -> None:
+    _refused(_campaign(tmp_path, policies=["ect"], ect_mode="prior"), "known")
+    _refused(_campaign(tmp_path, policies=["ect"], ect_mode="unknown"), "ect_prior_output_len")
+    _check(_campaign(tmp_path, policies=["ect"], ect_mode="unknown", ect_prior_output_len=44))
 
 
 def test_duplicate_workload_names_are_refused(tmp_path) -> None:
